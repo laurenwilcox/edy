@@ -34,6 +34,7 @@ const usage = `Edy — ядро ИИ-IDE.
   edy token                                показать токен доступа к OmniRoute
   edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli)
   edy provider list                        список провайдеров
+  edy provider remove -name N              удалить провайдера вместе с его ключами
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
   edy spend                                расходы за сегодня
@@ -72,6 +73,8 @@ func run(args []string) error {
 		return providerAdd(st, args[2:])
 	case cmd == "provider list":
 		return providerList(st)
+	case cmd == "provider remove":
+		return providerRemove(st, args[2:])
 	case cmd == "key add":
 		return keyAdd(st, args[2:])
 	case cmd == "budget set" && len(args) == 3:
@@ -199,10 +202,27 @@ func providerAdd(st *store.Store, args []string) error {
 		return errors.New("-kind должен быть openai, anthropic или cli")
 	}
 	p.Models = strings.Split(models, ",")
-	if _, err := st.AddProvider(p); err != nil {
+	if _, err := st.AddProvider(p); errors.Is(err, store.ErrExists) {
+		return fmt.Errorf("провайдер %q уже есть. Посмотреть: edy provider list, удалить: edy provider remove -name %s", p.Name, p.Name)
+	} else if err != nil {
 		return err
 	}
 	fmt.Printf("Провайдер %q добавлен. Модели вызываются как \"%s/<модель>\".\n", p.Name, p.Name)
+	return nil
+}
+
+func providerRemove(st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("provider remove", flag.ContinueOnError)
+	name := fs.String("name", "", "имя провайдера")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := st.DeleteProvider(*name); errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("провайдер %q не найден", *name)
+	} else if err != nil {
+		return err
+	}
+	fmt.Printf("Провайдер %q удалён.\n", *name)
 	return nil
 }
 

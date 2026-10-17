@@ -85,6 +85,26 @@ func TestCommandRoundTripAndReopen(t *testing.T) {
 	}
 }
 
+func TestDuplicateAndDeleteProvider(t *testing.T) {
+	s := openTest(t)
+	id, _ := s.AddProvider(Provider{Name: "agy", Kind: KindCLI})
+	s.AddKey(id, "", "secret")
+	if _, err := s.AddProvider(Provider{Name: "agy", Kind: KindCLI}); err != ErrExists {
+		t.Fatalf("err = %v", err)
+	}
+	if err := s.DeleteProvider("agy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProvider("agy"); err != ErrNotFound {
+		t.Fatalf("err = %v", err)
+	}
+	var keys int
+	s.db.QueryRow(`SELECT COUNT(*) FROM api_keys`).Scan(&keys)
+	if keys != 0 {
+		t.Fatalf("ключи удалённого провайдера остались: %d", keys)
+	}
+}
+
 func TestUsageAndSettings(t *testing.T) {
 	s := openTest(t)
 	s.RecordUsage(Usage{Provider: "p", Model: "m", InputTokens: 10, OutputTokens: 5, CostUSD: 0.25})

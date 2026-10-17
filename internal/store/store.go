@@ -21,7 +21,10 @@ const (
 	KindCLI       = "cli"       // терминальная утилита в PTY: Ollama, Claude Code, Aider…
 )
 
-var ErrNotFound = errors.New("store: не найдено")
+var (
+	ErrNotFound = errors.New("store: не найдено")
+	ErrExists   = errors.New("store: уже существует")
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS providers (
@@ -131,9 +134,24 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command) VALUES (?,?,?,?,?,?,?)`,
 		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return 0, ErrExists
+		}
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// DeleteProvider удаляет провайдера вместе с его ключами.
+func (s *Store) DeleteProvider(name string) error {
+	res, err := s.db.Exec(`DELETE FROM providers WHERE name = ?`, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) Provider(name string) (Provider, error) {
