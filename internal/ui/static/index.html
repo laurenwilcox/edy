@@ -548,9 +548,11 @@ h3.sub:first-child { margin-top: 0; }
 // Токен приходит в #-части адреса (она не уходит на сервер и в логи)
 // и живёт в sessionStorage только до закрытия вкладки.
 const token = (() => {
-  const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
+  const params = new URLSearchParams(location.hash.slice(1));
+  const fromHash = params.get("token");
   if (fromHash) {
     try { sessionStorage.setItem("edy-token", fromHash); } catch {}
+    try { if (params.get("app") === "1") sessionStorage.setItem("edy-app", "1"); } catch {}
     history.replaceState(null, "", location.pathname);
     return fromHash;
   }
@@ -598,6 +600,19 @@ async function api(method, path, body) {
     throw err;
   }
   return data;
+}
+
+// ============ Окно приложения (Wails) ============
+// Встроенный WebView сам не открывает внешние ссылки — просим Edy открыть их в браузере.
+const inApp = (() => { try { return sessionStorage.getItem("edy-app") === "1"; } catch { return false; } })();
+if (inApp) {
+  document.documentElement.classList.add("in-app");
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href^='http']");
+    if (!a || a.origin === location.origin) return;
+    e.preventDefault();
+    api("POST", "/api/open", { url: a.href }).catch((err) => toast(err.message, true));
+  });
 }
 
 // ============ Меню и панель ============

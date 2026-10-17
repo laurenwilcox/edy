@@ -250,3 +250,17 @@ func TestWebProviders(t *testing.T) {
 		t.Fatalf("web presets = %+v", out.Web)
 	}
 }
+
+func TestOpenURL(t *testing.T) {
+	h, _ := setup(t)
+	var opened string
+	h.OpenURL = func(link string) error { opened = link; return nil }
+	if rec := call(h, "POST", "/api/open", `{"url":"https://console.anthropic.com/settings/keys"}`); rec.Code != http.StatusNoContent || opened != "https://console.anthropic.com/settings/keys" {
+		t.Fatalf("open: %d %q", rec.Code, opened)
+	}
+	for _, bad := range []string{`{"url":"file:///etc/passwd"}`, `{"url":"javascript:alert(1)"}`, `{"url":"/relative"}`} {
+		if rec := call(h, "POST", "/api/open", bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d", bad, rec.Code)
+		}
+	}
+}

@@ -10,3 +10,4 @@ router.token
 # Сборки
 /edy
 /edy-macos-*
+/build/

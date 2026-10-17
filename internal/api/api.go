@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +43,9 @@ type Handler struct {
 	Token string
 	Addr  string // адрес OmniRoute для экрана «Подключение»
 
+	// OpenURL открывает ссылку в браузере; подменяется в тестах.
+	OpenURL func(link string) error
+
 	// FindExecutable, Install и ListModels подменяются в тестах.
 	FindExecutable func(name string) (string, error)
 	Install        func(ctx context.Context, command string) (output string, err error)
@@ -58,7 +63,7 @@ type Handler struct {
 }
 
 func New(st *store.Store, token, addr string) *Handler {
-	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels}
+	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels, OpenURL: openInBrowser}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/info", h.info)
 	m.HandleFunc("GET /api/presets", h.presets)
@@ -74,6 +79,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("POST /api/web/check", h.webCheck)
 	m.HandleFunc("GET /api/web/status", h.webStatus)
 	m.HandleFunc("GET /api/web/browsers", h.webBrowsers)
+	m.HandleFunc("POST /api/open", h.openURL)
 	m.HandleFunc("GET /api/usage", h.usage)
 	m.HandleFunc("PUT /api/budget", h.setBudget)
 	h.registerProjectRoutes(m)
@@ -511,6 +517,36 @@ func (h *Handler) webBrowsers(w http.ResponseWriter, r *http.Request) {
 		webchat.BrowserChromium: h.Web != nil && h.Web.BrowserInstalled(webchat.BrowserChromium),
 		webchat.BrowserChrome:   h.Web != nil && h.Web.BrowserInstalled(webchat.BrowserChrome),
 	})
+}
+
+// openURL открывает ссылку в браузере по умолчанию. Нужно окну Wails:
+// встроенный WebView не открывает ссылки target="_blank" сам.
+func (h *Handler) openURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	u, err := url.Parse(req.URL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		fail(w, http.StatusBadRequest, "можно открывать только ссылки http(s)")
+		return
+	}
+	if err := h.OpenURL(u.String()); err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func openInBrowser(link string) error {
+	opener := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		opener = "open"
+	}
+	return exec.Command(opener, link).Start()
 }
 
 func runInstall(ctx context.Context, command string) (string, error) {

@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,16 +23,11 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
-	"github.com/laurenwilcox/name/internal/api"
+	"github.com/laurenwilcox/name/internal/app"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
-	"github.com/laurenwilcox/name/internal/tasks"
-	"github.com/laurenwilcox/name/internal/ui"
-	"github.com/laurenwilcox/name/internal/vault"
 	"github.com/laurenwilcox/name/internal/webchat"
 )
-
-const settingRouterToken = "router_token"
 
 const usage = `Edy — ядро ИИ-IDE.
 
@@ -126,42 +119,9 @@ func run(args []string) error {
 	}
 }
 
-func openStore() (*store.Store, string, error) {
-	home := os.Getenv("EDY_HOME")
-	if home == "" {
-		cfg, err := os.UserConfigDir()
-		if err != nil {
-			return nil, "", err
-		}
-		home = filepath.Join(cfg, "Edy")
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return nil, "", err
-	}
-	v, err := vault.FromKeychain()
-	if err != nil {
-		return nil, "", err
-	}
-	st, err := store.Open(filepath.Join(home, "edy.db"), v)
-	return st, home, err
-}
+func openStore() (*store.Store, string, error) { return app.OpenStore() }
 
-// ensureToken возвращает токен OmniRoute, создавая его при первом запуске.
-// Копия кладётся в файл router.token (0600), чтобы внешние программы могли его прочитать.
-func ensureToken(st *store.Store, home string) (string, error) {
-	tok, err := st.Setting(settingRouterToken)
-	if errors.Is(err, store.ErrNotFound) {
-		if tok, err = omniroute.NewToken(); err != nil {
-			return "", err
-		}
-		if err := st.SetSetting(settingRouterToken, tok); err != nil {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
-	}
-	return tok, os.WriteFile(filepath.Join(home, "router.token"), []byte(tok+"\n"), 0o600)
-}
+func ensureToken(st *store.Store, home string) (string, error) { return app.EnsureToken(st, home) }
 
 func serve(st *store.Store, home string, args []string, openBrowser bool) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -169,62 +129,27 @@ func serve(st *store.Store, home string, args []string, openBrowser bool) error 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	tok, err := ensureToken(st, home)
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	srv, err := app.Start(st, home, *addr, log)
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	defer srv.Close()
 
-	web := webchat.NewManager(home)
-	web.Log = os.Stderr
-	defer web.Close()
-
-	router := omniroute.NewServer(st, tok, log)
-	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
-	apiHandler := api.New(st, tok, *addr)
-	apiHandler.Web = web
-	apiHandler.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
-	apiHandler.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
-	apiHandler.Tasks.Journal = st
-	apiHandler.Tasks.Finalize = api.Finalizer(st)
-	apiHandler.ReposDir = filepath.Join(home, "repos")
-	if n, err := st.InterruptRunningAgents(); err == nil && n > 0 {
-		log.Info("агенты прошлого запуска помечены как прерванные", "count", n)
-	}
-	mux := http.NewServeMux()
-	mux.Handle("/v1/", router)
-	mux.Handle("/healthz", router)
-	mux.Handle("/api/", apiHandler)
-	mux.Handle("/", ui.Handler())
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		return fmt.Errorf("не удалось занять %s (уже запущен другой edy?): %w", *addr, err)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(shutdown)
-	}()
-
-	// Токен передаётся в #-части адреса: браузер не отправляет её на сервер.
-	uiURL := "http://" + *addr + "/#token=" + tok
-	log.Info("OmniRoute запущен", "addr", "http://"+*addr+"/v1", "token_file", filepath.Join(home, "router.token"))
-	fmt.Fprintf(os.Stderr, "\nИнтерфейс: %s\n\n", uiURL)
+	fmt.Fprintf(os.Stderr, "\nИнтерфейс: %s\n\n", srv.URL())
 	if openBrowser {
-		if err := exec.Command("open", uiURL).Start(); err != nil {
+		if err := exec.Command("open", srv.URL()).Start(); err != nil {
 			log.Warn("не удалось открыть браузер, откройте адрес вручную", "err", err)
 		}
 	}
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-srv.Done():
 		return err
 	}
-	return nil
 }
 
 func providerAdd(st *store.Store, args []string) error {

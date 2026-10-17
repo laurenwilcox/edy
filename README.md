@@ -7,7 +7,18 @@
 шифрованием секретов и дневным бюджетом. Он работает с OpenAI-совместимыми API, с Anthropic
 и с терминальными утилитами (Ollama, Claude Code, Aider) через PTY.
 
-## Интерфейс
+## Приложение (окно на Wails)
+
+Собирается на Mac — нужны Go (`brew install go`) и Xcode Command Line Tools (`xcode-select --install`):
+
+```sh
+git clone -b claude/elegant-edison-gu1b8f https://github.com/laurenwilcox/name.git edy
+cd edy
+scripts/build-macos-app.sh
+open build/Edy.app            # или: cp -R build/Edy.app /Applications/
+```
+
+## Интерфейс в браузере
 
 ```sh
 edy ui
