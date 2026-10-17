@@ -65,6 +65,12 @@ func (s *TermSanitizer) Write(p []byte) string {
 	return out.String()
 }
 
+// Pending возвращает незавершённую строку, не трогая её. Обычно это вопрос
+// утилиты, который ждёт ответа: «Continue? (y/n)».
+func (s *TermSanitizer) Pending() string {
+	return strings.TrimRight(s.line, " ")
+}
+
 // Flush отдаёт остаток после завершения процесса.
 func (s *TermSanitizer) Flush() string {
 	rest := strings.TrimRight(s.line, " ")

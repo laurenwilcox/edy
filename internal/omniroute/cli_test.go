@@ -20,7 +20,7 @@ model="$1"; prompt="$2"
 if [ ! -t 1 ]; then echo "stdout не терминал"; exit 7; fi
 case "$prompt" in
   fail*) echo "model not found"; exit 3 ;;
-  sleep*) sleep 30 ;;
+  sleep*) printf 'Trust this folder? (y/n) '; sleep 30 ;;
 esac
 printf '⠋ loading\r⠙ loading 50%%\r\033[2K'
 printf '\033[1;32m[%s]\033[0m ответ на: %s\n' "$model" "$prompt"
@@ -95,6 +95,10 @@ func TestCLIAdapterKilledOnCancel(t *testing.T) {
 	_, err := (&CLIAdapter{}).Stream(ctx, call, func(Event) error { return nil })
 	if err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("err = %v, прошло %v", err, time.Since(start))
+	}
+	// В ошибке должен быть вопрос, на котором утилита зависла.
+	if !strings.Contains(err.Error(), "Trust this folder? (y/n)") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

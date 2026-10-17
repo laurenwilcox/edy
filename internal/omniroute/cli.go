@@ -91,27 +91,34 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 			break
 		}
 	}
-	if emitErr == nil {
+	// Незавершённая строка нужна для диагностики: если утилита зависла, там
+	// обычно её вопрос к пользователю.
+	pending := san.Pending()
+	if emitErr == nil && ctx.Err() == nil {
 		emitErr = send(san.Flush())
 	}
 	waitErr := cmd.Wait()
 
 	usage := Usage{PromptTokens: estimateTokens(prompt), CompletionTokens: estimateTokens(output.String())}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	tail := lastRunes(strings.TrimSpace(output.String()+pending), 500)
 	if emitErr != nil {
 		return usage, emitErr
 	}
 	if ctx.Err() != nil {
-		return usage, ctx.Err()
+		return usage, fmt.Errorf("%s остановлена (%w), последний вывод: %q", args[0], ctx.Err(), tail)
 	}
 	if waitErr != nil {
-		tail := output.String()
-		if r := []rune(tail); len(r) > 500 {
-			tail = "…" + string(r[len(r)-500:])
-		}
-		return usage, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%s завершилась с ошибкой (%v): %s", args[0], waitErr, strings.TrimSpace(tail))}
+		return usage, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%s завершилась с ошибкой (%v): %s", args[0], waitErr, tail)}
 	}
 	return usage, emit(Event{FinishReason: "stop"})
+}
+
+func lastRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return "…" + string(r[len(r)-n:])
+	}
+	return s
 }
 
 func expandCommand(template []string, model, prompt string) ([]string, error) {
