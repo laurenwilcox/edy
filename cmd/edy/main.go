@@ -185,6 +185,12 @@ func serve(st *store.Store, home string, args []string, openBrowser bool) error 
 	apiHandler.Web = web
 	apiHandler.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
 	apiHandler.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
+	apiHandler.Tasks.Journal = st
+	apiHandler.Tasks.Finalize = api.Finalizer(st)
+	apiHandler.ReposDir = filepath.Join(home, "repos")
+	if n, err := st.InterruptRunningAgents(); err == nil && n > 0 {
+		log.Info("агенты прошлого запуска помечены как прерванные", "count", n)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", router)
 	mux.Handle("/healthz", router)

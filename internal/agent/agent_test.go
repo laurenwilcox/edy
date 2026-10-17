@@ -313,3 +313,30 @@ func TestOmniRouteClient(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestPlainFolderWithoutGit(t *testing.T) {
+	gitEnv(t)
+	dir := t.TempDir()
+	for name, body := range map[string]string{"go.mod": goMod, "calc.go": buggy, "calc_test.go": calcTst} {
+		os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644)
+	}
+	var attempts []string
+	task := &Task{Root: dir, Goal: "почини", Models: []string{"m/m"}, LLM: &scripted{steps: map[string][]Msg{"m/m": fixSteps()}},
+		OnAttempt: func(m string) { attempts = append(attempts, "start "+m) },
+		OnAttemptEnd: func(m string, ok bool, note string) {
+			attempts = append(attempts, fmt.Sprintf("end %s %v %s", m, ok, note))
+		}}
+	res, err := task.Run(context.Background())
+	if err != nil || res.Status != StatusDone {
+		t.Fatal(err, res.Status)
+	}
+	if read(t, dir, "calc.go") != fixed {
+		t.Fatal("правка в папке без git должна сохраниться")
+	}
+	if strings.Join(attempts, ";") != "start m/m;end m/m true Исправил сложение" {
+		t.Fatalf("attempts = %q", attempts)
+	}
+	if err := Reject(context.Background(), dir, res.Baseline); err != nil || read(t, dir, "calc.go") != buggy {
+		t.Fatalf("Reject в папке без git: %v", err)
+	}
+}

@@ -13,7 +13,25 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/store"
 )
+
+// Journal — журнал агентов (SQLite). Может быть nil.
+type Journal interface {
+	CreateAgent(a store.Agent) error
+	AddAgentEvent(agentID, kind, text string, at time.Time) error
+	FinishAgent(id, state, summary, errText string) error
+}
+
+// Outcome — что сделано с результатом при Approve.
+type Outcome struct {
+	Branch string `json:"branch,omitempty"`
+	PRURL  string `json:"pr_url,omitempty"`
+	Note   string `json:"note"`
+}
+
+// FinalizeFunc оформляет результат по настройкам проекта (коммит, push, PR).
+type FinalizeFunc func(ctx context.Context, project, goal, summary, model string) (Outcome, error)
 
 // Состояния задачи.
 const (
@@ -40,6 +58,9 @@ type View struct {
 	Model    string        `json:"model,omitempty"`
 	Diff     string        `json:"diff,omitempty"`
 	Branch   string        `json:"branch,omitempty"`
+	PRURL    string        `json:"pr_url,omitempty"`
+	Note     string        `json:"note,omitempty"`
+	Agents   []string      `json:"agents"` // id агентов в журнале
 	Created  time.Time     `json:"created"`
 	Events   []agent.Event `json:"events"`
 	NextFrom int           `json:"next_from"` // индекс, с которого запрашивать новые события
@@ -49,11 +70,15 @@ type run struct {
 	view     View
 	baseline string
 	cancel   context.CancelFunc
+	agentID  string        // текущий агент-исполнитель
+	pending  []agent.Event // события до появления первого агента
 }
 
 // Manager держит задачи в памяти процесса.
 type Manager struct {
-	LLM agent.LLM
+	LLM      agent.LLM
+	Journal  Journal
+	Finalize FinalizeFunc // nil — новая ветка edy/… без push
 	// Now подменяется в тестах.
 	Now func() time.Time
 
@@ -82,7 +107,7 @@ func (m *Manager) Start(project, goal string, models []string) (View, error) {
 		return m.Get(id, 0), ErrBusy
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, State: StateRunning, Created: m.Now(), Events: []agent.Event{}}}
+	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, State: StateRunning, Created: m.Now(), Events: []agent.Event{}, Agents: []string{}}}
 	m.runs[r.view.ID] = r
 	m.byProj[project] = r.view.ID
 	m.mu.Unlock()
@@ -94,6 +119,7 @@ func (m *Manager) Start(project, goal string, models []string) (View, error) {
 
 func (m *Manager) work(ctx context.Context, r *run) {
 	defer m.running.Done()
+	attempt := 0
 	task := &agent.Task{
 		Root:   r.view.Project,
 		Goal:   r.view.Goal,
@@ -102,7 +128,47 @@ func (m *Manager) work(ctx context.Context, r *run) {
 		OnEvent: func(e agent.Event) {
 			m.mu.Lock()
 			r.view.Events = append(r.view.Events, e)
+			id := r.agentID
+			if id == "" {
+				r.pending = append(r.pending, e)
+			}
 			m.mu.Unlock()
+			if id != "" {
+				m.journalEvent(id, e)
+			}
+		},
+		// Каждая модель, взявшая задачу, — отдельный агент в журнале.
+		OnAttempt: func(model string) {
+			attempt++
+			id := fmt.Sprintf("%s-%d", r.view.ID, attempt)
+			if m.Journal != nil {
+				m.Journal.CreateAgent(store.Agent{ID: id, Role: store.RoleExecutor, Model: model, Project: r.view.Project, TaskID: r.view.ID, Goal: r.view.Goal, Created: m.Now()})
+			}
+			m.mu.Lock()
+			r.agentID = id
+			r.view.Agents = append(r.view.Agents, id)
+			pending := r.pending
+			r.pending = nil
+			m.mu.Unlock()
+			for _, e := range pending {
+				m.journalEvent(id, e)
+			}
+		},
+		OnAttemptEnd: func(model string, ok bool, note string) {
+			m.mu.Lock()
+			id := r.agentID
+			m.mu.Unlock()
+			if m.Journal == nil || id == "" {
+				return
+			}
+			switch {
+			case ok:
+				m.Journal.FinishAgent(id, store.AgentDone, note, "")
+			case ctx.Err() != nil:
+				m.Journal.FinishAgent(id, store.AgentCancelled, "", "остановлен пользователем")
+			default:
+				m.Journal.FinishAgent(id, store.AgentFailed, "", note)
+			}
 		},
 	}
 	res, err := task.Run(ctx)
@@ -111,6 +177,13 @@ func (m *Manager) work(ctx context.Context, r *run) {
 	defer m.mu.Unlock()
 	delete(m.byProj, r.view.Project)
 	r.baseline = res.Baseline
+	note := func(kind, text string) {
+		e := agent.Event{At: m.Now(), Kind: kind, Text: text}
+		r.view.Events = append(r.view.Events, e)
+		if r.agentID != "" {
+			go m.journalEvent(r.agentID, e)
+		}
+	}
 	switch {
 	case ctx.Err() != nil:
 		r.view.State = StateCancelled
@@ -120,14 +193,20 @@ func (m *Manager) work(ctx context.Context, r *run) {
 				r.view.Error = "не удалось откатить: " + err.Error()
 			}
 		}
-		r.view.Events = append(r.view.Events, agent.Event{At: m.Now(), Kind: "info", Text: "Задача остановлена, проект возвращён в исходное состояние"})
+		note("info", "Задача остановлена, проект возвращён в исходное состояние")
 	case err != nil:
 		r.view.State, r.view.Error = StateFailed, err.Error()
-		r.view.Events = append(r.view.Events, agent.Event{At: m.Now(), Kind: "error", Text: err.Error()})
+		note("error", err.Error())
 	case res.Status == agent.StatusDone:
 		r.view.State, r.view.Summary, r.view.Model, r.view.Diff = StateDone, res.Summary, res.Model, res.Diff
 	default:
 		r.view.State = StateNeedsHuman
+	}
+}
+
+func (m *Manager) journalEvent(agentID string, e agent.Event) {
+	if m.Journal != nil {
+		m.Journal.AddAgentEvent(agentID, e.Kind, e.Text, e.At)
 	}
 }
 
@@ -194,7 +273,8 @@ func (m *Manager) finished(id string) (*run, error) {
 	return r, nil
 }
 
-// Approve оформляет результат одним коммитом в новой ветке edy/….
+// Approve оформляет результат по настройкам проекта (по умолчанию — один
+// коммит в новой ветке edy/…).
 func (m *Manager) Approve(id string) (View, error) {
 	m.mu.Lock()
 	r, err := m.finished(id)
@@ -202,19 +282,37 @@ func (m *Manager) Approve(id string) (View, error) {
 		m.mu.Unlock()
 		return View{}, err
 	}
-	branch := agent.BranchName(r.view.Goal, m.Now())
-	msg := "Edy: " + firstLine(r.view.Goal) + "\n\n" + r.view.Summary + "\n\nМодель: " + r.view.Model
-	project := r.view.Project
+	project, goal, summary, model := r.view.Project, r.view.Goal, r.view.Summary, r.view.Model
+	agentID := r.agentID
 	m.mu.Unlock()
 
-	if err := agent.Approve(context.Background(), project, branch, msg); err != nil {
+	finalize := m.Finalize
+	if finalize == nil {
+		finalize = defaultFinalize(m.Now)
+	}
+	out, err := finalize(context.Background(), project, goal, summary, model)
+	if err != nil {
 		return View{}, err
 	}
 	m.mu.Lock()
-	r.view.State, r.view.Branch = StateApproved, branch
-	r.view.Events = append(r.view.Events, agent.Event{At: m.Now(), Kind: "info", Text: "Approve: один коммит в ветке " + branch})
+	r.view.State, r.view.Branch, r.view.PRURL, r.view.Note = StateApproved, out.Branch, out.PRURL, out.Note
+	e := agent.Event{At: m.Now(), Kind: "info", Text: "Approve: " + out.Note}
+	r.view.Events = append(r.view.Events, e)
 	m.mu.Unlock()
+	if agentID != "" {
+		m.journalEvent(agentID, e)
+	}
 	return m.Get(id, 0), nil
+}
+
+func defaultFinalize(now func() time.Time) FinalizeFunc {
+	return func(ctx context.Context, project, goal, summary, model string) (Outcome, error) {
+		branch := agent.BranchName(goal, now())
+		if err := agent.Approve(ctx, project, branch, "Edy: "+firstLine(goal)+"\n\n"+summary+"\n\nМодель: "+model); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{Branch: branch, Note: "один коммит в ветке " + branch}, nil
+	}
 }
 
 // Reject откатывает проект к состоянию до задачи.

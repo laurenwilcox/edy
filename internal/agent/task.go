@@ -38,6 +38,10 @@ type Task struct {
 	MaxAttempts int // провалов хуков до передачи задачи; по умолчанию 3
 	MaxSteps    int // шагов модели на одну попытку; по умолчанию 40
 	OnEvent     func(Event)
+	// OnAttempt вызывается, когда задачу берёт очередная модель (новый агент);
+	// OnAttemptEnd — когда она закончила: ok=true — проверки прошли.
+	OnAttempt    func(model string)
+	OnAttemptEnd func(model string, ok bool, note string)
 }
 
 // Result — итог работы.
@@ -81,8 +85,12 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 	if err := CheckClean(ctx, t.Root); err != nil {
 		return Result{Status: StatusFailed}, err
 	}
-	if err := excludeEdyDir(t.Root); err != nil {
-		return Result{Status: StatusFailed}, err
+	if isRepo(ctx, t.Root) {
+		if err := excludeEdyDir(t.Root); err != nil {
+			return Result{Status: StatusFailed}, err
+		}
+	} else {
+		t.emit("info", "Папка без git: снимки делаются в Shadow Git, результат останется в папке")
 	}
 	hooks, err := DetectHooks(t.Root)
 	if err != nil {
@@ -115,7 +123,20 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 		if mi > 0 {
 			t.emit("breaker", "Circuit Breaker: проект откачен к исходному состоянию, задача передана модели %s", model)
 		}
+		if t.OnAttempt != nil {
+			t.OnAttempt(model)
+		}
 		summary, ok, err := t.attempt(ctx, model, ws, shadow, hooks, &step)
+		if t.OnAttemptEnd != nil {
+			note := summary
+			switch {
+			case err != nil:
+				note = err.Error()
+			case !ok:
+				note = "не прошла проверки — задача передана дальше"
+			}
+			t.OnAttemptEnd(model, ok && err == nil, note)
+		}
 		if err != nil {
 			return Result{Status: StatusFailed, Baseline: baseline}, err
 		}
@@ -246,13 +267,22 @@ func gitIn(ctx context.Context, root string, args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
-// CheckClean проверяет, что проект — git-репозиторий без незакоммиченных изменений.
+func isRepo(ctx context.Context, root string) bool {
+	_, err := gitIn(ctx, root, "rev-parse", "--is-inside-work-tree")
+	return err == nil
+}
+
+// CheckClean проверяет, что проект готов к задаче: папка без git подходит всегда,
+// а git-репозиторий должен быть без незакоммиченных изменений.
 func CheckClean(ctx context.Context, root string) error {
 	if _, err := exec.LookPath("git"); err != nil {
-		return errors.New("не найден git — установите Xcode Command Line Tools: xcode-select --install")
+		return errors.New("не найден git (он нужен и для снимков) — установите Xcode Command Line Tools: xcode-select --install")
 	}
-	if _, err := gitIn(ctx, root, "rev-parse", "--is-inside-work-tree"); err != nil {
-		return fmt.Errorf("папка %s — не git-репозиторий: выполните git init и сделайте первый коммит", root)
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return fmt.Errorf("папка %s не найдена", root)
+	}
+	if !isRepo(ctx, root) {
+		return nil
 	}
 	if _, err := gitIn(ctx, root, "rev-parse", "HEAD"); err != nil {
 		return errors.New("в репозитории ещё нет коммитов — сделайте первый коммит")

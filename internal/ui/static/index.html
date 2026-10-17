@@ -223,6 +223,24 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 @keyframes spin { to { transform: rotate(360deg); } }
 .card.current { border-color: var(--a1); }
 h3.sub { font-size: 14px; margin: 18px 0 10px; }
+h3.sub:first-child { margin-top: 0; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; font-size: 13px; }
+.kv > span:nth-child(odd) { color: var(--muted); }
+.list-lines { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code); border-radius: 10px; padding: 8px 10px; max-height: 160px; overflow: auto; white-space: pre; }
+.agent-row { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; cursor: pointer; }
+.agent-row .goal { grid-column: 2 / -1; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--code); font-size: 17px; grid-row: span 2; }
+.status.running { color: var(--a1); background: color-mix(in srgb, var(--a1) 12%, transparent); }
+.status.running::before { animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+.status.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.status.failed, .status.interrupted { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.status.cancelled { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.agent-log { display: grid; gap: 6px; font-size: 13px; }
+.agent-log .ev { display: grid; grid-template-columns: 52px 22px 1fr; gap: 6px; }
+.agent-log .ev .t { color: var(--muted); font-size: 11.5px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+.agent-log .ev .x { white-space: pre-wrap; word-break: break-word; }
+.agent-log .ev.k-plan .x { border-left: 3px solid var(--a1); padding-left: 8px; }
 .cp { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .cp:last-child { border-bottom: 0; }
 .cp .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -261,8 +279,9 @@ h3.sub { font-size: 14px; margin: 18px 0 10px; }
         <button class="menu-item" data-open="p-connect">Подключение</button>
       </div></div>
     </div>
-    <button class="menu-item" disabled><span class="ico">🤖</span>Агенты<span class="soon">этап 2</span></button>
     <button class="menu-item" data-open="p-project"><span class="ico">🗂</span>Проект</button>
+    <button class="menu-item" data-open="p-git"><span class="ico">🔀</span>Git</button>
+    <button class="menu-item" data-open="p-agents"><span class="ico">🤖</span>Агенты<span class="soon" id="agents-running" hidden></span></button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
 
@@ -364,12 +383,93 @@ h3.sub { font-size: 14px; margin: 18px 0 10px; }
             <label>Папка проекта (полный путь)
               <input name="path" placeholder="/Users/vova/projects/my-app" autocomplete="off">
             </label>
-            <div class="hint-box small">Проект должен быть git-репозиторием без незакоммиченных изменений: результат агента ляжет отдельным коммитом в новую ветку edy/….</div>
+            <div class="hint-box small">Подойдёт любая папка. Если это git-репозиторий, перед задачей в нём не должно быть незакоммиченных изменений. Как оформлять результат — во вкладке «Git». Репозиторий с GitHub, GitLab или Gitea можно клонировать там же.</div>
             <div class="row" style="margin-top:12px"><button class="btn" type="submit">Добавить</button></div>
           </form>
           <div id="project-list"></div>
           <h3 class="sub">Снимки текущего проекта (Shadow Git)</h3>
           <div class="card" id="checkpoints"><div class="muted small">Выберите проект.</div></div>
+        </section>
+
+        <section id="p-git">
+          <h3 class="sub">Текущий проект</h3>
+          <div class="card" id="git-info"><div class="muted small">Выберите проект в разделе «Проект».</div></div>
+
+          <h3 class="sub">Как оформлять результат агента</h3>
+          <form class="card" id="git-settings">
+            <div class="browser-choice">
+              <label class="choice"><input type="radio" name="commit" value="branch" checked><span><b>Новая ветка edy/…</b><small>Один коммит в отдельной ветке, основная не меняется.</small></span></label>
+              <label class="choice"><input type="radio" name="commit" value="direct"><span><b>Прямо в текущую ветку</b><small>Коммит сразу в ветку, на которой стоит проект.</small></span></label>
+              <label class="choice"><input type="radio" name="commit" value="none"><span><b>Без коммита</b><small>Изменения остаются в папке, коммитите сами.</small></span></label>
+            </div>
+            <div class="form-grid" style="margin-top:12px">
+              <label>После коммита
+                <select name="push">
+                  <option value="off">Ничего</option>
+                  <option value="push">Push в origin</option>
+                  <option value="pr">Push + Pull/Merge Request</option>
+                </select>
+              </label>
+              <label>Аккаунт для push и PR
+                <select name="account_id"></select>
+              </label>
+              <label>Автор коммитов (имя)
+                <input name="author_name" placeholder="как в git config">
+              </label>
+              <label>Email автора
+                <input name="author_email" placeholder="как в git config">
+              </label>
+              <label class="wide">Префикс сообщения коммита
+                <input name="prefix" placeholder="Edy: ">
+              </label>
+            </div>
+            <div class="row" style="margin-top:12px"><button class="btn" type="submit">Сохранить</button></div>
+          </form>
+
+          <h3 class="sub">Клонировать репозиторий</h3>
+          <form class="card" id="git-clone">
+            <label>Адрес репозитория
+              <input name="url" placeholder="https://github.com/user/repo.git" autocomplete="off">
+            </label>
+            <label style="margin-top:10px">Аккаунт (для приватных репозиториев)
+              <select name="account_id"></select>
+            </label>
+            <div class="hint-box small">Репозиторий скачается в папку Edy и появится в списке проектов.</div>
+            <div class="row" style="margin-top:12px"><button class="btn" type="submit">Клонировать</button></div>
+          </form>
+
+          <h3 class="sub">Аккаунты GitHub, GitLab, Gitea</h3>
+          <div id="git-accounts"></div>
+          <form class="card" id="git-account-form">
+            <div class="form-grid">
+              <label>Хостинг
+                <select name="kind">
+                  <option value="github">GitHub</option>
+                  <option value="gitlab">GitLab</option>
+                  <option value="gitea">Gitea</option>
+                </select>
+              </label>
+              <label>Название
+                <input name="label" placeholder="рабочий">
+              </label>
+              <label class="wide">Адрес сервера
+                <input name="host" placeholder="https://github.com">
+              </label>
+              <label>Логин (необязательно)
+                <input name="username" autocomplete="off">
+              </label>
+              <label>Токен доступа <span id="token-link"></span>
+                <input name="token" type="password" autocomplete="off">
+              </label>
+            </div>
+            <div class="hint-box small">Токен хранится зашифрованным и передаётся git только на время команды — в настройки репозитория он не записывается.</div>
+            <div class="row" style="margin-top:12px"><button class="btn" type="submit">Добавить аккаунт</button></div>
+          </form>
+        </section>
+
+        <section id="p-agents">
+          <div id="agents-list"></div>
+          <div id="agent-detail" hidden></div>
         </section>
 
         <section id="p-connect">
@@ -469,6 +569,9 @@ const num = (v) => v.toLocaleString("ru-RU");
 
 function toast(msg, isError) {
   const t = el("div", { class: "toast" + (isError ? " error" : "") }, msg);
+  // Несколько уведомлений подряд встают друг над другом, а не накладываются.
+  const n = document.querySelectorAll(".toast:not(#auth)").length;
+  t.style.bottom = 22 + n * 54 + "px";
   document.body.append(t);
   setTimeout(() => t.remove(), isError ? 6000 : 2500);
 }
@@ -490,8 +593,8 @@ async function api(method, path, body) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-agents": "Агенты" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-agents": loadAgents };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -1061,7 +1164,7 @@ input.addEventListener("keydown", (e) => {
 });
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
 $("#new-chat").addEventListener("click", () => {
-  if (chatMode === "orch") orchHistory = [];
+  if (chatMode === "orch") { orchHistory = []; orchConversation = ""; }
   else { if (abort) abort.abort(); history_ = []; }
   showWelcome();
   input.focus();
@@ -1087,6 +1190,8 @@ for (const b of document.querySelectorAll("#mode-seg button")) b.addEventListene
 // ============ Оркестратор ============
 let orchHistory = [];
 let orchBusy = false;
+let orchConversation = "";
+const newConversation = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 async function sendOrch() {
   if (orchBusy) return;
@@ -1098,12 +1203,13 @@ async function sendOrch() {
   if (!model) { toast("Сначала добавьте провайдера с моделями", true); openPanel("p-add"); return; }
   input.value = ""; autosize();
   addMessage("user", text);
+  if (!orchHistory.length) orchConversation = newConversation();
   orchHistory.push({ role: "user", content: text });
   const { m, body } = addMessage("bot", "", "Оркестратор · " + model);
   body.append(el("span", { class: "typing" }, el("span"), el("span"), el("span")));
   orchBusy = true;
   try {
-    const r = await api("POST", "/api/orchestrator", { project, model, messages: orchHistory });
+    const r = await api("POST", "/api/orchestrator", { project, model, messages: orchHistory, conversation: orchConversation });
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
     if (r.plan) m.append(planCard(r.plan, project));
@@ -1127,7 +1233,7 @@ function planCard(plan, project) {
     start.disabled = true;
     const request = orchHistory.filter((x) => x.role === "user").map((x) => x.content).join("\n");
     try {
-      const v = await api("POST", "/api/tasks", { project, request, plan, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
+      const v = await api("POST", "/api/tasks", { project, request, plan, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
       start.textContent = "Работа начата";
       watchTask(v);
       refreshProjectState();
@@ -1183,7 +1289,7 @@ function showResult(t, box, title) {
   box.hidden = false;
   box.replaceChildren();
   if (t.state === "done") {
-    const approve = el("button", { class: "btn", type: "button" }, "✓ Approve — в новую ветку");
+    const approve = el("button", { class: "btn", type: "button", title: "Как оформлять результат — во вкладке Git" }, "✓ Approve");
     const reject = el("button", { class: "btn danger", type: "button" }, "✕ Reject — откатить");
     const decide = async (action) => {
       approve.disabled = reject.disabled = true;
@@ -1191,7 +1297,7 @@ function showResult(t, box, title) {
         const r = await api("POST", `/api/tasks/${t.id}/${action}`);
         title.textContent = stateTitle[r.state];
         box.replaceChildren(r.state === "approved"
-          ? el("div", {}, "✓ Один коммит в ветке ", el("code", {}, r.branch), ". Проект переключён на неё, основная ветка не изменилась.")
+          ? el("div", {}, "✓ " + (r.note || "Применено"), r.pr_url ? el("div", { style: "margin-top:6px" }, el("a", { href: r.pr_url, target: "_blank", rel: "noopener" }, "Открыть запрос на слияние ↗")) : "")
           : el("div", {}, "Изменения откачены, проект в исходном состоянии."));
         refreshProjectState();
       } catch (e) { toast(e.message, true); approve.disabled = reject.disabled = false; }
@@ -1223,10 +1329,14 @@ async function refreshProjectState() {
   const p = projects.find((x) => x.path === sel.value);
   $("#project-state").textContent = !p ? "" : p.running ? "идёт задача"
     : p.pending ? "результат ждёт решения: Approve или Reject"
-    : p.ready ? `ветка ${p.branch} · готов` : "⚠ " + p.problem;
+    : p.ready ? (p.git ? `ветка ${p.branch} · готов` : "папка без git · готов") : "⚠ " + p.problem;
   if ($("#drawer").classList.contains("open") && !$("#p-project").hidden) renderProjects();
 }
-$("#project").addEventListener("change", (e) => { store.set("edy-project", e.target.value); refreshProjectState(); });
+$("#project").addEventListener("change", (e) => {
+  store.set("edy-project", e.target.value);
+  refreshProjectState();
+  if ($("#drawer").classList.contains("open") && !$("#p-git").hidden) loadGit();
+});
 
 async function loadProjects() {
   await refreshProjectState();
@@ -1237,7 +1347,7 @@ function renderProjects() {
   const current = $("#project").value;
   list.replaceChildren(...projects.map((p) => el("div", { class: "card" + (p.path === current ? " current" : "") },
     el("div", { class: "row spread" },
-      el("div", { class: "row" }, el("strong", {}, p.name), p.branch ? el("span", { class: "badge" }, p.branch) : "",
+      el("div", { class: "row" }, el("strong", {}, p.name), p.git ? (p.branch ? el("span", { class: "badge" }, p.branch) : "") : el("span", { class: "badge cli" }, "папка"),
         p.running ? el("span", { class: "status checking" }, "идёт задача")
           : p.pending ? el("span", { class: "status login_open" }, "ждёт решения")
           : p.ready ? el("span", { class: "status ok" }, "готов") : el("span", { class: "status error" }, "не готов")),
@@ -1290,6 +1400,198 @@ $("#project-form").addEventListener("submit", async (e) => {
     refreshProjectState();
   } catch (err) { toast(err.message, true); }
 });
+
+// ============ Git ============
+let gitAccounts = [];
+const tokenLinks = {
+  github: ["https://github.com/settings/tokens", "https://github.com"],
+  gitlab: ["https://gitlab.com/-/user_settings/personal_access_tokens", "https://gitlab.com"],
+  gitea: ["", "https://gitea.example.com"],
+};
+
+function fillAccountSelects() {
+  for (const sel of document.querySelectorAll("select[name=account_id]")) {
+    const cur = sel.value;
+    sel.replaceChildren(el("option", { value: "0" }, "— без аккаунта"), ...gitAccounts.map((a) => el("option", { value: String(a.id) }, `${a.label} · ${a.kind}`)));
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  }
+}
+
+async function loadGit() {
+  try { gitAccounts = await api("GET", "/api/git/accounts"); } catch (e) { toast(e.message, true); }
+  fillAccountSelects();
+  $("#git-accounts").replaceChildren(...gitAccounts.map((a) => el("div", { class: "card" },
+    el("div", { class: "row spread" },
+      el("div", { class: "row" }, el("strong", {}, a.label), el("span", { class: "badge" }, a.kind)),
+      el("button", { class: "btn danger icon", onclick: async () => {
+        if (!confirm(`Удалить аккаунт «${a.label}»?`)) return;
+        try { await api("DELETE", "/api/git/accounts/" + a.id); loadGit(); } catch (e) { toast(e.message, true); }
+      } }, "Удалить")),
+    el("div", { class: "small muted", style: "margin-top:4px" }, a.host + (a.username ? " · " + a.username : "")))));
+  syncAccountForm();
+
+  const path = $("#project").value;
+  const box = $("#git-info");
+  const form = $("#git-settings");
+  if (!path) { box.replaceChildren(el("div", { class: "muted small" }, "Выберите или добавьте проект в разделе «Проект».")); form.hidden = true; return; }
+  form.hidden = false;
+  let info;
+  try { info = await api("GET", "/api/git/info?path=" + encodeURIComponent(path)); } catch (e) { box.replaceChildren(el("div", { class: "small" }, e.message)); return; }
+  const name = path.split("/").pop();
+  if (!info.is_repo) {
+    box.replaceChildren(el("div", { class: "kv" }, el("span", {}, "Проект"), el("strong", {}, name), el("span", {}, "Тип"), el("span", {}, "обычная папка без git")),
+      el("div", { class: "small muted", style: "margin-top:8px" }, "Результат агента останется в папке, снимки — в разделе «Проект». Чтобы коммитить, выполните в папке git init."));
+  } else {
+    const pull = el("button", { class: "btn ghost", type: "button" }, "⬇ Pull");
+    const push = el("button", { class: "btn ghost", type: "button" }, "⬆ Push");
+    const act = (btn, action) => btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try { const r = await api("POST", `/api/git/${action}`, { path }); toast(r.output || "Готово"); loadGit(); refreshProjectState(); }
+      catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    });
+    act(pull, "pull"); act(push, "push");
+    box.replaceChildren(
+      el("div", { class: "kv" },
+        el("span", {}, "Проект"), el("strong", {}, name),
+        el("span", {}, "Ветка"), el("span", {}, el("code", {}, info.branch)),
+        el("span", {}, "origin"), el("span", { class: "mono" }, info.remote || "не задан"),
+        el("span", {}, "Изменения"), el("span", {}, info.changed.length ? `${info.changed.length} файл(ов) не закоммичено` : "нет")),
+      info.changed.length ? el("div", { class: "list-lines", style: "margin-top:8px" }, info.changed.join("\n")) : "",
+      info.log.length ? el("div", { style: "margin-top:10px" }, el("div", { class: "small muted" }, "Последние коммиты"), el("div", { class: "list-lines", style: "margin-top:4px" }, info.log.join("\n"))) : "",
+      info.remote ? el("div", { class: "row", style: "margin-top:12px" }, pull, push) : "");
+  }
+  const st = info.settings;
+  form.querySelector(`input[name=commit][value=${st.commit}]`).checked = true;
+  form.push.value = st.push;
+  form.account_id.value = String(st.account_id || 0);
+  form.author_name.value = st.author_name || "";
+  form.author_email.value = st.author_email || "";
+  form.prefix.value = st.prefix || "";
+}
+
+$("#git-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const settings = {
+    commit: f.querySelector("input[name=commit]:checked").value,
+    push: f.push.value,
+    account_id: Number(f.account_id.value) || 0,
+    author_name: f.author_name.value.trim(),
+    author_email: f.author_email.value.trim(),
+    prefix: f.prefix.value,
+  };
+  try { await api("PUT", "/api/git/settings", { path: $("#project").value, settings }); toast("Настройки сохранены"); }
+  catch (err) { toast(err.message, true); }
+});
+
+$("#git-clone").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true; btn.textContent = "Клонирую…";
+  try {
+    const p = await api("POST", "/api/git/clone", { url: e.target.url.value.trim(), account_id: Number(e.target.account_id.value) || 0 });
+    e.target.url.value = "";
+    store.set("edy-project", p.path);
+    await refreshProjectState();
+    $("#project").value = p.path;
+    toast(`Репозиторий «${p.name}» склонирован и выбран`);
+    loadGit();
+  } catch (err) { toast(err.message, true); }
+  btn.disabled = false; btn.textContent = "Клонировать";
+});
+
+function syncAccountForm() {
+  const f = $("#git-account-form");
+  const [link, host] = tokenLinks[f.kind.value];
+  f.host.placeholder = host;
+  $("#token-link").replaceChildren(link ? el("a", { href: link, target: "_blank", rel: "noopener" }, "создать ↗") : "");
+}
+$("#git-account-form").kind.addEventListener("change", syncAccountForm);
+$("#git-account-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("POST", "/api/git/accounts", { kind: f.kind.value, host: f.host.value.trim(), label: f.label.value.trim(), username: f.username.value.trim(), token: f.token.value });
+    f.token.value = ""; f.label.value = ""; f.host.value = ""; f.username.value = "";
+    toast("Аккаунт добавлен, токен зашифрован");
+    loadGit();
+  } catch (err) { toast(err.message, true); }
+});
+
+// ============ Агенты ============
+const roleIcon = { orchestrator: "🧭", executor: "🛠" };
+const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель" };
+const agentState = { running: "работает", done: "закончил", failed: "не справился", cancelled: "остановлен", interrupted: "прерван" };
+let agentsTimer = null;
+let openAgent = null;
+
+const fmtTime = (t) => new Date(t).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function duration(a) {
+  const end = a.finished ? new Date(a.finished) : new Date();
+  const s = Math.max(0, Math.round((end - new Date(a.created)) / 1000));
+  return s < 60 ? s + " с" : Math.floor(s / 60) + " мин " + (s % 60) + " с";
+}
+
+async function loadAgents() {
+  clearTimeout(agentsTimer);
+  if (openAgent) return showAgent(openAgent);
+  let list;
+  try { list = await api("GET", "/api/agents"); } catch (e) { toast(e.message, true); return; }
+  $("#agent-detail").hidden = true;
+  const box = $("#agents-list");
+  box.hidden = false;
+  const running = list.filter((a) => a.state === "running").length;
+  updateRunningBadge(running);
+  box.replaceChildren(
+    el("div", { class: "small muted", style: "margin-bottom:10px" }, `Всего агентов: ${list.length} · работают сейчас: ${running}. Журнал хранится в базе Edy (SQLite).`),
+    ...(list.length ? list.map((a) => el("div", { class: "card lift agent-row", onclick: () => showAgent(a.id) },
+      el("div", { class: "agent-ico" }, roleIcon[a.role] || "🤖"),
+      el("div", { class: "row" }, el("strong", {}, roleName[a.role] || a.role), el("span", { class: "small muted" }, a.model)),
+      el("span", { class: "status " + a.state }, agentState[a.state] || a.state),
+      el("div", { class: "goal", title: a.goal }, `${fmtTime(a.created)} · ${duration(a)} · ${a.events} действий · ${a.project.split("/").pop() || "—"} · ${a.goal.split("\n")[0]}`)))
+      : [el("div", { class: "card empty" }, "Агентов пока не было. Они появятся, когда вы начнёте разговор с Оркестратором.")]));
+  if ($("#drawer").classList.contains("open") && !$("#p-agents").hidden) agentsTimer = setTimeout(loadAgents, running ? 2000 : 6000);
+}
+
+function updateRunningBadge(n) {
+  const b = $("#agents-running");
+  b.hidden = !n;
+  b.textContent = n ? `${n} работает` : "";
+}
+
+async function showAgent(id) {
+  clearTimeout(agentsTimer);
+  openAgent = id;
+  let d;
+  try { d = await api("GET", "/api/agents/" + encodeURIComponent(id)); } catch (e) { toast(e.message, true); openAgent = null; return loadAgents(); }
+  const a = d.agent;
+  $("#agents-list").hidden = true;
+  const box = $("#agent-detail");
+  box.hidden = false;
+  box.replaceChildren(
+    el("button", { class: "btn ghost icon", style: "margin-bottom:12px", onclick: () => { openAgent = null; loadAgents(); } }, "← Все агенты"),
+    el("div", { class: "card" },
+      el("div", { class: "row spread" }, el("div", { class: "row" }, el("span", { style: "font-size:20px" }, roleIcon[a.role] || "🤖"), el("strong", {}, roleName[a.role] || a.role)), el("span", { class: "status " + a.state }, agentState[a.state] || a.state)),
+      el("div", { class: "kv", style: "margin-top:12px" },
+        el("span", {}, "id"), el("span", { class: "mono" }, a.id),
+        el("span", {}, "Модель"), el("span", {}, a.model),
+        el("span", {}, "Проект"), el("span", { class: "mono" }, a.project || "—"),
+        el("span", {}, "Создан"), el("span", {}, fmtTime(a.created)),
+        el("span", {}, "Закончил"), el("span", {}, a.finished ? fmtTime(a.finished) : "ещё работает"),
+        el("span", {}, "Длительность"), el("span", {}, duration(a)),
+        a.task_id ? el("span", {}, "Задача") : "", a.task_id ? el("span", { class: "mono" }, a.task_id) : "",
+        a.summary ? el("span", {}, "Итог") : "", a.summary ? el("span", {}, a.summary) : "",
+        a.error ? el("span", {}, "Ошибка") : "", a.error ? el("span", { style: "color:var(--danger)" }, a.error) : ""),
+      el("div", { class: "small muted", style: "margin-top:10px" }, "Задача:"),
+      el("div", { style: "white-space:pre-wrap;margin-top:4px" }, a.goal)),
+    el("h3", { class: "sub" }, `Что делал (${d.events.length})`),
+    el("div", { class: "card agent-log" }, ...(d.events.length ? d.events.map((e) => el("div", { class: "ev k-" + e.kind },
+      el("span", { class: "t" }, new Date(e.at).toLocaleTimeString("ru-RU")),
+      el("span", {}, { user: "👤", plan: "📋", ...kindIcon }[e.kind] || "•"),
+      el("span", { class: "x" }, e.text))) : [el("div", { class: "muted small" }, "Действий пока нет.")])));
+  if (a.state === "running" && $("#drawer").classList.contains("open") && !$("#p-agents").hidden) agentsTimer = setTimeout(() => showAgent(id), 2000);
+}
 
 // ============ Старт ============
 (async () => {

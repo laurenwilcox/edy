@@ -51,6 +51,8 @@ type Handler struct {
 	// LLM — доступ к моделям через OmniRoute для Оркестратора; Tasks — фоновые задачи агента.
 	LLM   agent.LLM
 	Tasks *tasks.Manager
+	// ReposDir — куда клонировать репозитории с GitHub, GitLab и Gitea.
+	ReposDir string
 
 	mux *http.ServeMux
 }
@@ -75,6 +77,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("GET /api/usage", h.usage)
 	m.HandleFunc("PUT /api/budget", h.setBudget)
 	h.registerProjectRoutes(m)
+	h.registerGitRoutes(m)
 	h.mux = m
 	return h
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/store"
 )
 
 const (
@@ -166,5 +167,69 @@ func TestStartRefusesDirtyProject(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x"), 0o644)
 	if _, err := NewManager(&fixer{}).Start(dir, "x", []string{"m/m"}); err == nil {
 		t.Fatal("в «грязном» проекте задача не должна стартовать")
+	}
+}
+
+type memJournal struct {
+	mu       sync.Mutex
+	agents   []store.Agent
+	events   map[string][]string
+	finished map[string]string
+}
+
+func (j *memJournal) CreateAgent(a store.Agent) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.agents = append(j.agents, a)
+	return nil
+}
+func (j *memJournal) AddAgentEvent(id, kind, text string, at time.Time) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.events == nil {
+		j.events = map[string][]string{}
+	}
+	j.events[id] = append(j.events[id], kind+": "+text)
+	return nil
+}
+func (j *memJournal) FinishAgent(id, state, summary, errText string) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.finished == nil {
+		j.finished = map[string]string{}
+	}
+	j.finished[id] = state + "|" + summary + errText
+	return nil
+}
+
+func TestJournalAndCustomFinalize(t *testing.T) {
+	dir := project(t)
+	j := &memJournal{}
+	m := NewManager(&fixer{})
+	m.Journal = j
+	var finalized string
+	m.Finalize = func(ctx context.Context, project, goal, summary, model string) (Outcome, error) {
+		finalized = project + "|" + model
+		return Outcome{Branch: "main", Note: "коммит в main, отправлено"}, nil
+	}
+	v, _ := m.Start(dir, "Почини Add", []string{"m/m"})
+	v = wait(t, m, v.ID)
+	if len(v.Agents) != 1 || len(j.agents) != 1 || j.agents[0].Role != store.RoleExecutor || j.agents[0].Model != "m/m" {
+		t.Fatalf("агенты: %+v / %+v", v.Agents, j.agents)
+	}
+	id := v.Agents[0]
+	j.mu.Lock()
+	evs := strings.Join(j.events[id], "\n")
+	fin := j.finished[id]
+	j.mu.Unlock()
+	if !strings.Contains(evs, "Снимок №0") || !strings.Contains(evs, "replace_in_file") || !strings.Contains(evs, "✓ go test") {
+		t.Fatalf("события агента в журнале:\n%s", evs)
+	}
+	if fin != "done|Исправил Add" {
+		t.Fatalf("итог агента = %q", fin)
+	}
+	a, err := m.Approve(v.ID)
+	if err != nil || finalized != dir+"|m/m" || a.Note != "коммит в main, отправлено" {
+		t.Fatalf("approve: %+v %v %q", a, err, finalized)
 	}
 }

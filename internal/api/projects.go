@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/gitops"
 	"github.com/laurenwilcox/name/internal/orchestrator"
+	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
 )
 
@@ -38,6 +41,7 @@ type projectJSON struct {
 	Problem string `json:"problem,omitempty"`
 	Running bool   `json:"running"`
 	Pending bool   `json:"pending"` // готовый результат ждёт Approve/Reject
+	Git     bool   `json:"git"`     // git-репозиторий или обычная папка
 }
 
 func (h *Handler) projectPaths() []string {
@@ -66,7 +70,10 @@ func (h *Handler) projectInfo(ctx context.Context, path string) projectJSON {
 	} else {
 		p.Ready = true
 	}
-	p.Branch, _ = agent.Branch(ctx, path)
+	p.Git = gitops.IsRepo(path)
+	if p.Git {
+		p.Branch, _ = agent.Branch(ctx, path)
+	}
 	return p
 }
 
@@ -189,9 +196,10 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Project  string      `json:"project"`
-		Model    string      `json:"model"`
-		Messages []agent.Msg `json:"messages"`
+		Project      string      `json:"project"`
+		Model        string      `json:"model"`
+		Messages     []agent.Msg `json:"messages"`
+		Conversation string      `json:"conversation"` // id разговора: один разговор — один агент в журнале
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -207,14 +215,48 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 			history = append(history, agent.Msg{Role: m.Role, Content: m.Content})
 		}
 	}
+	agentID := h.journalOrchestrator(req.Conversation, req.Model, req.Project, history)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history)
+	if agentID != "" {
+		switch {
+		case err != nil:
+			h.Store.AddAgentEvent(agentID, "error", err.Error(), time.Now())
+			h.Store.TouchAgent(agentID, store.AgentFailed, err.Error())
+		case out.Plan != "":
+			h.Store.AddAgentEvent(agentID, "model", out.Text, time.Now())
+			h.Store.AddAgentEvent(agentID, "plan", out.Plan, time.Now())
+			h.Store.TouchAgent(agentID, store.AgentDone, "Предложен план")
+		default:
+			h.Store.AddAgentEvent(agentID, "model", out.Text, time.Now())
+			h.Store.TouchAgent(agentID, store.AgentDone, "Ждёт ответа разработчика")
+		}
+	}
 	if err != nil {
 		fail(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	reply(w, out)
+}
+
+// journalOrchestrator ведёт Оркестратора в журнале: агент создаётся на
+// первую реплику разговора, дальше в него пишутся реплики и планы.
+func (h *Handler) journalOrchestrator(conversation, model, project string, history []agent.Msg) string {
+	if conversation == "" || len(history) == 0 || strings.ContainsAny(conversation, " /") || len(conversation) > 64 {
+		return ""
+	}
+	id := "orch-" + conversation
+	last := history[len(history)-1]
+	if _, err := h.Store.Agent(id); errors.Is(err, store.ErrNotFound) {
+		h.Store.CreateAgent(store.Agent{ID: id, Role: store.RoleOrchestrator, Model: model, Project: project, Goal: history[0].Content})
+	} else {
+		h.Store.TouchAgent(id, store.AgentRunning, "")
+	}
+	if last.Role == "user" {
+		h.Store.AddAgentEvent(id, "user", last.Content, time.Now())
+	}
+	return id
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
@@ -231,10 +273,11 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Project string   `json:"project"`
-		Request string   `json:"request"`
-		Plan    string   `json:"plan"`
-		Models  []string `json:"models"`
+		Project      string   `json:"project"`
+		Request      string   `json:"request"`
+		Plan         string   `json:"plan"`
+		Models       []string `json:"models"`
+		Conversation string   `json:"conversation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -261,6 +304,11 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if req.Conversation != "" {
+		if _, err := h.Store.Agent("orch-" + req.Conversation); err == nil {
+			h.Store.AddAgentEvent("orch-"+req.Conversation, "info", "План утверждён, запущена задача "+v.ID, time.Now())
+		}
 	}
 	replyStatus(w, http.StatusCreated, v)
 }
