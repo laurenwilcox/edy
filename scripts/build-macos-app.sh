@@ -22,7 +22,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 echo "Собираю окно Edy ($VERSION)…"
 CGO_ENABLED=1 \
 CGO_LDFLAGS="-framework UniformTypeIdentifiers" \
-MACOSX_DEPLOYMENT_TARGET=11.0 \
+MACOSX_DEPLOYMENT_TARGET=13.0 \
   go build -tags desktop,production -trimpath -ldflags "-s -w" -o "$APP/Contents/MacOS/Edy" ./cmd/edy-app
 
 echo "Собираю команду edy…"
@@ -40,7 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppTransportSecurity</key>
   <dict>
