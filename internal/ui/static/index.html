@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edy</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2129; --muted: #6b7280; --border: #e3e6eb;
+  --accent: #4f46e5; --accent-text: #ffffff; --danger: #dc2626; --ok: #059669; --warn: #d97706;
+  --code: #f1f3f6; --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317; --panel: #1a1d23; --text: #e6e8ec; --muted: #9aa1ad; --border: #2a2e36;
+    --accent: #818cf8; --accent-text: #0b0d12; --danger: #f87171; --ok: #34d399; --warn: #fbbf24;
+    --code: #23272f;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+nav { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; }
+nav button { white-space: nowrap; background: none; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
+nav button.active { background: var(--code); color: var(--text); font-weight: 600; }
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+h2 { font-size: 16px; margin: 28px 0 12px; }
+h2:first-child { margin-top: 0; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 99px; background: var(--code); color: var(--muted); font-size: 12px; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--code); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+button.btn { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+button.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+button.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--border); font-weight: 500; }
+button.btn:disabled { opacity: .5; cursor: default; }
+input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.keys { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; display: grid; gap: 6px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.stat { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.meter { height: 8px; background: var(--code); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+.meter > div { height: 100%; background: var(--ok); }
+.meter.warn > div { background: var(--warn); }
+.meter.over > div { background: var(--danger); }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: 90vw; }
+.toast.error { background: var(--danger); color: #fff; }
+.notice { border-left: 3px solid var(--warn); }
+pre { white-space: pre-wrap; max-height: 240px; overflow: auto; background: var(--code); padding: 10px; border-radius: 8px; font-size: 12px; }
+.empty { text-align: center; color: var(--muted); padding: 28px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Edy</h1>
+  <nav>
+    <button data-tab="providers" class="active">Провайдеры</button>
+    <button data-tab="usage">Расходы</button>
+    <button data-tab="connect">Подключение</button>
+  </nav>
+</header>
+<main>
+  <div id="auth" class="card notice" hidden>
+    Нет токена доступа. Откройте интерфейс командой <code>edy ui</code>.
+  </div>
+
+  <section id="providers">
+    <h2>Подключённые провайдеры</h2>
+    <div id="provider-list"></div>
+
+    <h2>Добавить провайдера</h2>
+    <form id="add-form" class="card">
+      <div class="grid">
+        <label>Тип
+          <select name="kind">
+            <option value="cli">Терминальная утилита (подписка)</option>
+            <option value="anthropic">Anthropic API</option>
+            <option value="openai">OpenAI-совместимый API</option>
+          </select>
+        </label>
+        <label>Имя (префикс модели)
+          <input name="name" placeholder="agy" required>
+        </label>
+        <label data-for="cli">Профиль
+          <select name="preset"></select>
+        </label>
+        <label data-for="openai">Адрес API
+          <input name="base_url" placeholder="http://localhost:11434/v1">
+        </label>
+        <label>Модели через запятую
+          <input name="models" placeholder="claude-sonnet-4-6">
+        </label>
+        <label data-for="openai anthropic">$ за 1M входных токенов
+          <input name="price_in" type="number" min="0" step="any" value="0">
+        </label>
+        <label data-for="openai anthropic">$ за 1M выходных токенов
+          <input name="price_out" type="number" min="0" step="any" value="0">
+        </label>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" type="submit">Добавить</button>
+        <span class="muted small" id="preset-hint"></span>
+      </div>
+      <div id="install-box" class="card notice" style="margin-top:14px" hidden></div>
+    </form>
+  </section>
+
+  <section id="usage" hidden>
+    <h2>Сегодня</h2>
+    <div class="card">
+      <div class="row spread">
+        <div>
+          <div class="stat" id="spent">$0.00</div>
+          <div class="muted small" id="budget-text"></div>
+        </div>
+        <form id="budget-form" class="row">
+          <label>Дневной лимит, $
+            <input name="usd" type="number" min="0" step="any" style="width:120px">
+          </label>
+          <button class="btn ghost" type="submit" style="align-self:end">Сохранить</button>
+        </form>
+      </div>
+      <div class="meter" id="meter" hidden><div></div></div>
+    </div>
+    <h2>По агентам и моделям</h2>
+    <div class="card" style="padding:0; overflow-x:auto">
+      <table>
+        <thead><tr><th>Агент</th><th>Модель</th><th class="num">Запросов</th><th class="num">Токены вход / выход</th><th class="num">Стоимость</th></tr></thead>
+        <tbody id="usage-rows"></tbody>
+      </table>
+    </div>
+    <p class="muted small">Для CLI-утилит токены оцениваются примерно: они не сообщают точное число.</p>
+  </section>
+
+  <section id="connect" hidden>
+    <h2>Подключение программ к OmniRoute</h2>
+    <div class="card">
+      <p>Любая программа, которая работает с OpenAI API, может использовать модели Edy.</p>
+      <div class="grid">
+        <label>Base URL <div class="row"><code id="base-url"></code><button class="btn ghost" data-copy="base-url">Копировать</button></div></label>
+        <label>API-ключ (токен) <div class="row"><code id="token-view">••••••••</code><button class="btn ghost" id="show-token">Показать</button><button class="btn ghost" data-copy="token">Копировать</button></div></label>
+      </div>
+      <p class="muted small">Имя модели: <code>провайдер/модель</code>, например <code id="model-example">agy/claude-sonnet-4-6</code>.</p>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// Токен приходит в #-части адреса (она не уходит на сервер и в логи)
+// и живёт в sessionStorage только до закрытия вкладки.
+const token = (() => {
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
+  if (fromHash) {
+    try { sessionStorage.setItem("edy-token", fromHash); } catch {}
+    history.replaceState(null, "", location.pathname);
+    return fromHash;
+  }
+  try { return sessionStorage.getItem("edy-token") || ""; } catch { return ""; }
+})();
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, attrs = {}, ...children) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const c of children) n.append(c instanceof Node ? c : document.createTextNode(c ?? ""));
+  return n;
+};
+const money = (v) => "$" + (v < 0.01 && v > 0 ? v.toFixed(4) : v.toFixed(2));
+const num = (v) => v.toLocaleString("ru-RU");
+
+function toast(msg, isError) {
+  const t = el("div", { class: "toast" + (isError ? " error" : "") }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), isError ? 6000 : 2500);
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Authorization": "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(data?.error || ("Ошибка " + res.status));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+// --- Вкладки ---
+function showTab(name) {
+  for (const b of document.querySelectorAll("nav button")) b.classList.toggle("active", b.dataset.tab === name);
+  for (const s of document.querySelectorAll("main > section")) s.hidden = s.id !== name;
+  try { localStorage.setItem("edy-tab", name); } catch {}
+  ({ providers: loadProviders, usage: loadUsage, connect: loadConnect })[name]();
+}
+for (const b of document.querySelectorAll("nav button")) b.addEventListener("click", () => showTab(b.dataset.tab));
+
+// --- Провайдеры ---
+const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм." };
+let presets = [];
+
+async function loadProviders() {
+  const list = $("#provider-list");
+  let providers;
+  try { providers = await api("GET", "/api/providers"); } catch (e) { return toast(e.message, true); }
+  list.replaceChildren();
+  if (!providers.length) list.append(el("div", { class: "card empty" }, "Пока ни одного провайдера. Добавьте первый ниже."));
+  for (const p of providers) list.append(providerCard(p));
+}
+
+function providerCard(p) {
+  const target = p.kind === "cli" ? p.command.join(" ") : (p.base_url || "адрес по умолчанию");
+  const card = el("div", { class: "card" },
+    el("div", { class: "row spread" },
+      el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" }, kindNames[p.kind] || p.kind)),
+      el("button", { class: "btn danger", onclick: () => removeProvider(p.name) }, "Удалить")),
+    el("div", { class: "muted small", style: "margin-top:6px" }, el("span", { class: "mono" }, target)),
+    el("div", { class: "row small", style: "margin-top:8px" },
+      ...(p.models.length ? p.models.map((m) => el("code", {}, p.name + "/" + m)) : [el("span", { class: "muted" }, "модели не указаны")])),
+  );
+  if (p.kind !== "cli") card.append(keysBlock(p));
+  return card;
+}
+
+function keysBlock(p) {
+  const box = el("div", { class: "keys" });
+  box.append(el("div", { class: "small muted" }, p.keys.length
+    ? "Ключи (при лимите запрос уходит на следующий):"
+    : "Ключей нет. Для локальных API вроде Ollama ключ не нужен."));
+  for (const k of p.keys) {
+    box.append(el("div", { class: "row spread" },
+      el("span", {}, (k.label || "без метки") + " ", k.disabled ? el("span", { class: "badge" }, "отключён провайдером") : ""),
+      el("button", { class: "btn danger", onclick: () => removeKey(k.id) }, "Удалить")));
+  }
+  const label = el("input", { placeholder: "метка, например «рабочий»" });
+  const secret = el("input", { type: "password", placeholder: "API-ключ", autocomplete: "off" });
+  box.append(el("form", { class: "row", onsubmit: async (e) => {
+    e.preventDefault();
+    try {
+      await api("POST", `/api/providers/${encodeURIComponent(p.name)}/keys`, { label: label.value, secret: secret.value });
+      toast("Ключ зашифрован и сохранён");
+      loadProviders();
+    } catch (err) { toast(err.message, true); }
+  } }, label, secret, el("button", { class: "btn ghost", type: "submit" }, "Добавить ключ")));
+  return box;
+}
+
+async function removeProvider(name) {
+  if (!confirm(`Удалить провайдера «${name}» вместе с его ключами?`)) return;
+  try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
+  catch (e) { toast(e.message, true); }
+}
+
+async function removeKey(id) {
+  if (!confirm("Удалить ключ?")) return;
+  try { await api("DELETE", `/api/keys/${id}`); loadProviders(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// --- Форма добавления ---
+const form = $("#add-form");
+
+function syncForm() {
+  const kind = form.kind.value;
+  for (const l of form.querySelectorAll("[data-for]")) l.hidden = !l.dataset.for.split(" ").includes(kind);
+  const pr = presets.find((p) => p.name === form.preset.value);
+  $("#preset-hint").textContent = kind === "cli" && pr ? "Запуск: " + pr.command.join(" ") : "";
+}
+form.kind.addEventListener("change", syncForm);
+form.preset.addEventListener("change", syncForm);
+
+function formBody() {
+  const kind = form.kind.value;
+  return {
+    name: form.name.value.trim(),
+    kind,
+    preset: kind === "cli" ? form.preset.value : "",
+    base_url: kind === "openai" ? form.base_url.value : "",
+    models: form.models.value.split(","),
+    price_in: kind === "cli" ? 0 : Number(form.price_in.value) || 0,
+    price_out: kind === "cli" ? 0 : Number(form.price_out.value) || 0,
+  };
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const box = $("#install-box");
+  box.hidden = true;
+  try {
+    await api("POST", "/api/providers", formBody());
+    toast(`Провайдер «${form.name.value.trim()}» добавлен`);
+    form.name.value = ""; form.models.value = "";
+    loadProviders();
+  } catch (err) {
+    if (err.status === 409 && err.data?.install) return offerInstall(err.data);
+    toast(err.message, true);
+  }
+});
+
+function offerInstall(info) {
+  const box = $("#install-box");
+  const btn = el("button", { class: "btn", type: "button" }, "Установить");
+  const out = el("pre", { hidden: "" });
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Устанавливаю… (до нескольких минут)";
+    try {
+      const res = await api("POST", "/api/install", { preset: info.tool });
+      out.textContent = res.output; out.hidden = false;
+      toast("Установлено: " + res.path);
+      form.requestSubmit();
+    } catch (e) {
+      out.textContent = e.data?.output || ""; out.hidden = !out.textContent;
+      toast(e.message, true);
+      btn.disabled = false; btn.textContent = "Повторить установку";
+    }
+  });
+  box.replaceChildren(
+    el("div", {}, el("strong", {}, info.error + ".")),
+    el("p", { class: "small" }, "Edy может установить её командой ниже. Она скачает установщик из интернета — проверьте адрес перед запуском."),
+    el("code", {}, info.install),
+    el("div", { class: "row", style: "margin-top:10px" }, btn),
+    out);
+  box.hidden = false;
+}
+
+// --- Расходы ---
+async function loadUsage() {
+  let u;
+  try { u = await api("GET", "/api/usage"); } catch (e) { return toast(e.message, true); }
+  $("#spent").textContent = money(u.today_usd);
+  $("#budget-text").textContent = u.budget_usd > 0 ? `из ${money(u.budget_usd)} дневного лимита` : "дневной лимит не задан";
+  $("#budget-form").usd.value = u.budget_usd || "";
+  const meter = $("#meter");
+  meter.hidden = !(u.budget_usd > 0);
+  if (u.budget_usd > 0) {
+    const ratio = u.today_usd / u.budget_usd;
+    meter.firstElementChild.style.width = Math.min(100, ratio * 100) + "%";
+    meter.className = "meter" + (ratio >= 1 ? " over" : ratio >= 0.8 ? " warn" : "");
+  }
+  const rows = $("#usage-rows");
+  rows.replaceChildren();
+  if (!u.items.length) rows.append(el("tr", {}, el("td", { colspan: "5", class: "empty" }, "Сегодня запросов не было")));
+  for (const i of u.items) {
+    rows.append(el("tr", {},
+      el("td", {}, i.client || "—"),
+      el("td", {}, el("code", {}, i.provider + "/" + i.model)),
+      el("td", { class: "num" }, num(i.requests)),
+      el("td", { class: "num" }, num(i.input_tokens) + " / " + num(i.output_tokens)),
+      el("td", { class: "num" }, money(i.cost_usd))));
+  }
+}
+
+$("#budget-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("PUT", "/api/budget", { usd: Number(e.target.usd.value) || 0 });
+    toast("Лимит сохранён");
+    loadUsage();
+  } catch (err) { toast(err.message, true); }
+});
+
+// --- Подключение ---
+let info = null;
+async function loadConnect() {
+  try { info = await api("GET", "/api/info"); } catch (e) { return toast(e.message, true); }
+  $("#base-url").textContent = info.base_url;
+}
+$("#show-token").addEventListener("click", () => {
+  if (info) $("#token-view").textContent = info.token;
+});
+for (const b of document.querySelectorAll("[data-copy]")) {
+  b.addEventListener("click", async () => {
+    if (!info) return;
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy === "token" ? info.token : info.base_url);
+      toast("Скопировано");
+    } catch { toast("Не удалось скопировать", true); }
+  });
+}
+
+// --- Старт ---
+(async () => {
+  if (!token) { $("#auth").hidden = false; return; }
+  try {
+    presets = await api("GET", "/api/presets");
+    form.preset.replaceChildren(...presets.map((p) => el("option", { value: p.name }, p.name)));
+    form.preset.value = presets.some((p) => p.name === "antigravity") ? "antigravity" : presets[0]?.name;
+  } catch (e) {
+    if (e.status === 401) { $("#auth").hidden = false; return; }
+    toast(e.message, true);
+  }
+  syncForm();
+  let tab = "providers";
+  try { tab = localStorage.getItem("edy-tab") || tab; } catch {}
+  showTab(["providers", "usage", "connect"].includes(tab) ? tab : "providers");
+})();
+</script>
+</body>
+</html>

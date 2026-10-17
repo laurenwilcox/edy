@@ -122,3 +122,32 @@ func TestUsageAndSettings(t *testing.T) {
 		t.Fatalf("v = %q", v)
 	}
 }
+
+func TestKeyInfosDeleteKeyAndUsageSince(t *testing.T) {
+	s := openTest(t)
+	id, _ := s.AddProvider(Provider{Name: "p", Kind: KindOpenAI})
+	k1, _ := s.AddKey(id, "main", "sk-1")
+	s.AddKey(id, "spare", "sk-2")
+	s.DisableKey(k1)
+	infos, err := s.KeyInfos(id)
+	if err != nil || len(infos) != 2 || !infos[0].Disabled || infos[1].Label != "spare" {
+		t.Fatalf("infos = %+v, %v", infos, err)
+	}
+	if err := s.DeleteKey(k1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteKey(k1); err != ErrNotFound {
+		t.Fatalf("err = %v", err)
+	}
+
+	s.RecordUsage(Usage{Client: "backend", Provider: "p", Model: "m", InputTokens: 10, OutputTokens: 1, CostUSD: 0.1})
+	s.RecordUsage(Usage{Client: "backend", Provider: "p", Model: "m", InputTokens: 5, OutputTokens: 2, CostUSD: 0.2})
+	s.RecordUsage(Usage{Client: "ui-bot", Provider: "p", Model: "m", CostUSD: 0.05})
+	sum, err := s.UsageSince(time.Now().Add(-time.Hour))
+	if err != nil || len(sum) != 2 {
+		t.Fatalf("sum = %+v, %v", sum, err)
+	}
+	if sum[0].Client != "backend" || sum[0].Requests != 2 || sum[0].InputTokens != 15 {
+		t.Fatalf("sum[0] = %+v", sum[0])
+	}
+}

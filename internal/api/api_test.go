@@ -1,0 +1,135 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/vault"
+)
+
+const token = "edy-test"
+
+func setup(t *testing.T) (*Handler, *store.Store) {
+	t.Helper()
+	v, _ := vault.New(bytes.Repeat([]byte{5}, 32))
+	st, err := store.Open(filepath.Join(t.TempDir(), "edy.db"), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return New(st, token, "127.0.0.1:11435"), st
+}
+
+func call(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+func TestRequiresToken(t *testing.T) {
+	h, _ := setup(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/providers", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d", rec.Code)
+	}
+}
+
+func TestProviderAndKeyLifecycleNeverLeaksSecrets(t *testing.T) {
+	h, _ := setup(t)
+	if rec := call(h, "POST", "/api/providers", `{"name":"anthropic","kind":"anthropic","models":["claude-opus-5-5"," "],"price_in":4,"price_out":20}`); rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/api/providers", `{"name":"anthropic","kind":"anthropic"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("дубликат: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/api/providers/anthropic/keys", `{"label":"main","secret":"sk-ant-SECRET"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("key: %d %s", rec.Code, rec.Body)
+	}
+
+	rec := call(h, "GET", "/api/providers", "")
+	if strings.Contains(rec.Body.String(), "SECRET") {
+		t.Fatal("секрет ключа ушёл в API")
+	}
+	var list []providerJSON
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list) != 1 || len(list[0].Models) != 1 || len(list[0].Keys) != 1 || list[0].Keys[0].Label != "main" {
+		t.Fatalf("list = %+v", list)
+	}
+
+	if rec := call(h, "DELETE", "/api/keys/"+jsonInt(list[0].Keys[0].ID), ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete key: %d", rec.Code)
+	}
+	if rec := call(h, "DELETE", "/api/providers/anthropic", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete provider: %d", rec.Code)
+	}
+	if rec := call(h, "DELETE", "/api/providers/anthropic", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("повторное удаление: %d", rec.Code)
+	}
+}
+
+func TestPresetInstallFlow(t *testing.T) {
+	h, st := setup(t)
+	installed := false
+	h.FindExecutable = func(name string) (string, error) {
+		if installed {
+			return "/Users/x/.local/bin/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	var ran string
+	h.Install = func(ctx context.Context, cmd string) (string, error) {
+		ran, installed = cmd, true
+		return "ok", nil
+	}
+
+	body := `{"name":"agy","kind":"cli","preset":"antigravity","models":["claude-sonnet-4-6"]}`
+	rec := call(h, "POST", "/api/providers", body)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "antigravity.google/cli/install.sh") {
+		t.Fatalf("ожидался 409 с командой установки: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/api/install", `{"preset":"antigravity"}`); rec.Code != http.StatusOK || !strings.Contains(ran, "antigravity") {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/api/providers", body); rec.Code != http.StatusCreated {
+		t.Fatalf("после установки: %d %s", rec.Code, rec.Body)
+	}
+	p, _ := st.Provider("agy")
+	if p.Command[0] != "/Users/x/.local/bin/agy" {
+		t.Fatalf("command = %q", p.Command)
+	}
+	if rec := call(h, "POST", "/api/install", `{"preset":"rm -rf /"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("произвольная команда: %d", rec.Code)
+	}
+}
+
+func TestBudgetAndUsage(t *testing.T) {
+	h, st := setup(t)
+	if rec := call(h, "PUT", "/api/budget", `{"usd":5}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("budget: %d", rec.Code)
+	}
+	if rec := call(h, "PUT", "/api/budget", `{"usd":-1}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("отрицательный бюджет: %d", rec.Code)
+	}
+	st.RecordUsage(store.Usage{Client: "backend", Provider: "p", Model: "m", CostUSD: 1.25})
+	var u usageJSON
+	json.Unmarshal(call(h, "GET", "/api/usage", "").Body.Bytes(), &u)
+	if u.BudgetUSD != 5 || u.TodayUSD != 1.25 || len(u.Items) != 1 || u.Items[0].Client != "backend" {
+		t.Fatalf("usage = %+v", u)
+	}
+}
+
+func jsonInt(n int64) string {
+	b, _ := json.Marshal(n)
+	return string(b)
+}

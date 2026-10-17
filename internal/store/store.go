@@ -234,6 +234,42 @@ func (s *Store) Keys(providerID int64) ([]Key, error) {
 	return out, rows.Err()
 }
 
+// KeyInfo — ключ без секрета, для показа в интерфейсе.
+type KeyInfo struct {
+	ID       int64  `json:"id"`
+	Label    string `json:"label"`
+	Disabled bool   `json:"disabled"`
+}
+
+// KeyInfos возвращает все ключи провайдера без расшифровки секретов.
+func (s *Store) KeyInfos(providerID int64) ([]KeyInfo, error) {
+	rows, err := s.db.Query(`SELECT id, label, disabled FROM api_keys WHERE provider_id = ? ORDER BY id`, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []KeyInfo{}
+	for rows.Next() {
+		var k KeyInfo
+		if err := rows.Scan(&k.ID, &k.Label, &k.Disabled); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteKey(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DisableKey выключает ключ (например, после 401 от провайдера).
 func (s *Store) DisableKey(id int64) error {
 	_, err := s.db.Exec(`UPDATE api_keys SET disabled = 1 WHERE id = ?`, id)
@@ -258,6 +294,36 @@ func (s *Store) RecordUsage(u Usage) error {
 	_, err := s.db.Exec(`INSERT INTO usage(ts, provider, model, client, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?,?)`,
 		time.Now().Unix(), u.Provider, u.Model, u.Client, u.InputTokens, u.OutputTokens, u.CostUSD)
 	return err
+}
+
+// UsageSummary — расход одного агента на одной модели.
+type UsageSummary struct {
+	Client       string  `json:"client"`
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	Requests     int64   `json:"requests"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+}
+
+// UsageSince группирует расходы по агентам и моделям, самые дорогие первыми.
+func (s *Store) UsageSince(since time.Time) ([]UsageSummary, error) {
+	rows, err := s.db.Query(`SELECT client, provider, model, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd)
+		FROM usage WHERE ts >= ? GROUP BY client, provider, model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UsageSummary{}
+	for rows.Next() {
+		var u UsageSummary
+		if err := rows.Scan(&u.Client, &u.Provider, &u.Model, &u.Requests, &u.InputTokens, &u.OutputTokens, &u.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // SpentSince возвращает сумму расходов в долларах начиная с момента since.
