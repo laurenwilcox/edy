@@ -32,37 +32,42 @@ type Site struct {
 
 func (s Site) minInterval() time.Duration { return time.Duration(s.MinIntervalSec) * time.Second }
 
-// DefaultSites — встроенные профили. Селекторы составлены по известной
-// вёрстке сайтов и на реальных аккаунтах не проверены: при ошибке Edy
-// сохраняет снимок страницы, по которому селектор легко поправить.
+// DefaultSites — встроенные профили. Каждый селектор — список вариантов
+// через запятую: сайты меняют вёрстку, и запасные варианты продлевают жизнь
+// профилю. На реальных аккаунтах селекторы не проверены. При сбое Edy
+// сохраняет в web-debug снимок и список полей и кнопок страницы — по нему
+// селекторы правятся в web-sites.json без пересборки.
+//
+// Отправка не зависит только от Send: сначала нажимается Enter, кнопка
+// ищется, лишь если текст остался в поле.
 var DefaultSites = map[string]Site{
 	"chatgpt": {
 		Title:          "ChatGPT",
 		URL:            "https://chatgpt.com/",
-		Input:          "#prompt-textarea",
-		Send:           "button[data-testid='send-button']",
-		Response:       "[data-message-author-role='assistant']",
-		Busy:           "button[data-testid='stop-button']",
+		Input:          "#prompt-textarea, div.ProseMirror[contenteditable='true'], form textarea",
+		Send:           "button[data-testid='send-button'], #composer-submit-button, button[data-testid='composer-submit-button']",
+		Response:       "[data-message-author-role='assistant'] .markdown, [data-message-author-role='assistant']",
+		Busy:           "button[data-testid='stop-button'], button[aria-label*='Stop' i], button[aria-label*='Останов' i]",
 		MinIntervalSec: 15,
 		DailyLimit:     150,
 	},
 	"claude": {
 		Title:          "Claude.ai",
 		URL:            "https://claude.ai/new",
-		Input:          "div[contenteditable='true']",
-		Send:           "button[aria-label='Send message']",
-		Response:       "div[data-is-streaming]",
-		Busy:           "div[data-is-streaming='true']",
+		Input:          "div.ProseMirror[contenteditable='true'], div[contenteditable='true']",
+		Send:           "button[aria-label='Send message'], button[aria-label='Send Message'], button[aria-label*='Отправ' i]",
+		Response:       ".font-claude-response, .font-claude-message, [data-is-streaming] .standard-markdown, [data-is-streaming]",
+		Busy:           "[data-is-streaming='true'], button[aria-label*='Stop' i], button[aria-label*='Останов' i]",
 		MinIntervalSec: 15,
 		DailyLimit:     150,
 	},
 	"gemini": {
 		Title:          "Gemini",
 		URL:            "https://gemini.google.com/app",
-		Input:          "rich-textarea div[contenteditable='true']",
-		Send:           "button.send-button",
-		Response:       "message-content",
-		Busy:           "button.send-button.stop",
+		Input:          "rich-textarea .ql-editor, rich-textarea div[contenteditable='true'], div.ql-editor[contenteditable='true']",
+		Send:           "button.send-button, button[aria-label*='Send' i], button[aria-label*='Отправ' i]",
+		Response:       "message-content .markdown, model-response message-content, message-content",
+		Busy:           "button.send-button.stop, button[aria-label*='Stop' i], button[aria-label*='Остановить' i]",
 		MinIntervalSec: 15,
 		DailyLimit:     150,
 	},

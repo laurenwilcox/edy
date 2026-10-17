@@ -3,9 +3,12 @@ package webchat
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
@@ -76,12 +80,10 @@ type Manager struct {
 }
 
 type browser struct {
-	cmd      *exec.Cmd
-	done     chan struct{} // закрывается, когда процесс браузера завершился
-	cancel   context.CancelFunc
-	browser  context.Context // контекст подключения к браузеру
-	tab      context.Context // рабочая вкладка
-	tabClose context.CancelFunc
+	cmd     *exec.Cmd
+	done    chan struct{} // закрывается, когда процесс браузера завершился
+	cancel  context.CancelFunc
+	browser context.Context // единственная рабочая вкладка браузера
 }
 
 type profileLimit struct {
@@ -247,10 +249,21 @@ func (m *Manager) Check(ctx context.Context, c Conn) Status {
 		if err := run(60*time.Second, chromedp.Navigate(s.URL)); err != nil {
 			return m.fail(tab, c.Profile, fmt.Errorf("не удалось открыть %s: %w", s.URL, err))
 		}
-		if err := run(20*time.Second, chromedp.WaitVisible(s.Input, chromedp.ByQuery)); err != nil {
-			return m.fail(tab, c.Profile, fmt.Errorf("%w в %s", ErrLoginRequired, s.Title))
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			var v *string
+			if err := run(10*time.Second, chromedp.Evaluate(fmt.Sprintf(inputJS, s.Input), &v)); err == nil && v != nil {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return m.fail(tab, c.Profile, fmt.Errorf("%w в %s", ErrLoginRequired, s.Title))
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
-		return nil
 	})
 	m.record(c.Profile, err)
 	return m.Status(c.Profile)
@@ -334,8 +347,15 @@ func (m *Manager) launch(bin, profile string) (*browser, error) {
 		killGroup(cmd)
 		return nil, err
 	}
+	// Работаем в той вкладке, что Chrome открыл сам. chromedp.NewContext без
+	// WithTargetID создал бы ещё одну, а рабочая вкладка — третью.
+	pageID, err := singlePage(ws)
+	if err != nil {
+		killGroup(cmd)
+		return nil, err
+	}
 	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(), ws)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	browserCtx, browserCancel := chromedp.NewContext(allocCtx, chromedp.WithTargetID(target.ID(pageID)))
 	if err := chromedp.Run(browserCtx); err != nil {
 		browserCancel()
 		allocCancel()
@@ -343,6 +363,53 @@ func (m *Manager) launch(bin, profile string) (*browser, error) {
 		return nil, fmt.Errorf("не удалось подключиться к браузеру: %w", err)
 	}
 	return &browser{cmd: cmd, done: done, browser: browserCtx, cancel: func() { browserCancel(); allocCancel() }}, nil
+}
+
+// singlePage оставляет в браузере одну вкладку и возвращает её id. Лишние
+// вкладки (например, восстановленные после прошлого запуска) закрываются.
+func singlePage(ws string) (string, error) {
+	u, err := url.Parse(ws)
+	if err != nil {
+		return "", err
+	}
+	base := "http://" + u.Host + "/json"
+	client := http.Client{Timeout: 5 * time.Second}
+	var targets []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	for i := 0; i < 50; i++ {
+		resp, err := client.Get(base + "/list")
+		if err == nil {
+			json.NewDecoder(resp.Body).Decode(&targets)
+			resp.Body.Close()
+		}
+		hasPage := false
+		for _, t := range targets {
+			hasPage = hasPage || t.Type == "page"
+		}
+		if hasPage {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	keep := ""
+	for _, t := range targets {
+		if t.Type != "page" {
+			continue
+		}
+		if keep == "" {
+			keep = t.ID
+			continue
+		}
+		if resp, err := client.Get(base + "/close/" + t.ID); err == nil {
+			resp.Body.Close()
+		}
+	}
+	if keep == "" {
+		return "", errors.New("в браузере нет ни одной вкладки")
+	}
+	return keep, nil
 }
 
 // waitDevToolsURL ждёт, пока браузер запишет порт отладки в профиль.
@@ -382,9 +449,6 @@ func (b *browser) alive() bool {
 }
 
 func (b *browser) stop() {
-	if b.tabClose != nil {
-		b.tabClose()
-	}
 	b.cancel()
 	killGroup(b.cmd)
 	select {
@@ -404,24 +468,10 @@ func killGroup(cmd *exec.Cmd) {
 	cmd.Process.Kill()
 }
 
-// workTab возвращает рабочую вкладку, создавая её заново, если её закрыли.
+// workTab возвращает рабочую вкладку — единственную вкладку браузера. Если
+// её закрыли, браузер считается неживым и при следующем запросе перезапустится.
 func (b *browser) workTab() (context.Context, error) {
-	if b.tab != nil {
-		ctx, cancel := context.WithTimeout(b.tab, 5*time.Second)
-		err := chromedp.Run(ctx, chromedp.Evaluate("1", nil))
-		cancel()
-		if err == nil {
-			return b.tab, nil
-		}
-		b.tabClose()
-	}
-	tab, cancel := chromedp.NewContext(b.browser)
-	if err := chromedp.Run(tab); err != nil {
-		cancel()
-		return nil, err
-	}
-	b.tab, b.tabClose = tab, cancel
-	return tab, nil
+	return b.browser, nil
 }
 
 // RemoveProfile закрывает браузер подключения и удаляет его данные (cookies, вход).
@@ -534,11 +584,89 @@ type pageState struct {
 	Busy  bool   `json:"busy"`
 }
 
-const stateJS = `(() => {
-  const all = document.querySelectorAll(%q);
+// pageJS — общие функции для скриптов на странице. Селекторы сайтов могут
+// быть списками через запятую: если сайт поменял вёрстку, сработает запасной.
+const pageJS = `
+const vis = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+const leaves = (sel) => {
+  if (!sel) return [];
+  const all = [...document.querySelectorAll(sel)];
+  return all.filter((el) => !all.some((o) => o !== el && el.contains(o)));
+};
+const findInput = (sel) => [...document.querySelectorAll(sel)].find(vis) || null;
+const inputText = (el) => (el ? (el.value !== undefined ? el.value : el.innerText) || "" : "").trim();
+`
+
+const stateJS = `(() => {` + pageJS + `
+  const all = leaves(%q);
   const last = all[all.length - 1];
-  const busy = %q !== "" && !!document.querySelector(%q);
-  return { count: all.length, text: last ? last.innerText : "", busy };
+  const busySel = %q;
+  const busy = busySel !== "" && [...document.querySelectorAll(busySel)].some(vis);
+  return { count: all.length, text: last ? last.innerText.trim() : "", busy };
+})()`
+
+// inputJS возвращает текст в поле ввода или null, если поля нет.
+const inputJS = `(() => {` + pageJS + `
+  const el = findInput(%q);
+  return el ? inputText(el) : null;
+})()`
+
+// focusJS ставит курсор в конец поля ввода.
+const focusJS = `(() => {` + pageJS + `
+  const el = findInput(%q);
+  if (!el) return false;
+  el.focus();
+  if (el.isContentEditable) {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+  return true;
+})()`
+
+// insertFallbackJS — запасная вставка текста: некоторые редакторы (Quill в
+// Gemini) не принимают текст через Input.insertText.
+const insertFallbackJS = `(() => {` + pageJS + `
+  const el = findInput(%q);
+  if (!el) return false;
+  el.focus();
+  return document.execCommand("insertText", false, %q);
+})()`
+
+// genericSend — признаки кнопки отправки, общие для большинства чатов.
+const genericSend = `button[data-testid*="send" i], button[aria-label*="send" i], button[aria-label*="отправ" i], button[type="submit"]`
+
+// clickSendJS нажимает первую видимую и активную кнопку отправки.
+const clickSendJS = `(() => {` + pageJS + `
+  for (const sel of [%q, %q]) {
+    if (!sel) continue;
+    const btn = [...document.querySelectorAll(sel)].find((b) => vis(b) && !b.disabled && b.getAttribute("aria-disabled") !== "true");
+    if (btn) { btn.click(); return sel; }
+  }
+  return "";
+})()`
+
+// dumpJS собирает поля, кнопки и блоки сообщений страницы — по этому файлу
+// легко поправить селекторы сайта в web-sites.json.
+const dumpJS = `(() => {` + pageJS + `
+  const keys = ["id", "class", "role", "aria-label", "data-testid", "contenteditable", "type", "placeholder", "data-message-author-role", "data-is-streaming"];
+  const desc = (el) => {
+    const a = { tag: el.tagName.toLowerCase(), visible: vis(el) };
+    for (const k of keys) { const v = el.getAttribute(k); if (v) a[k] = v.slice(0, 160); }
+    const t = (el.innerText || "").trim();
+    if (t) a.text = t.slice(0, 100);
+    return a;
+  };
+  return {
+    url: location.href,
+    title: document.title,
+    inputs: [...document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]')].slice(0, 20).map(desc),
+    buttons: [...document.querySelectorAll('button, [role="button"]')].filter(vis).slice(0, 100).map(desc),
+    messages: [...document.querySelectorAll('[data-message-author-role], [data-testid*="message" i], [data-testid*="turn" i], [class*="message" i], [class*="response" i], [class*="markdown" i]')].slice(-40).map(desc),
+  };
 })()`
 
 // Ask отправляет prompt в веб-чат подключения и вызывает onText с полным
@@ -564,52 +692,106 @@ func (m *Manager) Ask(ctx context.Context, c Conn, prompt string, onText func(fu
 }
 
 func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, s Site, run runFunc, prompt string, onText func(string) error) error {
+	eval := func(js string, out any) error { return run(10*time.Second, chromedp.Evaluate(js, out)) }
 	state := func() (pageState, error) {
 		var st pageState
-		err := run(10*time.Second, chromedp.Evaluate(fmt.Sprintf(stateJS, s.Response, s.Busy, s.Busy), &st))
+		err := eval(fmt.Sprintf(stateJS, s.Response, s.Busy), &st)
 		return st, err
+	}
+	inputValue := func() (*string, error) {
+		var v *string
+		err := eval(fmt.Sprintf(inputJS, s.Input), &v)
+		return v, err
+	}
+	sleep := func(d time.Duration) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d):
+			return nil
+		}
 	}
 
 	if err := run(60*time.Second, chromedp.Navigate(s.URL)); err != nil {
 		return m.fail(tab, profile, fmt.Errorf("не удалось открыть %s: %w", s.URL, err))
 	}
-	if err := run(30*time.Second, chromedp.WaitVisible(s.Input, chromedp.ByQuery)); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	// Ждём поле ввода: его нет — значит, не выполнен вход.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		v, err := inputValue()
+		if err == nil && v != nil {
+			break
 		}
-		return m.fail(tab, profile, fmt.Errorf("%w в %s: на странице нет поля ввода. Нажмите «Войти» у провайдера в Edy", ErrLoginRequired, s.Title))
+		if time.Now().After(deadline) {
+			return m.fail(tab, profile, fmt.Errorf("%w в %s: на странице нет поля ввода. Нажмите «Войти» у провайдера в Edy", ErrLoginRequired, s.Title))
+		}
+		if err := sleep(500 * time.Millisecond); err != nil {
+			return err
+		}
 	}
 	before, err := state()
 	if err != nil {
 		return err
 	}
 
-	// Текст вставляется целиком, как при вставке из буфера обмена.
-	if err := run(30*time.Second,
-		chromedp.Click(s.Input, chromedp.ByQuery),
-		chromedp.ActionFunc(func(c context.Context) error { return input.InsertText(prompt).Do(c) }),
-		chromedp.Sleep(400*time.Millisecond),
-	); err != nil {
+	// 1. Вставляем текст целиком, как из буфера обмена.
+	var focused bool
+	if err := eval(fmt.Sprintf(focusJS, s.Input), &focused); err != nil || !focused {
+		return m.fail(tab, profile, errors.New("не удалось поставить курсор в поле ввода"))
+	}
+	if err := run(30*time.Second, chromedp.ActionFunc(func(c context.Context) error { return input.InsertText(prompt).Do(c) })); err != nil {
 		return m.fail(tab, profile, fmt.Errorf("не удалось ввести текст: %w", err))
 	}
-	var send chromedp.Action = chromedp.KeyEvent(kb.Enter)
-	if s.Send != "" {
-		send = chromedp.Click(s.Send, chromedp.ByQuery)
-	}
-	if err := run(30*time.Second, send); err != nil {
-		return m.fail(tab, profile, fmt.Errorf("не удалось отправить сообщение: %w", err))
+	sleep(300 * time.Millisecond)
+	if v, _ := inputValue(); v == nil || *v == "" {
+		var ok bool
+		eval(fmt.Sprintf(insertFallbackJS, s.Input, prompt), &ok)
+		sleep(300 * time.Millisecond)
+		if v, _ := inputValue(); v == nil || *v == "" {
+			return m.fail(tab, profile, errors.New("текст не вставился в поле ввода"))
+		}
 	}
 
-	// Ждём появления нового ответа, затем следим за ним, пока он не перестанет меняться.
+	// 2. Отправляем: сначала Enter, как человек; если текст остался в поле —
+	// нажимаем кнопку отправки (по селектору сайта или по общим признакам).
+	sent := func() bool {
+		if v, err := inputValue(); err == nil && v != nil && *v == "" {
+			return true
+		}
+		st, err := state()
+		return err == nil && (st.Count > before.Count || st.Busy)
+	}
+	if err := run(10*time.Second, chromedp.KeyEvent(kb.Enter)); err != nil {
+		return m.fail(tab, profile, fmt.Errorf("не удалось нажать Enter: %w", err))
+	}
+	if err := sleep(1200 * time.Millisecond); err != nil {
+		return err
+	}
+	if !sent() {
+		var clicked string
+		eval(fmt.Sprintf(clickSendJS, s.Send, genericSend), &clicked)
+		if err := sleep(1500 * time.Millisecond); err != nil {
+			return err
+		}
+		if !sent() {
+			msg := "текст в поле, но отправить его не получилось: Enter не сработал"
+			if clicked == "" {
+				msg += ", кнопка отправки не найдена"
+			} else {
+				msg += ", нажатие кнопки тоже"
+			}
+			return m.fail(tab, profile, errors.New(msg))
+		}
+	}
+
+	// 3. Ждём новый ответ и отдаём его по мере появления, пока он не перестанет меняться.
 	const poll = 400 * time.Millisecond
 	started := time.Now()
 	var last string
 	var lastChange time.Time
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(poll):
+		if err := sleep(poll); err != nil {
+			return err
 		}
 		st, err := state()
 		if err != nil {
@@ -617,7 +799,7 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 		}
 		if st.Count <= before.Count && st.Text == before.Text {
 			if time.Since(started) > 90*time.Second {
-				return m.fail(tab, profile, fmt.Errorf("%s не начал отвечать за 90 секунд", s.Title))
+				return m.fail(tab, profile, fmt.Errorf("сообщение отправлено, но ответ %s не найден на странице за 90 секунд — селектор ответа (response) устарел", s.Title))
 			}
 			continue
 		}
@@ -637,21 +819,29 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 	}
 }
 
-// fail сохраняет снимок страницы для диагностики и дописывает путь к ошибке.
+// fail сохраняет снимок страницы и список её полей и кнопок для диагностики
+// и дописывает пути к ошибке.
 func (m *Manager) fail(tab context.Context, profile string, err error) error {
 	dir := filepath.Join(m.DataDir, "web-debug")
 	if os.MkdirAll(dir, 0o700) != nil {
 		return err
 	}
-	var img []byte
+	base := filepath.Join(dir, fmt.Sprintf("%s-%s", profile, time.Now().Format("20060102-150405")))
 	ctx, cancel := context.WithTimeout(tab, 10*time.Second)
 	defer cancel()
-	if chromedp.Run(ctx, chromedp.FullScreenshot(&img, 70)) != nil || len(img) == 0 {
+	var saved []string
+	var img []byte
+	if chromedp.Run(ctx, chromedp.FullScreenshot(&img, 70)) == nil && len(img) > 0 && os.WriteFile(base+".jpg", img, 0o600) == nil {
+		saved = append(saved, base+".jpg")
+	}
+	var dump map[string]any
+	if chromedp.Run(ctx, chromedp.Evaluate(dumpJS, &dump)) == nil {
+		if data, jerr := json.MarshalIndent(dump, "", "  "); jerr == nil && os.WriteFile(base+".json", data, 0o600) == nil {
+			saved = append(saved, base+".json")
+		}
+	}
+	if len(saved) == 0 {
 		return err
 	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%s.jpg", profile, time.Now().Format("20060102-150405")))
-	if os.WriteFile(path, img, 0o600) != nil {
-		return err
-	}
-	return fmt.Errorf("%w (снимок страницы: %s)", err, path)
+	return fmt.Errorf("%w (диагностика: %s)", err, strings.Join(saved, ", "))
 }

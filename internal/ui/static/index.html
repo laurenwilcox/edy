@@ -205,6 +205,41 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .orch-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--a1) 4%, transparent); }
 .orch-bar label { font-size: 11.5px; }
 .orch-bar select { width: auto; max-width: 240px; padding: 6px 9px; }
+/* Выпадающие списки: родной select скрыт, вместо него — своя кнопка и список
+   в стиле приложения (системный список macOS не красится через CSS). */
+.dd { position: relative; display: block; width: 100%; min-width: 0; }
+.dd > select { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.chat-head .dd { width: auto; max-width: 280px; }
+.orch-bar .dd { width: auto; max-width: 240px; margin-top: 2px; }
+.dd-btn {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left; cursor: pointer;
+  font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 11px;
+  padding: 8px 11px; transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.orch-bar .dd-btn { padding: 6px 9px; font-size: 13px; }
+.dd-btn:hover { border-color: color-mix(in srgb, var(--a1) 35%, var(--line)); }
+.dd-btn:focus-visible, .dd.open .dd-btn { outline: none; border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 14%, transparent); }
+.dd-btn:disabled { opacity: .55; cursor: default; }
+.dd-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-label.ph { color: var(--muted); }
+.dd-chev { flex: none; width: 16px; height: 16px; color: var(--muted); transition: transform .2s; }
+.dd.open .dd-chev { transform: rotate(180deg); color: var(--a1); }
+.dd-list {
+  position: fixed; z-index: 1000; margin: 0; padding: 5px; list-style: none; overflow: auto; overscroll-behavior: contain;
+  background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 13px;
+  box-shadow: 0 18px 50px -12px rgba(20,20,50,.35), 0 0 0 1px var(--line);
+  backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  animation: dd-in .14s ease-out;
+}
+@keyframes dd-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.dd-opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-opt::before { content: ""; flex: none; width: 14px; height: 14px; }
+.dd-opt.sel::before { width: 4px; height: 8px; margin: 0 5px 2px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.dd-opt.sel { color: var(--a1); font-weight: 600; }
+.dd-opt.act { background: color-mix(in srgb, var(--a1) 13%, transparent); }
+.dd-opt.dis { opacity: .45; cursor: default; }
+.dd-group { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.dd-empty { padding: 8px 10px; color: var(--muted); }
 .messages[hidden] { display: none !important; }
 .plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
 .plan-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; white-space: normal; }
@@ -1646,6 +1681,156 @@ async function showAgent(id) {
   const last = store.get("edy-panel");
   if (last && titles[last]) openPanel(last);
   input.focus();
+})();
+
+// ---- Выпадающие списки ----
+// Каждый select оборачивается: родной элемент остаётся в форме (значение,
+// события change), а показывается своя кнопка и список.
+(() => {
+  const chev = '<svg class="dd-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const all = new Set();
+  let open = null;
+
+  function enhance(sel) {
+    if (sel.closest(".dd") || sel.multiple) return;
+    const wrap = document.createElement("span");
+    wrap.className = "dd";
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.append(sel);
+    sel.tabIndex = -1;
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "dd-btn";
+    btn.setAttribute("aria-haspopup", "listbox");
+    if (sel.title) btn.title = sel.title;
+    btn.innerHTML = '<span class="dd-label"></span>' + chev;
+    wrap.append(btn);
+    const dd = { sel, wrap, btn, label: btn.firstChild };
+    sel._dd = dd; all.add(dd);
+    btn.addEventListener("click", () => (open === dd ? close() : show(dd)));
+    btn.addEventListener("keydown", (e) => {
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key) && open !== dd) { e.preventDefault(); show(dd); }
+    });
+    new MutationObserver(() => sync(dd)).observe(sel, { childList: true, subtree: true, characterData: true, attributes: true });
+    sel.addEventListener("change", () => sync(dd));
+    sync(dd);
+  }
+
+  function sync(dd) {
+    const o = dd.sel.options[dd.sel.selectedIndex];
+    dd.label.textContent = o ? o.textContent : "—";
+    dd.label.classList.toggle("ph", !o || o.value === "");
+    dd.btn.disabled = dd.sel.disabled;
+    dd.wrap.hidden = dd.sel.hidden;
+    if (open === dd) render(dd);
+  }
+
+  function render(dd) {
+    const list = dd.list;
+    list.textContent = "";
+    const add = (o) => {
+      const li = document.createElement("li");
+      li.className = "dd-opt" + (o.selected ? " sel" : "") + (o.disabled ? " dis" : "");
+      li.setAttribute("role", "option");
+      li.textContent = o.textContent;
+      li.title = o.textContent;
+      li._opt = o;
+      list.append(li);
+    };
+    for (const c of dd.sel.children) {
+      if (c.tagName === "OPTGROUP") {
+        const g = document.createElement("li"); g.className = "dd-group"; g.textContent = c.label; list.append(g);
+        [...c.children].forEach(add);
+      } else if (c.tagName === "OPTION") add(c);
+    }
+    if (!list.children.length) {
+      const e = document.createElement("li"); e.className = "dd-empty"; e.textContent = "Пусто"; list.append(e);
+    }
+  }
+
+  function place(dd) {
+    const r = dd.btn.getBoundingClientRect(), l = dd.list;
+    const below = innerHeight - r.bottom - 12, above = r.top - 12;
+    const up = below < 220 && above > below;
+    l.style.maxHeight = Math.max(120, Math.min(340, up ? above : below)) + "px";
+    l.style.minWidth = r.width + "px";
+    l.style.maxWidth = Math.max(r.width, Math.min(460, innerWidth - 24)) + "px";
+    l.style.left = Math.max(12, Math.min(r.left, innerWidth - l.offsetWidth - 12)) + "px";
+    l.style.top = (up ? r.top - l.offsetHeight - 6 : r.bottom + 6) + "px";
+  }
+
+  function items(dd) { return [...dd.list.querySelectorAll(".dd-opt:not(.dis)")]; }
+  function activate(dd, li) {
+    dd.list.querySelectorAll(".act").forEach((x) => x.classList.remove("act"));
+    if (li) { li.classList.add("act"); li.scrollIntoView({ block: "nearest" }); }
+  }
+
+  function choose(dd, o) {
+    close();
+    dd.btn.focus();
+    if (!o || o.disabled || o.selected) return;
+    dd.sel.value = o.value;
+    dd.sel.dispatchEvent(new Event("input", { bubbles: true }));
+    dd.sel.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function show(dd) {
+    close();
+    const list = document.createElement("ul");
+    list.className = "dd-list"; list.setAttribute("role", "listbox");
+    dd.list = list; open = dd;
+    render(dd);
+    document.body.append(list);
+    dd.wrap.classList.add("open");
+    place(dd);
+    activate(dd, list.querySelector(".dd-opt.sel") || items(dd)[0]);
+    list.addEventListener("mousedown", (e) => e.preventDefault());
+    list.addEventListener("click", (e) => { const li = e.target.closest(".dd-opt"); if (li && !li.classList.contains("dis")) choose(dd, li._opt); });
+    list.addEventListener("mousemove", (e) => { const li = e.target.closest(".dd-opt:not(.dis)"); if (li && !li.classList.contains("act")) activate(dd, li); });
+  }
+
+  function close() {
+    if (!open) return;
+    open.list.remove(); open.list = null;
+    open.wrap.classList.remove("open");
+    open = null;
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (!open) return;
+    const dd = open, its = items(dd), i = its.indexOf(dd.list.querySelector(".act"));
+    if (e.key === "Escape") { e.preventDefault(); close(); dd.btn.focus(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); activate(dd, its[Math.min(its.length - 1, i + 1)]); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); activate(dd, its[Math.max(0, i - 1)]); }
+    else if (e.key === "Home" || e.key === "End") { e.preventDefault(); activate(dd, e.key === "Home" ? its[0] : its[its.length - 1]); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (i >= 0) choose(dd, its[i]._opt); }
+    else if (e.key === "Tab") close();
+    else if (e.key.length === 1) {
+      const k = e.key.toLowerCase();
+      const hit = its.slice(i + 1).concat(its.slice(0, i + 1)).find((li) => li.textContent.trim().toLowerCase().startsWith(k));
+      if (hit) activate(dd, hit);
+    }
+  }, true);
+  document.addEventListener("mousedown", (e) => { if (open && !open.wrap.contains(e.target) && !open.list.contains(e.target)) close(); });
+  addEventListener("resize", close);
+  document.addEventListener("scroll", (e) => { if (open && !open.list.contains(e.target)) close(); }, true);
+
+  // Значение, выставленное из кода (sel.value = …), не вызывает событий —
+  // перехватываем сеттеры, чтобы надпись на кнопке не отставала.
+  for (const prop of ["value", "selectedIndex"]) {
+    const d = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, prop);
+    Object.defineProperty(HTMLSelectElement.prototype, prop, {
+      ...d, set(v) { d.set.call(this, v); if (this._dd) sync(this._dd); },
+    });
+  }
+  document.addEventListener("reset", () => setTimeout(() => all.forEach(sync)), true);
+
+  document.querySelectorAll("select").forEach(enhance);
+  new MutationObserver((ms) => {
+    for (const m of ms) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.tagName === "SELECT") enhance(n); else n.querySelectorAll?.("select").forEach(enhance);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
 </body>

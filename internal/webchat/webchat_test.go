@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
 
 // fakeChat — страница, похожая на веб-чат: поле ввода, кнопка отправки,
@@ -23,16 +25,16 @@ const fakeChat = `<!doctype html><html><body>
 <textarea id="in"></textarea><button id="send">Send</button>
 <script>
 document.getElementById("send").onclick = () => {
-  const q = document.getElementById("in").value;
+  const q = document.getElementById("in").value.trim(); // Enter в textarea добавляет перевод строки
   document.getElementById("in").value = "";
   const stop = document.createElement("button"); stop.id = "stop"; document.body.append(stop);
   const m = document.createElement("div"); m.className = "bot"; document.getElementById("log").append(m);
-  const answer = "Ответ на: " + q;
+  const answer = "Ответ на: " + q + ", печатаю по буквам";
   let i = 0;
   const t = setInterval(() => {
     m.innerText = answer.slice(0, ++i);
     if (i >= answer.length) { clearInterval(t); stop.remove(); }
-  }, 70);
+  }, 100);
 };
 </script></body></html>`
 
@@ -99,7 +101,7 @@ func TestAskStreamsAnswer(t *testing.T) {
 	if len(updates) < 2 {
 		t.Fatalf("ожидался потоковый ответ, обновлений: %d", len(updates))
 	}
-	if got := updates[len(updates)-1]; got != "Ответ на: привет" {
+	if got := updates[len(updates)-1]; got != "Ответ на: привет, печатаю по буквам" {
 		t.Fatalf("ответ = %q", got)
 	}
 }
@@ -145,7 +147,7 @@ func TestLoginRequiredSavesSnapshot(t *testing.T) {
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "снимок страницы") {
+	if !strings.Contains(err.Error(), "диагностика") {
 		t.Fatalf("нет снимка страницы: %v", err)
 	}
 }
@@ -310,5 +312,98 @@ func TestProfilesAreIsolated(t *testing.T) {
 	}
 	if err := m.RemoveProfile("../evil"); err == nil {
 		t.Fatal("имя с ../ должно отклоняться")
+	}
+}
+
+// Разновидности чатов: как отправляется сообщение и где появляется ответ.
+var chatVariants = map[string]string{
+	// Отправка по Enter в contenteditable, кнопки нет.
+	"/enter": `<!doctype html><html><body><div id="log"></div>
+<div id="ed" contenteditable="true" style="min-height:20px"></div>
+<script>
+const ed = document.getElementById("ed");
+ed.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const q = ed.innerText.trim(); ed.innerHTML = "";
+  const m = document.createElement("div"); m.className = "answer"; m.innerHTML = '<div class="markdown"></div>';
+  document.getElementById("log").append(m);
+  m.firstChild.innerText = "Enter-ответ: " + q;
+});
+</script></body></html>`,
+	// Enter ничего не делает, отправить можно только кнопкой с aria-label.
+	"/button": `<!doctype html><html><body><div id="log"></div>
+<textarea id="in"></textarea><button aria-label="Send message" class="x1">➤</button>
+<script>
+document.getElementById("in").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+document.querySelector("button").onclick = () => {
+  const q = document.getElementById("in").value.trim(); // Enter в textarea добавляет перевод строки document.getElementById("in").value = "";
+  const m = document.createElement("div"); m.className = "answer"; m.innerText = "Кнопка-ответ: " + q;
+  document.getElementById("log").append(m);
+};
+</script></body></html>`,
+	// Ничего не отправляется.
+	"/stuck": `<!doctype html><html><body><textarea id="in"></textarea><button disabled>Send</button>
+<script>document.getElementById("in").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });</script></body></html>`,
+}
+
+func variantServer(t *testing.T) string {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, chatVariants[r.URL.Path])
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestSendStrategiesAndSingleTab(t *testing.T) {
+	base := variantServer(t)
+	sites := map[string]Site{
+		// Неверный селектор кнопки и ответа в начале списка — должны сработать запасные.
+		"enter":  {Title: "Enter", URL: base + "/enter", Input: "#missing, #ed", Send: "#nope", Response: ".nope, .answer .markdown, .answer", DailyLimit: 10},
+		"button": {Title: "Button", URL: base + "/button", Input: "#in", Send: "#wrong", Response: ".answer", DailyLimit: 10},
+	}
+	m := newTestManager(t, sites)
+	for site, want := range map[string]string{"enter": "Enter-ответ: привет", "button": "Кнопка-ответ: привет"} {
+		var got string
+		err := m.Ask(context.Background(), Conn{Profile: site, Site: site, Browser: BrowserChromium}, "привет", func(full string) error { got = full; return nil })
+		if err != nil || got != want {
+			t.Fatalf("%s: got %q, err %v", site, got, err)
+		}
+	}
+
+	// В браузере профиля ровно одна вкладка.
+	m.mu.Lock()
+	b := m.browsers["enter"]
+	m.mu.Unlock()
+	var pages int
+	chromedp.Run(b.browser, chromedp.ActionFunc(func(ctx context.Context) error {
+		infos, err := chromedp.Targets(ctx)
+		for _, i := range infos {
+			if i.Type == "page" {
+				pages++
+			}
+		}
+		return err
+	}))
+	if pages != 1 {
+		t.Fatalf("вкладок: %d, ожидалась одна", pages)
+	}
+}
+
+func TestStuckSendSavesDiagnostics(t *testing.T) {
+	base := variantServer(t)
+	m := newTestManager(t, map[string]Site{"stuck": {Title: "Stuck", URL: base + "/stuck", Input: "#in", Response: ".answer", DailyLimit: 10}})
+	err := m.Ask(context.Background(), Conn{Profile: "stuck", Site: "stuck", Browser: BrowserChromium}, "привет", func(string) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "отправить его не получилось") {
+		t.Fatalf("err = %v", err)
+	}
+	files, _ := filepath.Glob(filepath.Join(m.DataDir, "web-debug", "stuck-*.json"))
+	if len(files) != 1 {
+		t.Fatalf("нет файла диагностики: %v", files)
+	}
+	data, _ := os.ReadFile(files[0])
+	if !strings.Contains(string(data), `"inputs"`) || !strings.Contains(string(data), `"tag": "textarea"`) {
+		t.Fatalf("диагностика:\n%s", data)
 	}
 }
