@@ -23,7 +23,7 @@ func (f *fakeLLM) Chat(ctx context.Context, model string, msgs []agent.Msg, tool
 
 func TestChatSeesProjectAndExtractsPlan(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "calc.go"), []byte("package calc"), 0o644)
+	os.WriteFile(filepath.Join(dir, "calc.go"), []byte("package calc\n\nfunc Add(a, b int) int { return a + b }\n"), 0o644)
 	llm := &fakeLLM{reply: "Предлагаю так.\n<plan>\nЗадача: добавить Sub.\n1. calc.go — функция Sub.\nПроверка: go test.\n</plan>"}
 	r, err := Chat(context.Background(), llm, "agy/claude-sonnet-4-6", dir, []agent.Msg{{Role: "user", Content: "Добавь вычитание"}})
 	if err != nil {
@@ -32,7 +32,7 @@ func TestChatSeesProjectAndExtractsPlan(t *testing.T) {
 	if r.Text != "Предлагаю так." || !strings.HasPrefix(r.Plan, "Задача: добавить Sub.") {
 		t.Fatalf("r = %+v", r)
 	}
-	if !strings.Contains(llm.got[0].Content, "calc.go") || llm.got[1].Content != "Добавь вычитание" {
+	if !strings.Contains(llm.got[0].Content, "func Add(a, b int) int") || llm.got[1].Content != "Добавь вычитание" {
 		t.Fatalf("Оркестратор должен видеть файлы проекта и историю: %+v", llm.got)
 	}
 	if llm.tools != nil {

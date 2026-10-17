@@ -121,6 +121,14 @@ func TestProjectOrchestratorTaskFlow(t *testing.T) {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
 	}
 
+	// Карта проекта (Context Engine).
+	if rec := call(h, "GET", "/api/projects/context?path="+dir, ""); !strings.Contains(rec.Body.String(), "func Add(a, b int) int") {
+		t.Fatalf("скелет: %s", rec.Body)
+	}
+	if rec := call(h, "GET", "/api/projects/context?path="+dir+"&q=Add", ""); !strings.Contains(rec.Body.String(), "calc.go · Add") {
+		t.Fatalf("поиск: %s", rec.Body)
+	}
+
 	// Откат к исходному снимку из панели «Проект».
 	base := cps[len(cps)-1].ID
 	if rec := call(h, "POST", "/api/projects/restore", fmt.Sprintf(`{"path":%q,"id":%q}`, dir, base)); rec.Code != http.StatusNoContent {

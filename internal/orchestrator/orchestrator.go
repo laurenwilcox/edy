@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/codeindex"
 )
 
 const systemPrompt = `Ты — Оркестратор Edy. Ты не пишешь код сам: ты обсуждаешь задачу с разработчиком и готовишь план для агента-исполнителя.
@@ -29,7 +30,7 @@ const systemPrompt = `Ты — Оркестратор Edy. Ты не пишеш�
 Отвечай по-русски, кратко.
 
 Проект: %s
-Файлы проекта:
+Скелет проекта (файлы, типы и функции без тел):
 %s`
 
 var planRe = regexp.MustCompile(`(?s)<plan>\s*(.*?)\s*</plan>`)
@@ -45,10 +46,11 @@ func Chat(ctx context.Context, llm agent.LLM, model, project string, history []a
 	if model == "" {
 		return Reply{}, errors.New("выберите модель для Оркестратора")
 	}
-	files, _, err := agent.Workspace{Root: project}.Call("list_files", "{}")
+	idx, err := codeindex.Build(ctx, project)
 	if err != nil {
 		return Reply{}, fmt.Errorf("не удалось прочитать проект: %w", err)
 	}
+	files := idx.Skeleton(15000)
 	msgs := append([]agent.Msg{{Role: "system", Content: fmt.Sprintf(systemPrompt, project, files)}}, history...)
 	// Оркестратору инструменты не нужны: он только планирует.
 	reply, err := llm.Chat(ctx, model, msgs, nil)

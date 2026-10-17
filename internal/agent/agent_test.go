@@ -296,7 +296,7 @@ func TestOmniRouteClient(t *testing.T) {
 			Tools []ToolDef `json:"tools"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if r.Header.Get("Authorization") != "Bearer tok" || r.Header.Get("X-Edy-Client") != "agent" || len(body.Tools) != 6 {
+		if r.Header.Get("Authorization") != "Bearer tok" || r.Header.Get("X-Edy-Client") != "agent" || len(body.Tools) != 8 {
 			http.Error(w, `{"error":{"message":"плохой запрос"}}`, http.StatusBadRequest)
 			return
 		}
@@ -338,5 +338,22 @@ func TestPlainFolderWithoutGit(t *testing.T) {
 	}
 	if err := Reject(context.Background(), dir, res.Baseline); err != nil || read(t, dir, "calc.go") != buggy {
 		t.Fatalf("Reject в папке без git: %v", err)
+	}
+}
+
+func TestContextTools(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "calc.go"), []byte(buggy), 0o644)
+	ws := Workspace{Root: dir}
+	sk, changed, err := ws.Call("project_skeleton", "{}")
+	if err != nil || changed || !strings.Contains(sk, "func Add(a, b int) int") || strings.Contains(sk, "return a - b") {
+		t.Fatalf("skeleton: %q %v", sk, err)
+	}
+	found, _, err := ws.Call("search_code", `{"query":"Add"}`)
+	if err != nil || !strings.Contains(found, "calc.go · Add") || !strings.Contains(found, "return a - b") {
+		t.Fatalf("search: %q %v", found, err)
+	}
+	if _, _, err := ws.Call("search_code", `{"query":" "}`); err == nil {
+		t.Fatal("пустой запрос должен отклоняться")
 	}
 }

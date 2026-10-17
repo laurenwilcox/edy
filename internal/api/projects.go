@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/codeindex"
 	"github.com/laurenwilcox/name/internal/gitops"
 	"github.com/laurenwilcox/name/internal/orchestrator"
 	"github.com/laurenwilcox/name/internal/store"
@@ -26,6 +27,7 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/projects", h.removeProject)
 	m.HandleFunc("GET /api/projects/checkpoints", h.checkpoints)
 	m.HandleFunc("POST /api/projects/restore", h.restore)
+	m.HandleFunc("GET /api/projects/context", h.projectContext)
 	m.HandleFunc("POST /api/orchestrator", h.orchestrate)
 	m.HandleFunc("GET /api/tasks", h.listTasks)
 	m.HandleFunc("POST /api/tasks", h.startTask)
@@ -188,6 +190,24 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// projectContext показывает то, что видят агенты: скелет проекта или результаты поиска.
+func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if !h.knownProject(w, path) {
+		return
+	}
+	idx, err := codeindex.Build(r.Context(), path)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+		reply(w, map[string]string{"text": codeindex.FormatHits(idx.Search(q, 8), 40)})
+		return
+	}
+	reply(w, map[string]string{"text": idx.Skeleton(60000)})
 }
 
 func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {

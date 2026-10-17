@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,11 +10,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/laurenwilcox/name/internal/codeindex"
 )
 
 const (
-	maxReadBytes = 200 << 10
-	maxListed    = 500
+	maxReadBytes  = 200 << 10
+	maxListed     = 500
+	skeletonLimit = 30000
 )
 
 // Каталоги, которые агенту не нужны или которые нельзя трогать.
@@ -76,6 +80,8 @@ func (w Workspace) Tools() []ToolDef {
 	}
 	path := `{"type":"object","properties":{"path":{"type":"string","description":"путь от корня проекта"}},"required":["path"]}`
 	return []ToolDef{
+		def("project_skeleton", "Скелет проекта: файлы, типы, функции и классы с номерами строк, без тел. Начинайте с него.", `{"type":"object","properties":{}}`),
+		def("search_code", "Найти код по словам (имена функций, понятия). Возвращает подходящие функции и классы с номерами строк.", `{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"сколько результатов, по умолчанию 5"}},"required":["query"]}`),
 		def("list_files", "Список файлов проекта (рекурсивно) в папке path.", `{"type":"object","properties":{"path":{"type":"string","description":"папка от корня проекта, по умолчанию корень"}}}`),
 		def("read_file", "Прочитать файл целиком.", path),
 		def("write_file", "Создать файл или полностью перезаписать его.", `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`),
@@ -92,11 +98,28 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 		Content string `json:"content"`
 		Old     string `json:"old"`
 		New     string `json:"new"`
+		Query   string `json:"query"`
+		Limit   int    `json:"limit"`
 	}
 	if args != "" && json.Unmarshal([]byte(args), &a) != nil {
 		return "", false, fmt.Errorf("аргументы инструмента %s — не JSON", name)
 	}
 	switch name {
+	case "project_skeleton", "search_code":
+		idx, err := codeindex.Build(context.Background(), w.Root)
+		if err != nil {
+			return "", false, err
+		}
+		if name == "project_skeleton" {
+			return idx.Skeleton(skeletonLimit), false, nil
+		}
+		if strings.TrimSpace(a.Query) == "" {
+			return "", false, errors.New("query не может быть пустым")
+		}
+		if a.Limit <= 0 || a.Limit > 20 {
+			a.Limit = 5
+		}
+		return codeindex.FormatHits(idx.Search(a.Query, a.Limit), 80), false, nil
 	case "list_files":
 		r, err := w.list(a.Path)
 		return r, false, err

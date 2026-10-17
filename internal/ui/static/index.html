@@ -389,6 +389,14 @@ h3.sub:first-child { margin-top: 0; }
           <div id="project-list"></div>
           <h3 class="sub">Снимки текущего проекта (Shadow Git)</h3>
           <div class="card" id="checkpoints"><div class="muted small">Выберите проект.</div></div>
+          <h3 class="sub">Карта проекта — что видят агенты</h3>
+          <div class="card">
+            <form class="row" id="ctx-form" style="flex-wrap:nowrap">
+              <input name="q" placeholder="поиск по коду: имя функции или понятие">
+              <button class="btn ghost" type="submit">Найти</button>
+            </form>
+            <pre class="list-lines" id="ctx-out" style="margin-top:10px;max-height:340px;white-space:pre">Выберите проект.</pre>
+          </div>
         </section>
 
         <section id="p-git">
@@ -1357,7 +1365,19 @@ function renderProjects() {
     el("div", { class: "small", style: "margin-top:6px" }, el("span", { class: "mono muted" }, p.path)),
     p.problem && !p.pending && !p.running ? el("div", { class: "small", style: "margin-top:6px;color:var(--danger)" }, p.problem) : "")));
   loadCheckpoints(current);
+  loadContext(current, "");
 }
+
+async function loadContext(path, q) {
+  const out = $("#ctx-out");
+  if (!path) { out.textContent = "Выберите проект."; return; }
+  out.textContent = "Читаю проект…";
+  try {
+    const r = await api("GET", `/api/projects/context?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}`);
+    out.textContent = r.text;
+  } catch (e) { out.textContent = e.message; }
+}
+$("#ctx-form").addEventListener("submit", (e) => { e.preventDefault(); loadContext($("#project").value, e.target.q.value.trim()); });
 
 async function loadCheckpoints(path) {
   const box = $("#checkpoints");
