@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.82.0
+	github.com/creack/pty v1.1.24
 	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.60.1
 )

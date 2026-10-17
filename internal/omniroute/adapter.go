@@ -23,6 +23,7 @@ type Call struct {
 	Key      string
 	Model    string // имя модели без префикса провайдера
 	Request  *ChatRequest
+	Workdir  string // рабочая папка для CLI-провайдеров
 }
 
 // Adapter превращает OpenAI-запрос в обращение к конкретному типу источника ИИ.

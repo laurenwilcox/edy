@@ -4,7 +4,8 @@
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Сейчас готов **OmniRoute** — локальный OpenAI-совместимый прокси с ротацией ключей,
-шифрованием секретов и дневным бюджетом.
+шифрованием секретов и дневным бюджетом. Он работает с OpenAI-совместимыми API, с Anthropic
+и с терминальными утилитами (Ollama, Claude Code, Aider) через PTY.
 
 ## Быстрый старт
 
@@ -17,6 +18,10 @@ go build -o edy ./cmd/edy
 
 # Любой OpenAI-совместимый API, например локальная Ollama (ключ не нужен)
 ./edy provider add -name ollama -kind openai -base-url http://localhost:11434/v1 -models llama3.1
+
+# Терминальные агенты через виртуальный терминал (PTY)
+./edy provider add -name ollama-cli -kind cli -preset ollama -models llama3.1
+./edy provider add -name claude-cli -kind cli -preset claude-code -models sonnet
 
 ./edy budget set 5      # не больше $5 в день
 ./edy serve             # http://127.0.0.1:11435/v1

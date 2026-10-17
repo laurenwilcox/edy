@@ -83,14 +83,22 @@ func setupOpenAI(t *testing.T, keys ...string) (*Server, *store.Store, *fakeOpen
 	return NewServer(st, testToken, nil), st, fake
 }
 
-func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
+func newAuthedRequest(method, path, body string) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	req.Header.Set(ClientHeader, "agent-backend")
+	return req
+}
+
+func serve(h http.Handler, r *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(rec, r)
 	return rec
+}
+
+func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return serve(h, newAuthedRequest(method, path, body))
 }
 
 func TestRejectsMissingToken(t *testing.T) {

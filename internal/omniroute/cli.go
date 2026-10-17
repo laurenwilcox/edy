@@ -1,0 +1,165 @@
+package omniroute
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"unicode/utf8"
+
+	"github.com/creack/pty"
+)
+
+// CLIPresets — готовые команды запуска популярных терминальных агентов.
+// {model} заменяется на имя модели, {prompt} — на текст запроса.
+var CLIPresets = map[string][]string{
+	"ollama":      {"ollama", "run", "{model}", "--nowordwrap", "{prompt}"},
+	"claude-code": {"claude", "-p", "--model", "{model}", "{prompt}"},
+	"aider":       {"aider", "--model", "{model}", "--yes-always", "--no-pretty", "--message", "{prompt}"},
+}
+
+// WorkdirHeader задаёт рабочую папку CLI-утилиты (обычно корень проекта).
+const WorkdirHeader = "X-Edy-Workdir"
+
+// CLIAdapter запускает терминальную утилиту в виртуальном терминале (PTY):
+// утилита думает, что с ней работает человек, и ведёт себя как в обычном
+// терминале. Вывод очищается от цветов, спиннеров и прогресс-баров.
+// На каждый запрос запускается отдельный процесс.
+type CLIAdapter struct{}
+
+func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) error) (Usage, error) {
+	if len(call.Request.Tools) > 0 {
+		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: "CLI-провайдеры не поддерживают tools"}
+	}
+	prompt, err := renderPrompt(call.Request.Messages)
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: err.Error()}
+	}
+	args, err := expandCommand(call.Provider.Command, call.Model, prompt)
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusInternalServerError, Message: err.Error()}
+	}
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = call.Workdir
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1", "CLICOLOR=0")
+	// pty делает процесс лидером новой сессии, поэтому убиваем всю группу:
+	// утилиты вроде aider порождают дочерние процессы.
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+
+	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 500, Rows: 50}) // широкий терминал — меньше переносов строк
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("не удалось запустить %q: %v", args[0], err)}
+	}
+	defer tty.Close()
+
+	var san TermSanitizer
+	var output strings.Builder
+	send := func(text string) error {
+		if text == "" {
+			return nil
+		}
+		output.WriteString(text)
+		return emit(Event{Delta: Delta{Content: text}})
+	}
+
+	if err := emit(Event{Delta: Delta{Role: "assistant"}}); err != nil {
+		return Usage{}, err
+	}
+	buf := make([]byte, 4096)
+	var emitErr error
+	for {
+		n, rerr := tty.Read(buf)
+		if n > 0 && emitErr == nil {
+			emitErr = send(san.Write(buf[:n]))
+			if emitErr != nil {
+				cmd.Cancel() // клиент ушёл — процесс больше не нужен
+			}
+		}
+		if rerr != nil {
+			// После выхода процесса чтение из PTY возвращает EOF (macOS) или EIO (Linux).
+			if !errors.Is(rerr, io.EOF) && !errors.Is(rerr, syscall.EIO) && !errors.Is(rerr, os.ErrClosed) {
+				emitErr = errors.Join(emitErr, rerr)
+			}
+			break
+		}
+	}
+	if emitErr == nil {
+		emitErr = send(san.Flush())
+	}
+	waitErr := cmd.Wait()
+
+	usage := Usage{PromptTokens: estimateTokens(prompt), CompletionTokens: estimateTokens(output.String())}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if emitErr != nil {
+		return usage, emitErr
+	}
+	if ctx.Err() != nil {
+		return usage, ctx.Err()
+	}
+	if waitErr != nil {
+		tail := output.String()
+		if r := []rune(tail); len(r) > 500 {
+			tail = "…" + string(r[len(r)-500:])
+		}
+		return usage, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%s завершилась с ошибкой (%v): %s", args[0], waitErr, strings.TrimSpace(tail))}
+	}
+	return usage, emit(Event{FinishReason: "stop"})
+}
+
+func expandCommand(template []string, model, prompt string) ([]string, error) {
+	if len(template) == 0 {
+		return nil, errors.New("для CLI-провайдера не задана команда запуска")
+	}
+	hasPrompt := false
+	args := make([]string, len(template))
+	for i, a := range template {
+		hasPrompt = hasPrompt || strings.Contains(a, "{prompt}")
+		args[i] = strings.NewReplacer("{model}", model, "{prompt}", prompt).Replace(a)
+	}
+	if !hasPrompt {
+		return nil, errors.New("в команде CLI-провайдера нет подстановки {prompt}")
+	}
+	return args, nil
+}
+
+// renderPrompt сворачивает диалог в один текст: CLI-утилиты принимают
+// только одну реплику. Одиночный запрос пользователя передаётся как есть.
+func renderPrompt(msgs []Message) (string, error) {
+	for _, m := range msgs {
+		parts, err := m.Parts()
+		if err != nil {
+			return "", err
+		}
+		for _, p := range parts {
+			if p.Type != "text" {
+				return "", fmt.Errorf("CLI-провайдеры принимают только текст, получено %q", p.Type)
+			}
+		}
+	}
+	if len(msgs) == 1 && msgs[0].Role == "user" {
+		return msgs[0].Text()
+	}
+	titles := map[string]string{"system": "Инструкции", "developer": "Инструкции", "user": "Пользователь", "assistant": "Ассистент", "tool": "Результат инструмента"}
+	var b strings.Builder
+	for _, m := range msgs {
+		title, ok := titles[m.Role]
+		if !ok {
+			return "", fmt.Errorf("неизвестная роль сообщения %q", m.Role)
+		}
+		text, _ := m.Text()
+		fmt.Fprintf(&b, "### %s\n%s\n\n", title, text)
+	}
+	b.WriteString("### Ассистент\n")
+	return b.String(), nil
+}
+
+// estimateTokens грубо оценивает число токенов: CLI-утилиты его не сообщают.
+func estimateTokens(s string) int64 {
+	return int64((utf8.RuneCountInString(s) + 3) / 4)
+}

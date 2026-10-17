@@ -63,6 +63,28 @@ func TestProvidersAndEncryptedKeys(t *testing.T) {
 	}
 }
 
+func TestCommandRoundTripAndReopen(t *testing.T) {
+	v, _ := vault.New(bytes.Repeat([]byte{3}, 32))
+	path := filepath.Join(t.TempDir(), "edy.db")
+	s, err := Open(path, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddProvider(Provider{Name: "ollama-cli", Kind: KindCLI, Command: []string{"ollama", "run", "{model}", "{prompt}"}})
+	s.Close()
+
+	// Повторное открытие не должно падать на уже применённой миграции.
+	s, err = Open(path, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.Provider("ollama-cli")
+	if err != nil || len(p.Command) != 4 || p.Command[3] != "{prompt}" {
+		t.Fatalf("p = %+v, err = %v", p, err)
+	}
+}
+
 func TestUsageAndSettings(t *testing.T) {
 	s := openTest(t)
 	s.RecordUsage(Usage{Provider: "p", Model: "m", InputTokens: 10, OutputTokens: 5, CostUSD: 0.25})

@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const (
 	KindOpenAI    = "openai"    // любой OpenAI-совместимый API: OpenAI, OpenRouter, DeepSeek, Ollama…
 	KindAnthropic = "anthropic" // Anthropic Messages API
+	KindCLI       = "cli"       // терминальная утилита в PTY: Ollama, Claude Code, Aider…
 )
 
 var ErrNotFound = errors.New("store: не найдено")
@@ -55,6 +57,11 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
 `
 
+// migrations добавляют колонки, появившиеся после первой версии схемы.
+var migrations = []string{
+	`ALTER TABLE providers ADD COLUMN command TEXT NOT NULL DEFAULT '[]'`,
+}
+
 // Provider — источник ИИ, подключённый к OmniRoute.
 type Provider struct {
 	ID       int64
@@ -64,6 +71,8 @@ type Provider struct {
 	Models   []string
 	PriceIn  float64 // USD за 1M входных токенов
 	PriceOut float64 // USD за 1M выходных токенов
+	// Command — аргументы запуска для KindCLI с подстановками {model} и {prompt}.
+	Command []string
 }
 
 // Cost считает стоимость запроса в долларах.
@@ -103,14 +112,24 @@ func Open(path string, v *vault.Vault) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: миграция схемы: %w", err)
 	}
+	for _, m := range migrations {
+		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("store: миграция схемы: %w", err)
+		}
+	}
 	return &Store{db: db, vault: v}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) AddProvider(p Provider) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out) VALUES (?,?,?,?,?,?)`,
-		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut)
+	command, err := json.Marshal(p.Command)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command) VALUES (?,?,?,?,?,?,?)`,
+		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command)
 	if err != nil {
 		return 0, err
 	}
@@ -118,7 +137,7 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 }
 
 func (s *Store) Provider(name string) (Provider, error) {
-	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out FROM providers WHERE name = ?`, name)
+	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command FROM providers WHERE name = ?`, name)
 	p, err := scanProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Provider{}, ErrNotFound
@@ -127,7 +146,7 @@ func (s *Store) Provider(name string) (Provider, error) {
 }
 
 func (s *Store) Providers() ([]Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out FROM providers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command FROM providers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -145,9 +164,12 @@ func (s *Store) Providers() ([]Provider, error) {
 
 func scanProvider(row interface{ Scan(...any) error }) (Provider, error) {
 	var p Provider
-	var models string
-	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut); err != nil {
+	var models, command string
+	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command); err != nil {
 		return Provider{}, err
+	}
+	if err := json.Unmarshal([]byte(command), &p.Command); err != nil {
+		return Provider{}, fmt.Errorf("store: повреждённая команда провайдера %q: %w", p.Name, err)
 	}
 	for _, m := range strings.Split(models, ",") {
 		if m = strings.TrimSpace(m); m != "" {

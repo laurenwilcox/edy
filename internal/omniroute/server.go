@@ -58,6 +58,7 @@ func NewServer(st *store.Store, token string, log *slog.Logger) *Server {
 		adapters: map[string]Adapter{
 			store.KindOpenAI:    &OpenAIAdapter{},
 			store.KindAnthropic: &AnthropicAdapter{},
+			store.KindCLI:       &CLIAdapter{},
 		},
 		token:     token,
 		log:       log,
@@ -157,7 +158,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := newResponder(w, req.Stream, req.Model, s.now())
-	usage, err := s.callWithRotation(r.Context(), adapter, provider, modelName, req, out.emit)
+	call := Call{Provider: provider, Model: modelName, Request: req, Workdir: r.Header.Get(WorkdirHeader)}
+	usage, err := s.callWithRotation(r.Context(), adapter, call, out.emit)
 
 	if usage.PromptTokens+usage.CompletionTokens > 0 {
 		rec := store.Usage{
@@ -208,7 +210,8 @@ func (s *Server) checkBudget() (string, error) {
 // callWithRotation перебирает ключи провайдера. Ключ, получивший 429, уходит
 // на перерыв; ключ, получивший 401/403, отключается навсегда. Переключение
 // возможно только до того, как клиенту ушёл первый байт ответа.
-func (s *Server) callWithRotation(ctx context.Context, a Adapter, p store.Provider, model string, req *ChatRequest, emit func(Event) error) (Usage, error) {
+func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emit func(Event) error) (Usage, error) {
+	p := call.Provider
 	keys, err := s.store.Keys(p.ID)
 	if err != nil {
 		return Usage{}, err
@@ -229,7 +232,8 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, p store.Provid
 		if s.coolingDown(k.ID) {
 			continue
 		}
-		usage, err := a.Stream(ctx, Call{Provider: p, Key: k.Secret, Model: model, Request: req}, trackedEmit)
+		call.Key = k.Secret
+		usage, err := a.Stream(ctx, call, trackedEmit)
 		var ue *UpstreamError
 		if err == nil || emitted || !errors.As(err, &ue) {
 			return usage, err

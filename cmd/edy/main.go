@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,7 +32,7 @@ const usage = `Edy — ядро ИИ-IDE.
 Использование:
   edy serve [-addr 127.0.0.1:11435]        запустить OmniRoute
   edy token                                показать токен доступа к OmniRoute
-  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic)
+  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli)
   edy provider list                        список провайдеров
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
@@ -161,9 +162,11 @@ func serve(st *store.Store, home string, args []string) error {
 func providerAdd(st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("provider add", flag.ContinueOnError)
 	p := store.Provider{}
-	var models string
+	var models, preset, command string
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
-	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic")
+	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
+	fs.StringVar(&preset, "preset", "", "для cli: готовая команда — ollama | claude-code | aider")
+	fs.StringVar(&command, "command", "", `для cli: команда JSON-массивом, например '["ollama","run","{model}","{prompt}"]'`)
 	fs.StringVar(&p.BaseURL, "base-url", "", "базовый URL API (для OpenAI-совместимых, например http://localhost:11434/v1)")
 	fs.StringVar(&models, "models", "", "модели через запятую (для /v1/models)")
 	fs.Float64Var(&p.PriceIn, "price-in", 0, "USD за 1M входных токенов")
@@ -174,8 +177,26 @@ func providerAdd(st *store.Store, args []string) error {
 	if p.Name == "" || strings.Contains(p.Name, "/") {
 		return errors.New("нужно -name без символа /")
 	}
-	if p.Kind != store.KindOpenAI && p.Kind != store.KindAnthropic {
-		return errors.New("-kind должен быть openai или anthropic")
+	switch p.Kind {
+	case store.KindOpenAI, store.KindAnthropic:
+	case store.KindCLI:
+		switch {
+		case preset != "" && command != "":
+			return errors.New("укажите либо -preset, либо -command")
+		case preset != "":
+			var ok bool
+			if p.Command, ok = omniroute.CLIPresets[preset]; !ok {
+				return fmt.Errorf("неизвестный -preset %q", preset)
+			}
+		case command != "":
+			if err := json.Unmarshal([]byte(command), &p.Command); err != nil {
+				return fmt.Errorf("-command должен быть JSON-массивом строк: %w", err)
+			}
+		default:
+			return errors.New("для -kind cli нужен -preset или -command")
+		}
+	default:
+		return errors.New("-kind должен быть openai, anthropic или cli")
 	}
 	p.Models = strings.Split(models, ",")
 	if _, err := st.AddProvider(p); err != nil {
@@ -191,13 +212,17 @@ func providerList(st *store.Store) error {
 		return err
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ИМЯ\tТИП\tКЛЮЧЕЙ\tURL\tМОДЕЛИ")
+	fmt.Fprintln(w, "ИМЯ\tТИП\tКЛЮЧЕЙ\tURL / КОМАНДА\tМОДЕЛИ")
 	for _, p := range providers {
 		keys, err := st.Keys(p.ID)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", p.Name, p.Kind, len(keys), p.BaseURL, strings.Join(p.Models, ", "))
+		target := p.BaseURL
+		if p.Kind == store.KindCLI {
+			target = strings.Join(p.Command, " ")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", p.Name, p.Kind, len(keys), target, strings.Join(p.Models, ", "))
 	}
 	return w.Flush()
 }
