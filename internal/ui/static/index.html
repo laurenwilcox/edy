@@ -6,153 +6,340 @@
 <title>Edy</title>
 <style>
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2129; --muted: #6b7280; --border: #e3e6eb;
-  --accent: #4f46e5; --accent-text: #ffffff; --danger: #dc2626; --ok: #059669; --warn: #d97706;
-  --code: #f1f3f6; --radius: 10px;
+  --bg: #eef0f7; --bg-2: #e4e7f3;
+  --glass: rgba(255,255,255,.66); --glass-strong: rgba(255,255,255,.86); --glass-border: rgba(255,255,255,.75);
+  --text: #171a24; --muted: #646b7d; --line: rgba(23,26,36,.09);
+  --a1: #7c3aed; --a2: #06b6d4; --a3: #ec4899;
+  --grad: linear-gradient(135deg, var(--a1), var(--a2));
+  --on-grad: #ffffff;
+  --field: rgba(255,255,255,.75); --code: rgba(23,26,36,.06);
+  --danger: #e11d48; --ok: #10b981; --warn: #f59e0b;
+  --shadow: 0 10px 40px -12px rgba(40,30,90,.25);
+  --blob-opacity: .55;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #111317; --panel: #1a1d23; --text: #e6e8ec; --muted: #9aa1ad; --border: #2a2e36;
-    --accent: #818cf8; --accent-text: #0b0d12; --danger: #f87171; --ok: #34d399; --warn: #fbbf24;
-    --code: #23272f;
+    --bg: #0b0c14; --bg-2: #10121d;
+    --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
+    --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
+    --a1: #8b5cf6; --a2: #22d3ee; --a3: #f472b6;
+    --field: rgba(255,255,255,.05); --code: rgba(255,255,255,.07);
+    --danger: #fb7185; --ok: #34d399; --warn: #fbbf24;
+    --shadow: 0 10px 40px -10px rgba(0,0,0,.6);
+    --blob-opacity: .35;
   }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
-header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
-nav { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; }
-nav button { white-space: nowrap; background: none; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
-nav button.active { background: var(--code); color: var(--text); font-weight: 600; }
-main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
-h2 { font-size: 16px; margin: 28px 0 12px; }
-h2:first-child { margin-top: 0; }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+html, body { height: 100%; }
+body {
+  margin: 0; color: var(--text); background: linear-gradient(160deg, var(--bg), var(--bg-2));
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+/* Живой фон: медленно плавающие размытые пятна */
+.aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.aurora i { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(80px); opacity: var(--blob-opacity); animation: drift 26s ease-in-out infinite alternate; }
+.aurora i:nth-child(1) { background: var(--a1); top: -18vmax; left: -10vmax; }
+.aurora i:nth-child(2) { background: var(--a2); bottom: -22vmax; left: 25vw; animation-duration: 32s; animation-delay: -8s; }
+.aurora i:nth-child(3) { background: var(--a3); top: 10vh; right: -20vmax; animation-duration: 38s; animation-delay: -16s; opacity: calc(var(--blob-opacity) * .7); }
+@keyframes drift {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(6vmax, 4vmax) scale(1.12); }
+  100% { transform: translate(-4vmax, 7vmax) scale(.95); }
+}
+
+.glass { background: var(--glass); border: 1px solid var(--glass-border); backdrop-filter: blur(22px) saturate(160%); -webkit-backdrop-filter: blur(22px) saturate(160%); box-shadow: var(--shadow); }
+
+/* Раскладка: чат | выезжающая панель | меню */
+.app { position: relative; z-index: 1; height: 100%; display: flex; gap: 14px; padding: 14px; }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; }
+.drawer { width: 0; flex: none; overflow: hidden; transition: width .45s cubic-bezier(.2,.9,.2,1); }
+.drawer.open { width: min(500px, 42vw); }
+.drawer-inner { width: min(500px, 42vw); height: 100%; border-radius: 22px; display: flex; flex-direction: column; overflow: hidden; opacity: 0; transform: translateX(30px); transition: opacity .35s, transform .45s cubic-bezier(.2,.9,.2,1); }
+.drawer.open .drawer-inner { opacity: 1; transform: none; }
+.side { width: 236px; flex: none; border-radius: 22px; padding: 18px 12px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Меню */
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
+.logo { width: 34px; height: 34px; border-radius: 11px; background: var(--grad); display: grid; place-items: center; color: var(--on-grad); font-weight: 800; box-shadow: 0 6px 20px -4px var(--a1); animation: pulse 4s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 6px 28px 0 var(--a2); } }
+.brand b { font-size: 18px; letter-spacing: .3px; }
+.brand small { display: block; color: var(--muted); font-size: 11px; margin-top: -2px; }
+.menu-group > button, .menu-item { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text); font: inherit; padding: 9px 10px; border-radius: 12px; cursor: pointer; text-align: left; transition: background .2s, transform .2s; }
+.menu-group > button:hover, .menu-item:hover { background: var(--code); }
+.menu-group > button .chev { margin-left: auto; transition: transform .3s; color: var(--muted); }
+.menu-group.open > button .chev { transform: rotate(90deg); }
+.submenu { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s ease; }
+.menu-group.open .submenu { grid-template-rows: 1fr; }
+.submenu > div { overflow: hidden; padding-left: 16px; }
+.submenu .menu-item { font-size: 13.5px; color: var(--muted); padding: 7px 10px; position: relative; }
+.submenu .menu-item::before { content: ""; position: absolute; left: -6px; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--line); transform: translateY(-50%); transition: background .2s, box-shadow .2s; }
+.submenu .menu-item.active { color: var(--text); background: var(--code); font-weight: 600; }
+.submenu .menu-item.active::before { background: var(--a2); box-shadow: 0 0 10px var(--a2); }
+.menu-item[disabled] { opacity: .45; cursor: default; }
+.menu-item[disabled]:hover { background: none; }
+.soon { margin-left: auto; font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.ico { width: 18px; text-align: center; }
+.side-foot { margin-top: auto; padding: 10px; border-radius: 14px; background: var(--code); font-size: 12px; color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: ping 2s infinite; margin-right: 6px; vertical-align: 1px; }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
+
+/* Чат */
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.chat-head h2 { margin: 0; font-size: 16px; }
+.chat-head .grow { flex: 1; }
+.messages { flex: 1; overflow-y: auto; padding: 22px 22px 8px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
+.msg { max-width: min(760px, 88%); padding: 11px 15px; border-radius: 18px; animation: rise .35s cubic-bezier(.2,.9,.2,1); white-space: pre-wrap; word-wrap: break-word; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+.msg.user { align-self: flex-end; background: var(--grad); color: var(--on-grad); border-bottom-right-radius: 6px; box-shadow: 0 8px 24px -10px var(--a1); }
+.msg.bot { align-self: flex-start; background: var(--glass-strong); border: 1px solid var(--glass-border); border-bottom-left-radius: 6px; }
+.msg.bot .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; white-space: normal; }
+.msg.error { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
+.msg pre { white-space: pre-wrap; background: var(--code); padding: 10px 12px; border-radius: 10px; margin: 8px 0; font-size: 12.5px; overflow-x: auto; }
+.msg pre code { background: none; padding: 0; border-radius: 0; }
+.msg code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.msg :not(pre) > code { background: var(--code); padding: 1px 5px; border-radius: 5px; }
+.msg.user :not(pre) > code { background: rgba(255,255,255,.2); }
+.typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite; }
+.typing span:nth-child(2) { animation-delay: .15s; } .typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+.welcome { margin: auto; text-align: center; max-width: 520px; padding: 20px; animation: rise .5s; }
+.welcome h3 { font-size: 26px; margin: 0 0 6px; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
+.chip { border: 1px solid var(--line); background: var(--field); color: var(--text); padding: 7px 13px; border-radius: 99px; font: inherit; font-size: 13px; cursor: pointer; transition: transform .2s, border-color .2s; }
+.chip:hover { transform: translateY(-2px); border-color: var(--a2); }
+
+.composer { padding: 12px 16px 16px; }
+.composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 18px; background: var(--field); border: 1px solid var(--line); transition: border-color .25s, box-shadow .25s; }
+.composer-box:focus-within { border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 15%, transparent); }
+.composer textarea { flex: 1; resize: none; border: 0; background: none; color: var(--text); font: inherit; max-height: 180px; padding: 6px 0; outline: none; }
+.send { width: 40px; height: 40px; border-radius: 13px; border: 0; background: var(--grad); color: var(--on-grad); cursor: pointer; font-size: 17px; flex: none; transition: transform .2s, box-shadow .2s; box-shadow: 0 6px 18px -6px var(--a1); }
+.send:hover { transform: translateY(-1px) scale(1.04); box-shadow: 0 8px 24px -4px var(--a2); }
+.send.stop { background: var(--danger); box-shadow: none; }
+.hint { font-size: 11.5px; color: var(--muted); margin: 6px 4px 0; }
+
+/* Панель */
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.panel-head h2 { margin: 0; font-size: 16px; flex: 1; }
+.panel-body { flex: 1; overflow-y: auto; padding: 18px; }
+.panel-body > section { animation: rise .35s; }
+
+.card { background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 16px; padding: 15px; margin-bottom: 12px; transition: transform .25s, box-shadow .25s; animation: rise .4s both; }
+.card.lift:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -16px var(--a1); }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spread { justify-content: space-between; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
-.badge { display: inline-block; padding: 1px 8px; border-radius: 99px; background: var(--code); color: var(--muted); font-size: 12px; }
-code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--code); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
-button.btn { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
-button.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
-button.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--border); font-weight: 500; }
-button.btn:disabled { opacity: .5; cursor: default; }
-input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
-label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-.keys { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; display: grid; gap: 6px; }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 600; background: color-mix(in srgb, var(--a1) 14%, transparent); color: var(--a1); }
+.badge.cli { background: color-mix(in srgb, var(--a2) 16%, transparent); color: color-mix(in srgb, var(--a2) 80%, var(--text)); }
+.badge.off { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code); padding: 2px 7px; border-radius: 7px; word-break: break-all; }
+
+.btn { border: 0; border-radius: 11px; padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer; background: var(--grad); color: var(--on-grad); transition: transform .2s, box-shadow .2s, opacity .2s; box-shadow: 0 6px 18px -8px var(--a1); white-space: nowrap; }
+.btn:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px var(--a2); }
+.btn.ghost { background: var(--field); color: var(--text); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
+.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
+.btn.icon { padding: 6px 10px; }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+input, select { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 11px; padding: 8px 11px; min-width: 0; width: 100%; transition: border-color .2s, box-shadow .2s; }
+input:focus, select:focus { outline: none; border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 14%, transparent); }
+.chat-head select { width: auto; max-width: 280px; }
+label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid .wide { grid-column: 1 / -1; }
+.keys { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; }
+.key-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
+
+/* Поля «Подключение»: подпись сверху, значение и кнопки на одной линии */
+.field { display: grid; gap: 6px; margin-bottom: 16px; }
+.field-label { font-size: 12.5px; color: var(--muted); }
+.field-row { display: grid; grid-template-columns: 118px 118px 1fr; gap: 8px; align-items: center; }
+.field-row .value { grid-column: 1 / -1; white-space: normal; word-break: break-all; }
+.field-row .btn { width: 100%; }
+.field-row .value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--field); border: 1px solid var(--line); border-radius: 11px; padding: 9px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 500; font-size: 12px; }
+th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 11.5px; }
+#usage-rows code { white-space: nowrap; word-break: normal; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.stat { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.meter { height: 8px; background: var(--code); border-radius: 99px; overflow: hidden; margin-top: 8px; }
-.meter > div { height: 100%; background: var(--ok); }
-.meter.warn > div { background: var(--warn); }
+.stat { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.meter { height: 9px; background: var(--code); border-radius: 99px; overflow: hidden; margin-top: 12px; }
+.meter > div { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--ok), var(--a2)); transition: width 1s cubic-bezier(.2,.9,.2,1); }
+.meter.warn > div { background: linear-gradient(90deg, var(--warn), var(--a3)); }
 .meter.over > div { background: var(--danger); }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: 90vw; }
-.toast.error { background: var(--danger); color: #fff; }
 .notice { border-left: 3px solid var(--warn); }
-pre { white-space: pre-wrap; max-height: 240px; overflow: auto; background: var(--code); padding: 10px; border-radius: 8px; font-size: 12px; }
-.empty { text-align: center; color: var(--muted); padding: 28px; }
+pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: var(--code); padding: 10px; border-radius: 10px; font-size: 12px; }
+.empty { text-align: center; color: var(--muted); padding: 26px; }
+
+.toast { position: fixed; bottom: 22px; left: 50%; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border-radius: 12px; max-width: 90vw; color: var(--on-grad); background: var(--grad); box-shadow: var(--shadow); animation: rise .3s; }
+.toast.error { background: var(--danger); }
+.menu-toggle { display: none; }
+
+@media (max-width: 900px) {
+  .app { padding: 8px; gap: 8px; }
+  .side { position: fixed; top: 8px; right: 8px; bottom: 8px; z-index: 5; transform: translateX(calc(100% + 16px)); transition: transform .4s cubic-bezier(.2,.9,.2,1); background: var(--glass-strong); }
+  .side.show { transform: none; }
+  .menu-toggle { display: inline-block; }
+  .drawer, .drawer.open { position: fixed; inset: 8px; z-index: 4; width: auto; pointer-events: none; }
+  .drawer.open { pointer-events: auto; }
+  .drawer-inner { width: 100%; background: var(--glass-strong); }
+  .form-grid, .key-form { grid-template-columns: 1fr; }
+  .messages { padding: 16px 12px 8px; }
+  .msg { max-width: 94%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Edy</h1>
-  <nav>
-    <button data-tab="providers" class="active">Провайдеры</button>
-    <button data-tab="usage">Расходы</button>
-    <button data-tab="connect">Подключение</button>
+<div class="aurora"><i></i><i></i><i></i></div>
+
+<div class="app">
+  <!-- Слева: чат с ботами -->
+  <main class="chat glass">
+    <div class="chat-head">
+      <h2>Чат</h2>
+      <select id="model" title="Модель"></select>
+      <span class="grow"></span>
+      <button class="btn ghost icon" id="new-chat" title="Новый чат">＋ Новый</button>
+      <button class="btn ghost icon menu-toggle" id="menu-toggle" title="Меню">☰</button>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <form class="composer-box" id="composer">
+        <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
+        <button class="send" id="send" type="submit" title="Отправить">➤</button>
+      </form>
+      <div class="hint">Enter — отправить, Shift+Enter — новая строка</div>
+    </div>
+  </main>
+
+  <!-- Выезжающая панель раздела -->
+  <aside class="drawer" id="drawer">
+    <div class="drawer-inner glass">
+      <div class="panel-head">
+        <h2 id="panel-title"></h2>
+        <button class="btn ghost icon" id="panel-close" title="Закрыть">✕</button>
+      </div>
+      <div class="panel-body">
+        <section id="p-list">
+          <div id="provider-list"></div>
+          <button class="btn ghost" data-open="p-add">＋ Добавить провайдера</button>
+        </section>
+
+        <section id="p-add">
+          <form id="add-form" class="card">
+            <div class="form-grid">
+              <label class="wide">Тип
+                <select name="kind">
+                  <option value="cli">Терминальная утилита (по подписке)</option>
+                  <option value="anthropic">Anthropic API</option>
+                  <option value="openai">OpenAI-совместимый API</option>
+                </select>
+              </label>
+              <label>Имя (префикс модели)
+                <input name="name" placeholder="agy" required>
+              </label>
+              <label data-for="cli">Профиль
+                <select name="preset"></select>
+              </label>
+              <label data-for="openai">Адрес API
+                <input name="base_url" placeholder="http://localhost:11434/v1">
+              </label>
+              <label class="wide">Модели через запятую
+                <input name="models" placeholder="claude-sonnet-4-6">
+              </label>
+              <label data-for="openai anthropic">$ за 1M входных токенов
+                <input name="price_in" type="number" min="0" step="any" value="0">
+              </label>
+              <label data-for="openai anthropic">$ за 1M выходных токенов
+                <input name="price_out" type="number" min="0" step="any" value="0">
+              </label>
+            </div>
+            <div class="muted small" id="preset-hint" style="margin-top:10px"></div>
+            <div class="row" style="margin-top:14px"><button class="btn" type="submit">Добавить</button></div>
+          </form>
+          <div id="install-box" class="card notice" hidden></div>
+        </section>
+
+        <section id="p-usage">
+          <div class="card">
+            <div class="muted small">Потрачено сегодня</div>
+            <div class="stat" id="spent">$0.00</div>
+            <div class="muted small" id="budget-text"></div>
+            <div class="meter" id="meter" hidden><div></div></div>
+            <form id="budget-form" class="row" style="margin-top:14px; align-items:end; flex-wrap:nowrap">
+              <label style="flex:1">Дневной лимит, $
+                <input name="usd" type="number" min="0" step="any" placeholder="без лимита">
+              </label>
+              <button class="btn ghost" type="submit">Сохранить</button>
+            </form>
+          </div>
+          <div class="card" style="padding:6px 8px; overflow-x:auto">
+            <table>
+              <thead><tr><th>Агент</th><th>Модель</th><th class="num">Запр.</th><th class="num">Стоимость</th></tr></thead>
+              <tbody id="usage-rows"></tbody>
+            </table>
+          </div>
+          <p class="muted small">Для CLI-утилит токены оцениваются примерно.</p>
+        </section>
+
+        <section id="p-connect">
+          <div class="card">
+            <p style="margin-top:0">Любая программа, которая работает с OpenAI API, может использовать модели Edy.</p>
+            <div class="field">
+              <span class="field-label">Base URL</span>
+              <div class="field-row">
+                <span class="value" id="base-url">—</span>
+                <button class="btn ghost" data-copy="base_url">Копировать</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">API-ключ (токен)</span>
+              <div class="field-row">
+                <span class="value" id="token-view">••••••••••••••••</span>
+                <button class="btn ghost" data-copy="token">Копировать</button>
+                <button class="btn ghost" id="show-token">Показать</button>
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <span class="field-label">Имя модели</span>
+              <div class="field-row">
+                <span class="value">провайдер/модель, например agy/claude-sonnet-4-6</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Справа: меню -->
+  <nav class="side glass" id="side">
+    <div class="brand"><div class="logo">E</div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
+    <button class="menu-item" id="go-chat"><span class="ico">💬</span>Чат</button>
+    <div class="menu-group open" id="grp-providers">
+      <button type="button"><span class="ico">🔌</span>Провайдеры<span class="chev">›</span></button>
+      <div class="submenu"><div>
+        <button class="menu-item" data-open="p-list">Подключённые</button>
+        <button class="menu-item" data-open="p-add">Добавить</button>
+        <button class="menu-item" data-open="p-usage">Расходы</button>
+        <button class="menu-item" data-open="p-connect">Подключение</button>
+      </div></div>
+    </div>
+    <button class="menu-item" disabled><span class="ico">🤖</span>Агенты<span class="soon">этап 2</span></button>
+    <button class="menu-item" disabled><span class="ico">🗂</span>Проект<span class="soon">этап 3</span></button>
+    <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
-</header>
-<main>
-  <div id="auth" class="card notice" hidden>
-    Нет токена доступа. Откройте интерфейс командой <code>edy ui</code>.
-  </div>
+</div>
 
-  <section id="providers">
-    <h2>Подключённые провайдеры</h2>
-    <div id="provider-list"></div>
-
-    <h2>Добавить провайдера</h2>
-    <form id="add-form" class="card">
-      <div class="grid">
-        <label>Тип
-          <select name="kind">
-            <option value="cli">Терминальная утилита (подписка)</option>
-            <option value="anthropic">Anthropic API</option>
-            <option value="openai">OpenAI-совместимый API</option>
-          </select>
-        </label>
-        <label>Имя (префикс модели)
-          <input name="name" placeholder="agy" required>
-        </label>
-        <label data-for="cli">Профиль
-          <select name="preset"></select>
-        </label>
-        <label data-for="openai">Адрес API
-          <input name="base_url" placeholder="http://localhost:11434/v1">
-        </label>
-        <label>Модели через запятую
-          <input name="models" placeholder="claude-sonnet-4-6">
-        </label>
-        <label data-for="openai anthropic">$ за 1M входных токенов
-          <input name="price_in" type="number" min="0" step="any" value="0">
-        </label>
-        <label data-for="openai anthropic">$ за 1M выходных токенов
-          <input name="price_out" type="number" min="0" step="any" value="0">
-        </label>
-      </div>
-      <div class="row" style="margin-top:14px">
-        <button class="btn" type="submit">Добавить</button>
-        <span class="muted small" id="preset-hint"></span>
-      </div>
-      <div id="install-box" class="card notice" style="margin-top:14px" hidden></div>
-    </form>
-  </section>
-
-  <section id="usage" hidden>
-    <h2>Сегодня</h2>
-    <div class="card">
-      <div class="row spread">
-        <div>
-          <div class="stat" id="spent">$0.00</div>
-          <div class="muted small" id="budget-text"></div>
-        </div>
-        <form id="budget-form" class="row">
-          <label>Дневной лимит, $
-            <input name="usd" type="number" min="0" step="any" style="width:120px">
-          </label>
-          <button class="btn ghost" type="submit" style="align-self:end">Сохранить</button>
-        </form>
-      </div>
-      <div class="meter" id="meter" hidden><div></div></div>
-    </div>
-    <h2>По агентам и моделям</h2>
-    <div class="card" style="padding:0; overflow-x:auto">
-      <table>
-        <thead><tr><th>Агент</th><th>Модель</th><th class="num">Запросов</th><th class="num">Токены вход / выход</th><th class="num">Стоимость</th></tr></thead>
-        <tbody id="usage-rows"></tbody>
-      </table>
-    </div>
-    <p class="muted small">Для CLI-утилит токены оцениваются примерно: они не сообщают точное число.</p>
-  </section>
-
-  <section id="connect" hidden>
-    <h2>Подключение программ к OmniRoute</h2>
-    <div class="card">
-      <p>Любая программа, которая работает с OpenAI API, может использовать модели Edy.</p>
-      <div class="grid">
-        <label>Base URL <div class="row"><code id="base-url"></code><button class="btn ghost" data-copy="base-url">Копировать</button></div></label>
-        <label>API-ключ (токен) <div class="row"><code id="token-view">••••••••</code><button class="btn ghost" id="show-token">Показать</button><button class="btn ghost" data-copy="token">Копировать</button></div></label>
-      </div>
-      <p class="muted small">Имя модели: <code>провайдер/модель</code>, например <code id="model-example">agy/claude-sonnet-4-6</code>.</p>
-    </div>
-  </section>
-</main>
+<div id="auth" class="toast error" hidden>Нет токена доступа. Откройте интерфейс командой edy ui.</div>
 
 <script>
 "use strict";
@@ -167,6 +354,10 @@ const token = (() => {
   }
   try { return sessionStorage.getItem("edy-token") || ""; } catch { return ""; }
 })();
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...children) => {
@@ -196,7 +387,7 @@ async function api(method, path, body) {
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
-    const err = new Error(data?.error || ("Ошибка " + res.status));
+    const err = new Error(data?.error?.message || data?.error || ("Ошибка " + res.status));
     err.status = res.status;
     err.data = data;
     throw err;
@@ -204,37 +395,73 @@ async function api(method, path, body) {
   return data;
 }
 
-// --- Вкладки ---
-function showTab(name) {
-  for (const b of document.querySelectorAll("nav button")) b.classList.toggle("active", b.dataset.tab === name);
-  for (const s of document.querySelectorAll("main > section")) s.hidden = s.id !== name;
-  try { localStorage.setItem("edy-tab", name); } catch {}
-  ({ providers: loadProviders, usage: loadUsage, connect: loadConnect })[name]();
-}
-for (const b of document.querySelectorAll("nav button")) b.addEventListener("click", () => showTab(b.dataset.tab));
+// ============ Меню и панель ============
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect };
 
-// --- Провайдеры ---
+function openPanel(id) {
+  for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
+  for (const b of document.querySelectorAll(".submenu .menu-item")) b.classList.toggle("active", b.dataset.open === id);
+  $("#panel-title").textContent = titles[id];
+  $("#drawer").classList.add("open");
+  $("#side").classList.remove("show");
+  store.set("edy-panel", id);
+  loaders[id]();
+}
+function closePanel() {
+  $("#drawer").classList.remove("open");
+  for (const b of document.querySelectorAll(".submenu .menu-item")) b.classList.remove("active");
+  store.set("edy-panel", "");
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-open]");
+  if (b) openPanel(b.dataset.open);
+});
+$("#grp-providers > button").addEventListener("click", () => $("#grp-providers").classList.toggle("open"));
+$("#panel-close").addEventListener("click", closePanel);
+$("#go-chat").addEventListener("click", () => { closePanel(); $("#side").classList.remove("show"); $("#input").focus(); });
+$("#menu-toggle").addEventListener("click", (e) => { e.stopPropagation(); $("#side").classList.toggle("show"); });
+// На узком экране меню закрывается касанием мимо него.
+document.addEventListener("click", (e) => {
+  if ($("#side").classList.contains("show") && !e.target.closest("#side")) $("#side").classList.remove("show");
+});
+
+// ============ Провайдеры ============
 const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм." };
 let presets = [];
+let providers = [];
+
+async function refreshProviders() {
+  providers = await api("GET", "/api/providers");
+  fillModels();
+  $("#foot-providers").textContent = providers.length
+    ? `${providers.length} провайдер(а), ${providers.reduce((n, p) => n + p.models.length, 0)} моделей`
+    : "провайдеров нет";
+}
 
 async function loadProviders() {
+  try { await refreshProviders(); } catch (e) { return toast(e.message, true); }
   const list = $("#provider-list");
-  let providers;
-  try { providers = await api("GET", "/api/providers"); } catch (e) { return toast(e.message, true); }
   list.replaceChildren();
-  if (!providers.length) list.append(el("div", { class: "card empty" }, "Пока ни одного провайдера. Добавьте первый ниже."));
-  for (const p of providers) list.append(providerCard(p));
+  if (!providers.length) list.append(el("div", { class: "card empty" }, "Пока ни одного провайдера."));
+  providers.forEach((p, i) => {
+    const c = providerCard(p);
+    c.style.animationDelay = i * 60 + "ms";
+    list.append(c);
+  });
 }
 
 function providerCard(p) {
   const target = p.kind === "cli" ? p.command.join(" ") : (p.base_url || "адрес по умолчанию");
-  const card = el("div", { class: "card" },
+  const card = el("div", { class: "card lift" },
     el("div", { class: "row spread" },
-      el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" }, kindNames[p.kind] || p.kind)),
-      el("button", { class: "btn danger", onclick: () => removeProvider(p.name) }, "Удалить")),
-    el("div", { class: "muted small", style: "margin-top:6px" }, el("span", { class: "mono" }, target)),
+      el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" + (p.kind === "cli" ? " cli" : "") }, kindNames[p.kind] || p.kind)),
+      el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить")),
+    el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "mono muted" }, target)),
     el("div", { class: "row small", style: "margin-top:8px" },
-      ...(p.models.length ? p.models.map((m) => el("code", {}, p.name + "/" + m)) : [el("span", { class: "muted" }, "модели не указаны")])),
+      ...(p.models.length
+        ? p.models.map((m) => el("button", { class: "chip", title: "Открыть чат с этой моделью", onclick: () => chatWith(p.name + "/" + m) }, p.name + "/" + m))
+        : [el("span", { class: "muted" }, "модели не указаны")])),
   );
   if (p.kind !== "cli") card.append(keysBlock(p));
   return card;
@@ -247,19 +474,19 @@ function keysBlock(p) {
     : "Ключей нет. Для локальных API вроде Ollama ключ не нужен."));
   for (const k of p.keys) {
     box.append(el("div", { class: "row spread" },
-      el("span", {}, (k.label || "без метки") + " ", k.disabled ? el("span", { class: "badge" }, "отключён провайдером") : ""),
-      el("button", { class: "btn danger", onclick: () => removeKey(k.id) }, "Удалить")));
+      el("span", { class: "row" }, "🔑 " + (k.label || "без метки"), k.disabled ? el("span", { class: "badge off" }, "отключён") : ""),
+      el("button", { class: "btn danger icon", onclick: () => removeKey(k.id) }, "Удалить")));
   }
-  const label = el("input", { placeholder: "метка, например «рабочий»" });
+  const label = el("input", { placeholder: "метка" });
   const secret = el("input", { type: "password", placeholder: "API-ключ", autocomplete: "off" });
-  box.append(el("form", { class: "row", onsubmit: async (e) => {
+  box.append(el("form", { class: "key-form", onsubmit: async (e) => {
     e.preventDefault();
     try {
       await api("POST", `/api/providers/${encodeURIComponent(p.name)}/keys`, { label: label.value, secret: secret.value });
       toast("Ключ зашифрован и сохранён");
       loadProviders();
     } catch (err) { toast(err.message, true); }
-  } }, label, secret, el("button", { class: "btn ghost", type: "submit" }, "Добавить ключ")));
+  } }, label, secret, el("button", { class: "btn ghost", type: "submit" }, "Добавить")));
   return box;
 }
 
@@ -268,16 +495,14 @@ async function removeProvider(name) {
   try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
   catch (e) { toast(e.message, true); }
 }
-
 async function removeKey(id) {
   if (!confirm("Удалить ключ?")) return;
   try { await api("DELETE", `/api/keys/${id}`); loadProviders(); }
   catch (e) { toast(e.message, true); }
 }
 
-// --- Форма добавления ---
+// ============ Форма добавления ============
 const form = $("#add-form");
-
 function syncForm() {
   const kind = form.kind.value;
   for (const l of form.querySelectorAll("[data-for]")) l.hidden = !l.dataset.for.split(" ").includes(kind);
@@ -287,28 +512,23 @@ function syncForm() {
 form.kind.addEventListener("change", syncForm);
 form.preset.addEventListener("change", syncForm);
 
-function formBody() {
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#install-box").hidden = true;
   const kind = form.kind.value;
-  return {
-    name: form.name.value.trim(),
-    kind,
+  const body = {
+    name: form.name.value.trim(), kind,
     preset: kind === "cli" ? form.preset.value : "",
     base_url: kind === "openai" ? form.base_url.value : "",
     models: form.models.value.split(","),
     price_in: kind === "cli" ? 0 : Number(form.price_in.value) || 0,
     price_out: kind === "cli" ? 0 : Number(form.price_out.value) || 0,
   };
-}
-
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const box = $("#install-box");
-  box.hidden = true;
   try {
-    await api("POST", "/api/providers", formBody());
-    toast(`Провайдер «${form.name.value.trim()}» добавлен`);
+    await api("POST", "/api/providers", body);
+    toast(`Провайдер «${body.name}» добавлен`);
     form.name.value = ""; form.models.value = "";
-    loadProviders();
+    openPanel("p-list");
   } catch (err) {
     if (err.status === 409 && err.data?.install) return offerInstall(err.data);
     toast(err.message, true);
@@ -318,7 +538,7 @@ form.addEventListener("submit", async (e) => {
 function offerInstall(info) {
   const box = $("#install-box");
   const btn = el("button", { class: "btn", type: "button" }, "Установить");
-  const out = el("pre", { hidden: "" });
+  const out = el("pre", { class: "log", hidden: "" });
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.textContent = "Устанавливаю… (до нескольких минут)";
@@ -334,15 +554,15 @@ function offerInstall(info) {
     }
   });
   box.replaceChildren(
-    el("div", {}, el("strong", {}, info.error + ".")),
+    el("strong", {}, info.error + "."),
     el("p", { class: "small" }, "Edy может установить её командой ниже. Она скачает установщик из интернета — проверьте адрес перед запуском."),
     el("code", {}, info.install),
-    el("div", { class: "row", style: "margin-top:10px" }, btn),
+    el("div", { class: "row", style: "margin-top:12px" }, btn),
     out);
   box.hidden = false;
 }
 
-// --- Расходы ---
+// ============ Расходы ============
 async function loadUsage() {
   let u;
   try { u = await api("GET", "/api/usage"); } catch (e) { return toast(e.message, true); }
@@ -353,22 +573,21 @@ async function loadUsage() {
   meter.hidden = !(u.budget_usd > 0);
   if (u.budget_usd > 0) {
     const ratio = u.today_usd / u.budget_usd;
-    meter.firstElementChild.style.width = Math.min(100, ratio * 100) + "%";
     meter.className = "meter" + (ratio >= 1 ? " over" : ratio >= 0.8 ? " warn" : "");
+    meter.firstElementChild.style.width = "0";
+    requestAnimationFrame(() => requestAnimationFrame(() => { meter.firstElementChild.style.width = Math.min(100, ratio * 100) + "%"; }));
   }
   const rows = $("#usage-rows");
   rows.replaceChildren();
-  if (!u.items.length) rows.append(el("tr", {}, el("td", { colspan: "5", class: "empty" }, "Сегодня запросов не было")));
+  if (!u.items.length) rows.append(el("tr", {}, el("td", { colspan: "4", class: "empty" }, "Сегодня запросов не было")));
   for (const i of u.items) {
-    rows.append(el("tr", {},
+    rows.append(el("tr", { title: `Токены: ${num(i.input_tokens)} вход / ${num(i.output_tokens)} выход` },
       el("td", {}, i.client || "—"),
       el("td", {}, el("code", {}, i.provider + "/" + i.model)),
       el("td", { class: "num" }, num(i.requests)),
-      el("td", { class: "num" }, num(i.input_tokens) + " / " + num(i.output_tokens)),
       el("td", { class: "num" }, money(i.cost_usd))));
   }
 }
-
 $("#budget-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
@@ -378,40 +597,185 @@ $("#budget-form").addEventListener("submit", async (e) => {
   } catch (err) { toast(err.message, true); }
 });
 
-// --- Подключение ---
+// ============ Подключение ============
 let info = null;
 async function loadConnect() {
   try { info = await api("GET", "/api/info"); } catch (e) { return toast(e.message, true); }
   $("#base-url").textContent = info.base_url;
 }
 $("#show-token").addEventListener("click", () => {
-  if (info) $("#token-view").textContent = info.token;
+  if (!info) return;
+  const v = $("#token-view");
+  const shown = v.textContent === info.token;
+  v.textContent = shown ? "••••••••••••••••" : info.token;
+  $("#show-token").textContent = shown ? "Показать" : "Скрыть";
 });
 for (const b of document.querySelectorAll("[data-copy]")) {
   b.addEventListener("click", async () => {
     if (!info) return;
-    try {
-      await navigator.clipboard.writeText(b.dataset.copy === "token" ? info.token : info.base_url);
-      toast("Скопировано");
-    } catch { toast("Не удалось скопировать", true); }
+    try { await navigator.clipboard.writeText(info[b.dataset.copy]); toast("Скопировано"); }
+    catch { toast("Не удалось скопировать", true); }
   });
 }
 
-// --- Старт ---
+// ============ Чат ============
+const msgsBox = $("#messages");
+const input = $("#input");
+const sendBtn = $("#send");
+let history_ = [];
+let abort = null;
+
+function fillModels() {
+  const sel = $("#model");
+  const current = sel.value || store.get("edy-model");
+  const all = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  sel.replaceChildren(...(all.length ? all.map((m) => el("option", { value: m }, m)) : [el("option", { value: "" }, "нет моделей")]));
+  if (all.includes(current)) sel.value = current;
+}
+$("#model").addEventListener("change", (e) => store.set("edy-model", e.target.value));
+
+function chatWith(model) {
+  $("#model").value = model;
+  store.set("edy-model", model);
+  closePanel();
+  input.focus();
+}
+
+function showWelcome() {
+  msgsBox.replaceChildren(el("div", { class: "welcome" },
+    el("h3", {}, "Привет! Я Edy"),
+    el("div", { class: "muted" }, "Выберите модель вверху и задайте вопрос. Все запросы идут через OmniRoute, поэтому работают ротация ключей и учёт расходов."),
+    el("div", { class: "chips" }, ...["Объясни, что такое AST", "Напиши функцию на Go", "Придумай название для проекта"].map((t) =>
+      el("button", { class: "chip", onclick: () => { input.value = t; send(); } }, t)))));
+}
+
+// Простая разметка: ```блоки кода``` и `код`. Всё остальное — обычный текст.
+function renderText(target, text) {
+  target.replaceChildren();
+  const parts = text.split(/```/);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) {
+      const body = part.replace(/^[\w+-]*\n/, "");
+      target.append(el("pre", {}, el("code", {}, body)));
+      return;
+    }
+    part.split(/(`[^`\n]+`)/).forEach((chunk) => {
+      if (/^`[^`\n]+`$/.test(chunk)) target.append(el("code", {}, chunk.slice(1, -1)));
+      else if (chunk) target.append(chunk);
+    });
+  });
+}
+
+function addMessage(role, text, model) {
+  if (msgsBox.querySelector(".welcome")) msgsBox.replaceChildren();
+  const body = el("div");
+  const m = el("div", { class: "msg " + (role === "user" ? "user" : "bot") });
+  if (role !== "user") m.append(el("div", { class: "who" }, model || ""));
+  m.append(body);
+  if (text) renderText(body, text);
+  msgsBox.append(m);
+  msgsBox.scrollTop = msgsBox.scrollHeight;
+  return { m, body };
+}
+
+function setBusy(busy) {
+  sendBtn.classList.toggle("stop", busy);
+  sendBtn.textContent = busy ? "■" : "➤";
+  sendBtn.title = busy ? "Остановить" : "Отправить";
+}
+
+async function send() {
+  if (abort) { abort.abort(); return; }
+  const text = input.value.trim();
+  const model = $("#model").value;
+  if (!text) return;
+  if (!model) { toast("Сначала добавьте провайдера с моделями", true); openPanel("p-add"); return; }
+  input.value = ""; autosize();
+  addMessage("user", text);
+  history_.push({ role: "user", content: text });
+
+  const { m, body } = addMessage("bot", "", model);
+  body.append(el("span", { class: "typing" }, el("span"), el("span"), el("span")));
+  abort = new AbortController();
+  setBusy(true);
+  let answer = "";
+  try {
+    const res = await fetch("/v1/chat/completions", {
+      method: "POST", signal: abort.signal,
+      headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json", "X-Edy-Client": "chat" },
+      body: JSON.stringify({ model, stream: true, messages: history_ }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error?.message || "Ошибка " + res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 2);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+        const ev = JSON.parse(data);
+        if (ev.error) throw new Error(ev.error.message);
+        const delta = ev.choices?.[0]?.delta?.content;
+        if (delta) {
+          answer += delta;
+          renderText(body, answer);
+          msgsBox.scrollTop = msgsBox.scrollHeight;
+        }
+      }
+    }
+    if (!answer) renderText(body, "(пустой ответ)");
+    history_.push({ role: "assistant", content: answer });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      if (answer) history_.push({ role: "assistant", content: answer });
+      body.append(el("div", { class: "who" }, "остановлено"));
+    } else {
+      history_.pop(); // неудачный вопрос не сохраняем в истории
+      m.classList.add("error");
+      renderText(body, answer ? answer + "\n\n⚠ " + e.message : "⚠ " + e.message);
+    }
+  } finally {
+    abort = null;
+    setBusy(false);
+    body.querySelector(".typing")?.remove();
+  }
+}
+
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(180, input.scrollHeight) + "px"; }
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+});
+$("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+$("#new-chat").addEventListener("click", () => { if (abort) abort.abort(); history_ = []; showWelcome(); input.focus(); });
+
+// ============ Старт ============
 (async () => {
+  showWelcome();
   if (!token) { $("#auth").hidden = false; return; }
   try {
     presets = await api("GET", "/api/presets");
     form.preset.replaceChildren(...presets.map((p) => el("option", { value: p.name }, p.name)));
     form.preset.value = presets.some((p) => p.name === "antigravity") ? "antigravity" : presets[0]?.name;
+    await refreshProviders();
   } catch (e) {
     if (e.status === 401) { $("#auth").hidden = false; return; }
     toast(e.message, true);
   }
   syncForm();
-  let tab = "providers";
-  try { tab = localStorage.getItem("edy-tab") || tab; } catch {}
-  showTab(["providers", "usage", "connect"].includes(tab) ? tab : "providers");
+  const last = store.get("edy-panel");
+  if (last && titles[last]) openPanel(last);
+  input.focus();
 })();
 </script>
 </body>

@@ -1,0 +1,12 @@
+# Локальные данные и секреты Edy — никогда не коммитим
+*.db
+*.db-wal
+*.db-shm
+router.token
+.env
+.env.*
+*.pem
+
+# Сборки
+/edy
+/edy-macos-*
