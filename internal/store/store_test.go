@@ -71,6 +71,7 @@ func TestCommandRoundTripAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.AddProvider(Provider{Name: "ollama-cli", Kind: KindCLI, Command: []string{"ollama", "run", "{model}", "{prompt}"}})
+	s.AddProvider(Provider{Name: "gpt-web", Kind: KindWeb, Site: "chatgpt"})
 	s.Close()
 
 	// Повторное открытие не должно падать на уже применённой миграции.
@@ -82,6 +83,9 @@ func TestCommandRoundTripAndReopen(t *testing.T) {
 	p, err := s.Provider("ollama-cli")
 	if err != nil || len(p.Command) != 4 || p.Command[3] != "{prompt}" {
 		t.Fatalf("p = %+v, err = %v", p, err)
+	}
+	if w, _ := s.Provider("gpt-web"); w.Site != "chatgpt" {
+		t.Fatalf("site = %q", w.Site)
 	}
 }
 

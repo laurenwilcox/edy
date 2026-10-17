@@ -19,6 +19,7 @@ const (
 	KindOpenAI    = "openai"    // любой OpenAI-совместимый API: OpenAI, OpenRouter, DeepSeek, Ollama…
 	KindAnthropic = "anthropic" // Anthropic Messages API
 	KindCLI       = "cli"       // терминальная утилита в PTY: Ollama, Claude Code, Aider…
+	KindWeb       = "web"       // веб-чат в браузере: ChatGPT, Claude.ai, Gemini
 )
 
 var (
@@ -63,6 +64,7 @@ CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
 // migrations добавляют колонки, появившиеся после первой версии схемы.
 var migrations = []string{
 	`ALTER TABLE providers ADD COLUMN command TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE providers ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
 }
 
 // Provider — источник ИИ, подключённый к OmniRoute.
@@ -76,6 +78,8 @@ type Provider struct {
 	PriceOut float64 // USD за 1M выходных токенов
 	// Command — аргументы запуска для KindCLI с подстановками {model} и {prompt}.
 	Command []string
+	// Site — имя веб-чата для KindWeb (chatgpt, claude, gemini…).
+	Site string
 }
 
 // Cost считает стоимость запроса в долларах.
@@ -131,8 +135,8 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command) VALUES (?,?,?,?,?,?,?)`,
-		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command)
+	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command, site) VALUES (?,?,?,?,?,?,?,?)`,
+		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command, p.Site)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return 0, ErrExists
@@ -167,7 +171,7 @@ func (s *Store) DeleteProvider(name string) error {
 }
 
 func (s *Store) Provider(name string) (Provider, error) {
-	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command FROM providers WHERE name = ?`, name)
+	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site FROM providers WHERE name = ?`, name)
 	p, err := scanProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Provider{}, ErrNotFound
@@ -176,7 +180,7 @@ func (s *Store) Provider(name string) (Provider, error) {
 }
 
 func (s *Store) Providers() ([]Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command FROM providers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site FROM providers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +199,7 @@ func (s *Store) Providers() ([]Provider, error) {
 func scanProvider(row interface{ Scan(...any) error }) (Provider, error) {
 	var p Provider
 	var models, command string
-	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command, &p.Site); err != nil {
 		return Provider{}, err
 	}
 	if err := json.Unmarshal([]byte(command), &p.Command); err != nil {

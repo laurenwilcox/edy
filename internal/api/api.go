@@ -17,7 +17,14 @@ import (
 
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/webchat"
 )
+
+// WebManager — то, что API нужно от менеджера браузеров.
+type WebManager interface {
+	Sites() (map[string]webchat.Site, error)
+	OpenLogin(ctx context.Context, site string) error
+}
 
 const installTimeout = 10 * time.Minute
 
@@ -32,6 +39,9 @@ type Handler struct {
 	FindExecutable func(name string) (string, error)
 	Install        func(ctx context.Context, command string) (output string, err error)
 	ListModels     func(ctx context.Context, p store.Provider, key string) ([]string, error)
+
+	// Web — менеджер браузеров для веб-чатов; nil, если веб-чаты выключены.
+	Web WebManager
 
 	mux *http.ServeMux
 }
@@ -49,6 +59,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
 	m.HandleFunc("DELETE /api/keys/{id}", h.deleteKey)
 	m.HandleFunc("POST /api/install", h.install)
+	m.HandleFunc("POST /api/web/login", h.webLogin)
 	m.HandleFunc("GET /api/usage", h.usage)
 	m.HandleFunc("PUT /api/budget", h.setBudget)
 	h.mux = m
@@ -76,6 +87,14 @@ type cliPresetJSON struct {
 	Note    string   `json:"note"`
 }
 
+type webPresetJSON struct {
+	Name           string `json:"name"`
+	Title          string `json:"title"`
+	URL            string `json:"url"`
+	MinIntervalSec int    `json:"min_interval_sec"`
+	DailyLimit     int    `json:"daily_limit"`
+}
+
 type apiPresetJSON struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
@@ -89,7 +108,19 @@ func (h *Handler) presets(w http.ResponseWriter, r *http.Request) {
 	out := struct {
 		CLI []cliPresetJSON `json:"cli"`
 		API []apiPresetJSON `json:"api"`
-	}{CLI: []cliPresetJSON{}, API: []apiPresetJSON{}}
+		Web []webPresetJSON `json:"web"`
+	}{CLI: []cliPresetJSON{}, API: []apiPresetJSON{}, Web: []webPresetJSON{}}
+	if h.Web != nil {
+		sites, err := h.Web.Sites()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for name, s := range sites {
+			out.Web = append(out.Web, webPresetJSON{Name: name, Title: s.Title, URL: s.URL, MinIntervalSec: s.MinIntervalSec, DailyLimit: s.DailyLimit})
+		}
+		sort.Slice(out.Web, func(i, j int) bool { return out.Web[i].Title < out.Web[j].Title })
+	}
 	for name, p := range omniroute.CLIPresets {
 		out.CLI = append(out.CLI, cliPresetJSON{Name: name, Title: p.Title, Command: p.Command, Install: p.Install, Note: p.Note})
 	}
@@ -161,6 +192,7 @@ type providerJSON struct {
 	PriceIn  float64         `json:"price_in"`
 	PriceOut float64         `json:"price_out"`
 	Command  []string        `json:"command"`
+	Site     string          `json:"site"`
 	Keys     []store.KeyInfo `json:"keys"`
 }
 
@@ -182,7 +214,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 			models = []string{}
 		}
 		out = append(out, providerJSON{Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: models,
-			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Keys: keys})
+			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Keys: keys})
 	}
 	reply(w, out)
 }
@@ -196,6 +228,7 @@ type addProviderReq struct {
 	PriceOut float64  `json:"price_out"`
 	Preset   string   `json:"preset"`
 	Command  []string `json:"command"`
+	Site     string   `json:"site"`
 }
 
 // needInstall — ответ 409, когда утилиту профиля надо сначала установить.
@@ -253,8 +286,26 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "для CLI-провайдера нужен профиль или команда")
 			return
 		}
+	case store.KindWeb:
+		if h.Web == nil {
+			fail(w, http.StatusBadRequest, "веб-чаты выключены")
+			return
+		}
+		sites, err := h.Web.Sites()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if _, ok := sites[req.Site]; !ok {
+			fail(w, http.StatusBadRequest, fmt.Sprintf("неизвестный веб-чат %q", req.Site))
+			return
+		}
+		p.Site = req.Site
+		if len(p.Models) == 0 {
+			p.Models = []string{"chat"} // модель выбирается на самом сайте
+		}
 	default:
-		fail(w, http.StatusBadRequest, "тип должен быть openai, anthropic или cli")
+		fail(w, http.StatusBadRequest, "тип должен быть openai, anthropic, cli или web")
 		return
 	}
 	if _, err := h.Store.AddProvider(p); errors.Is(err, store.ErrExists) {
@@ -350,6 +401,29 @@ func (h *Handler) install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string]string{"path": bin, "output": output})
+}
+
+// webLogin открывает сайт в окне Chrome, чтобы пользователь вошёл в аккаунт.
+// При первом запуске Chrome может скачиваться — это несколько минут.
+func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
+	if h.Web == nil {
+		fail(w, http.StatusBadRequest, "веб-чаты выключены")
+		return
+	}
+	var req struct {
+		Site string `json:"site"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), installTimeout)
+	defer cancel()
+	if err := h.Web.OpenLogin(ctx, req.Site); err != nil {
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func runInstall(ctx context.Context, command string) (string, error) {

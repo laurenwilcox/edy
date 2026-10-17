@@ -250,6 +250,7 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
             <div class="seg" role="tablist">
               <button type="button" data-mode="cli" class="on">Утилита по подписке</button>
               <button type="button" data-mode="api">API-ключ</button>
+              <button type="button" data-mode="web">Веб-чат</button>
             </div>
             <div class="form-grid" style="margin-top:14px">
               <label class="wide" data-for="cli">Утилита
@@ -257,6 +258,9 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
               </label>
               <label class="wide" data-for="cli-custom">Команда запуска (аргументы через пробел)
                 <input name="command" placeholder="mytool --model {model} {prompt}">
+              </label>
+              <label class="wide" data-for="web">Сайт
+                <select name="site"></select>
               </label>
               <label class="wide" data-for="api">Сервис
                 <select name="service"></select>
@@ -276,7 +280,7 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
               <label>Имя (префикс модели)
                 <input name="name" required>
               </label>
-              <label class="wide">Модели через запятую
+              <label class="wide" data-for="cli api">Модели через запятую
                 <input name="models" placeholder="для API можно оставить пустым и загрузить список после добавления">
               </label>
               <label data-for="api">$ за 1M входных токенов
@@ -453,8 +457,8 @@ document.addEventListener("click", (e) => {
 });
 
 // ============ Провайдеры ============
-const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм." };
-let presets = { cli: [], api: [] };
+const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм.", web: "Веб-чат" };
+let presets = { cli: [], api: [], web: [] };
 let providers = [];
 
 async function refreshProviders() {
@@ -478,12 +482,17 @@ async function loadProviders() {
 }
 
 function providerCard(p) {
-  const target = p.kind === "cli" ? p.command.join(" ") : (p.base_url || "адрес по умолчанию");
+  const site = presets.web.find((w) => w.name === p.site);
+  const target = p.kind === "cli" ? p.command.join(" ")
+    : p.kind === "web" ? (site ? site.url : p.site)
+    : (p.base_url || "адрес по умолчанию");
   const card = el("div", { class: "card lift", "data-provider": p.name },
     el("div", { class: "row spread" },
       el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" + (p.kind === "cli" ? " cli" : "") }, kindNames[p.kind] || p.kind)),
       el("div", { class: "row" },
-        el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели"),
+        p.kind === "web"
+          ? el("button", { class: "btn ghost icon", onclick: (e) => webLogin(p.site, e.currentTarget) }, "Войти")
+          : el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели"),
         el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить"))),
     el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "mono muted" }, target)),
     el("div", { class: "row small", style: "margin-top:8px" },
@@ -491,7 +500,7 @@ function providerCard(p) {
         ? p.models.map((m) => el("button", { class: "chip", title: "Открыть чат с этой моделью", onclick: () => chatWith(p.name + "/" + m) }, p.name + "/" + m))
         : [el("span", { class: "muted" }, "модели не указаны")])),
   );
-  if (p.kind !== "cli") card.append(keysBlock(p));
+  if (p.kind === "openai" || p.kind === "anthropic") card.append(keysBlock(p));
   return card;
 }
 
@@ -577,6 +586,17 @@ async function openModelEditor(name, autoLoad) {
   if (autoLoad && p.kind !== "cli") load.click();
 }
 
+async function webLogin(site, btn) {
+  btn.disabled = true;
+  btn.textContent = "Открываю Chrome…";
+  try {
+    await api("POST", "/api/web/login", { site });
+    toast("Окно Chrome открыто — войдите в аккаунт. Окно можно свернуть, но не закрывать.");
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false;
+  btn.textContent = "Войти";
+}
+
 async function removeProvider(name) {
   if (!confirm(`Удалить провайдера «${name}» вместе с его ключами?`)) return;
   try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
@@ -601,6 +621,7 @@ for (const b of form.querySelectorAll(".seg button")) {
 }
 
 function currentPreset() {
+  if (addMode === "web") return presets.web.find((p) => p.name === form.site.value);
   return addMode === "cli"
     ? presets.cli.find((p) => p.name === form.preset.value)
     : presets.api.find((p) => p.name === form.service.value);
@@ -613,7 +634,8 @@ function syncForm(fill) {
   const visible = new Set([addMode, addMode + (custom ? "-custom" : "")]);
   for (const l of form.querySelectorAll("[data-for]")) l.hidden = !l.dataset.for.split(" ").some((f) => visible.has(f));
   if (fill) {
-    form.name.value = pr ? (addMode === "cli" ? ({ "claude-code": "claude", antigravity: "agy" }[pr.name] || pr.name) : pr.name) : "";
+    form.name.value = pr ? (addMode === "cli" ? ({ "claude-code": "claude", antigravity: "agy" }[pr.name] || pr.name)
+      : addMode === "web" ? pr.name + "-web" : pr.name) : "";
     if (addMode === "api") {
       form.base_url.value = pr ? pr.base_url : "";
       form.base_url.placeholder = pr && pr.kind === "anthropic" ? "по умолчанию — api.anthropic.com" : "https://…/v1";
@@ -624,16 +646,22 @@ function syncForm(fill) {
   if (addMode === "cli" && pr) hint.append("Запуск: ", el("code", {}, pr.command.join(" ")), pr.note ? el("div", { style: "margin-top:4px" }, pr.note) : "");
   if (addMode === "cli" && !pr) hint.append("Подстановки: ", el("code", {}, "{prompt}"), " — текст запроса (обязательно), ", el("code", {}, "{model}"), " — имя модели.");
   if (addMode === "api" && pr?.note) hint.append(pr.note);
+  if (addMode === "web" && pr) hint.append(
+    `Edy откроет ${pr.url} в отдельном профиле Chrome (если Chrome не установлен — скачает его). После добавления нажмите «Войти» и войдите в свой аккаунт. `,
+    `Чтобы не выглядеть как бот: не чаще одного запроса в ${pr.min_interval_sec} с и не больше ${pr.daily_limit} в день. `,
+    el("b", {}, "Автоматизация веб-чатов нарушает правила сервисов — аккаунт могут заблокировать."));
   const link = $("#key-link");
   link.replaceChildren();
   if (addMode === "api" && pr?.key_url) link.append(el("a", { href: pr.key_url, target: "_blank", rel: "noopener" }, "получить ключ ↗"));
 }
 form.preset.addEventListener("change", () => syncForm(true));
 form.service.addEventListener("change", () => syncForm(true));
+form.site.addEventListener("change", () => syncForm(true));
 
 function fillPresetSelects() {
   form.preset.replaceChildren(...presets.cli.map((p) => el("option", { value: p.name }, p.title)), el("option", { value: "" }, "Своя утилита…"));
   form.service.replaceChildren(...presets.api.map((p) => el("option", { value: p.name }, p.title)), el("option", { value: "" }, "Другой сервис…"));
+  form.site.replaceChildren(...presets.web.map((p) => el("option", { value: p.name }, p.title)));
   form.preset.value = "antigravity";
   form.service.value = "anthropic";
   syncForm(true);
@@ -647,7 +675,10 @@ form.addEventListener("submit", async (e) => {
     name: form.name.value.trim(),
     models: form.models.value.split(","),
   };
-  if (addMode === "cli") {
+  if (addMode === "web") {
+    body.kind = "web";
+    body.site = form.site.value;
+  } else if (addMode === "cli") {
     body.kind = "cli";
     if (pr) body.preset = pr.name;
     else body.command = form.command.value.trim().split(/\s+/).filter(Boolean);

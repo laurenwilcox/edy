@@ -13,6 +13,7 @@ import (
 
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/vault"
+	"github.com/laurenwilcox/name/internal/webchat"
 )
 
 const token = "edy-test"
@@ -168,5 +169,42 @@ func TestPresetsCatalog(t *testing.T) {
 	json.Unmarshal(call(h, "GET", "/api/presets", "").Body.Bytes(), &out)
 	if len(out.CLI) < 10 || len(out.API) < 15 {
 		t.Fatalf("cli=%d api=%d", len(out.CLI), len(out.API))
+	}
+}
+
+type fakeWeb struct{ opened string }
+
+func (f *fakeWeb) Sites() (map[string]webchat.Site, error) { return webchat.DefaultSites, nil }
+func (f *fakeWeb) OpenLogin(ctx context.Context, site string) error {
+	f.opened = site
+	return nil
+}
+
+func TestWebProviders(t *testing.T) {
+	h, st := setup(t)
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt","kind":"web","site":"chatgpt"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("без менеджера браузеров: %d", rec.Code)
+	}
+	web := &fakeWeb{}
+	h.Web = web
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt","kind":"web","site":"nope"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("неизвестный сайт: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt","kind":"web","site":"chatgpt"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	p, _ := st.Provider("gpt")
+	if p.Site != "chatgpt" || strings.Join(p.Models, ",") != "chat" {
+		t.Fatalf("p = %+v", p)
+	}
+	if rec := call(h, "POST", "/api/web/login", `{"site":"chatgpt"}`); rec.Code != http.StatusNoContent || web.opened != "chatgpt" {
+		t.Fatalf("login: %d opened=%q", rec.Code, web.opened)
+	}
+	var out struct {
+		Web []webPresetJSON `json:"web"`
+	}
+	json.Unmarshal(call(h, "GET", "/api/presets", "").Body.Bytes(), &out)
+	if len(out.Web) != len(webchat.DefaultSites) {
+		t.Fatalf("web presets = %+v", out.Web)
 	}
 }

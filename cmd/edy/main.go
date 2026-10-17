@@ -29,6 +29,7 @@ import (
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/ui"
 	"github.com/laurenwilcox/name/internal/vault"
+	"github.com/laurenwilcox/name/internal/webchat"
 )
 
 const settingRouterToken = "router_token"
@@ -39,11 +40,13 @@ const usage = `Edy — ядро ИИ-IDE.
   edy ui                                   запустить OmniRoute и открыть интерфейс в браузере
   edy serve [-addr 127.0.0.1:11435]        запустить OmniRoute (интерфейс — по адресу из лога)
   edy token                                показать токен доступа к OmniRoute
-  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli);
+  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli | web);
                                            для cli с -preset утилита ставится сама, если её нет
   edy provider list                        список провайдеров
   edy provider remove -name N              удалить провайдера вместе с его ключами
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
+  edy web chrome                           скачать Chrome для веб-чатов (если нет установленного)
+  edy web login <сайт>                     войти в веб-чат (chatgpt, claude, gemini); edy serve должен быть остановлен
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
   edy spend                                расходы за сегодня
 
@@ -87,6 +90,16 @@ func run(args []string) error {
 		return providerRemove(st, args[2:])
 	case cmd == "key add":
 		return keyAdd(st, args[2:])
+	case cmd == "web chrome":
+		web := webchat.NewManager(home)
+		web.Log = os.Stdout
+		path, err := web.EnsureChrome(context.Background())
+		if err == nil {
+			fmt.Println("Chrome:", path)
+		}
+		return err
+	case cmd == "web login" && len(args) == 3:
+		return webLogin(home, args[2])
 	case cmd == "budget set" && len(args) == 3:
 		v, err := strconv.ParseFloat(args[2], 64)
 		if err != nil || v < 0 {
@@ -155,11 +168,18 @@ func serve(st *store.Store, home string, args []string, openBrowser bool) error 
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
+	web := webchat.NewManager(home)
+	web.Log = os.Stderr
+	defer web.Close()
+
 	router := omniroute.NewServer(st, tok, log)
+	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
+	apiHandler := api.New(st, tok, *addr)
+	apiHandler.Web = web
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", router)
 	mux.Handle("/healthz", router)
-	mux.Handle("/api/", api.New(st, tok, *addr))
+	mux.Handle("/api/", apiHandler)
 	mux.Handle("/", ui.Handler())
 	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
@@ -196,6 +216,7 @@ func providerAdd(st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("provider add", flag.ContinueOnError)
 	p := store.Provider{}
 	var models, preset, command string
+	fs.StringVar(&p.Site, "site", "", "для web: веб-чат — chatgpt | claude | gemini")
 	var yes bool
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
 	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
@@ -236,8 +257,15 @@ func providerAdd(st *store.Store, args []string) error {
 		default:
 			return errors.New("для -kind cli нужен -preset или -command")
 		}
+	case store.KindWeb:
+		if p.Site == "" {
+			return errors.New("для -kind web нужен -site")
+		}
+		if models == "" {
+			models = "chat"
+		}
 	default:
-		return errors.New("-kind должен быть openai, anthropic или cli")
+		return errors.New("-kind должен быть openai, anthropic, cli или web")
 	}
 	p.Models = strings.Split(models, ",")
 	if _, err := st.AddProvider(p); errors.Is(err, store.ErrExists) {
@@ -288,6 +316,20 @@ func presetNames() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, " | ")
+}
+
+// webLogin открывает сайт в профиле Edy и ждёт, пока пользователь войдёт.
+func webLogin(home, site string) error {
+	web := webchat.NewManager(home)
+	web.Log = os.Stdout
+	defer web.Close()
+	if err := web.OpenLogin(context.Background(), site); err != nil {
+		return err
+	}
+	fmt.Print("Войдите в аккаунт в открывшемся окне Chrome, затем нажмите Enter здесь. ")
+	bufio.NewReader(os.Stdin).ReadString('\n')
+	fmt.Println("Вход сохранён в профиле Edy.")
+	return nil
 }
 
 func providerRemove(st *store.Store, args []string) error {

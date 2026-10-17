@@ -67,6 +67,12 @@ func NewServer(st *store.Store, token string, log *slog.Logger) *Server {
 	}
 }
 
+// RegisterAdapter подключает адаптер для типа провайдера (например, веб-чаты,
+// которым нужен общий менеджер браузеров).
+func (s *Server) RegisterAdapter(kind string, a Adapter) {
+	s.adapters[kind] = a
+}
+
 // NewToken генерирует случайный токен доступа.
 func NewToken() (string, error) {
 	b := make([]byte, 24)

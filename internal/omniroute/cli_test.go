@@ -174,3 +174,28 @@ func TestAPIPresetsAreConsistent(t *testing.T) {
 		}
 	}
 }
+
+type fakeBrowser struct{ chunks []string }
+
+func (f fakeBrowser) Ask(ctx context.Context, site, prompt string, onText func(string) error) error {
+	full := ""
+	for _, c := range f.chunks {
+		full += c
+		if err := onText(full); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestWebAdapterThroughServer(t *testing.T) {
+	st := newTestStore(t)
+	st.AddProvider(store.Provider{Name: "gpt", Kind: store.KindWeb, Site: "chatgpt"})
+	srv := NewServer(st, testToken, nil)
+	srv.RegisterAdapter(store.KindWeb, &WebAdapter{Browser: fakeBrowser{chunks: []string{"При", "вет", "!"}}})
+	rec := serve(srv, newAuthedRequest(http.MethodPost, "/v1/chat/completions", `{"model":"gpt/default","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"content":"вет"`) || !strings.Contains(body, `"finish_reason":"stop"`) {
+		t.Fatalf("code = %d body = %s", rec.Code, body)
+	}
+}
