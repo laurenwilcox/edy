@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -15,14 +16,64 @@ import (
 	"github.com/creack/pty"
 )
 
-// CLIPresets — готовые команды запуска популярных терминальных агентов.
-// {model} заменяется на имя модели, {prompt} — на текст запроса.
-var CLIPresets = map[string][]string{
-	"ollama":      {"ollama", "run", "{model}", "--nowordwrap", "{prompt}"},
-	"claude-code": {"claude", "-p", "--model", "{model}", "{prompt}"},
-	"aider":       {"aider", "--model", "{model}", "--yes-always", "--no-pretty", "--message", "{prompt}"},
+// CLIPreset — готовый профиль терминального агента.
+type CLIPreset struct {
+	// Command — аргументы запуска: {model} заменяется на имя модели, {prompt} — на текст запроса.
+	Command []string
+	// Install — команда установки для macOS (выполняется через bash после подтверждения).
+	Install string
+}
+
+// CLIPresets — профили популярных терминальных агентов.
+var CLIPresets = map[string]CLIPreset{
+	"ollama": {
+		Command: []string{"ollama", "run", "{model}", "--nowordwrap", "{prompt}"},
+		Install: "brew install ollama",
+	},
+	"claude-code": {
+		Command: []string{"claude", "-p", "--model", "{model}", "{prompt}"},
+		Install: "curl -fsSL https://claude.ai/install.sh | bash",
+	},
+	"aider": {
+		Command: []string{"aider", "--model", "{model}", "--yes-always", "--no-pretty", "--message", "{prompt}"},
+		Install: "curl -LsSf https://aider.chat/install.sh | sh",
+	},
 	// Google Antigravity CLI. Имена моделей — как в `agy models`, например "Claude Opus 5.5 (Thinking)".
-	"antigravity": {"agy", "-p", "{prompt}", "--model", "{model}"},
+	"antigravity": {
+		Command: []string{"agy", "-p", "{prompt}", "--model", "{model}"},
+		Install: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+	},
+}
+
+// extraBinDirs — папки, куда ставят утилиты установщики и Homebrew. Их часто
+// нет в PATH процесса, запущенного не из настроенного терминала.
+func extraBinDirs() []string {
+	dirs := []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append([]string{filepath.Join(home, ".local", "bin")}, dirs...)
+	}
+	return dirs
+}
+
+// FindExecutable ищет утилиту в PATH, а затем в типичных папках установки.
+// Возвращает абсолютный путь.
+func FindExecutable(name string) (string, error) {
+	return findExecutable(name, extraBinDirs())
+}
+
+func findExecutable(name string, extra []string) (string, error) {
+	if path, err := exec.LookPath(name); err == nil {
+		return filepath.Abs(path)
+	}
+	if !strings.ContainsRune(name, filepath.Separator) {
+		for _, dir := range extra {
+			path := filepath.Join(dir, name)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+				return path, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("утилита %q не найдена", name)
 }
 
 // WorkdirHeader задаёт рабочую папку CLI-утилиты (обычно корень проекта).
@@ -47,7 +98,11 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 		return Usage{}, &UpstreamError{Status: http.StatusInternalServerError, Message: err.Error()}
 	}
 
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	bin, err := FindExecutable(args[0])
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%v: установите её или добавьте провайдера заново через edy provider add", err)}
+	}
+	cmd := exec.CommandContext(ctx, bin, args[1:]...)
 	cmd.Dir = call.Workdir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1", "CLICOLOR=0")
 	// pty делает процесс лидером новой сессии, поэтому убиваем всю группу:

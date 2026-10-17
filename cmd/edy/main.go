@@ -9,9 +9,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -32,7 +34,8 @@ const usage = `Edy — ядро ИИ-IDE.
 Использование:
   edy serve [-addr 127.0.0.1:11435]        запустить OmniRoute
   edy token                                показать токен доступа к OmniRoute
-  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli)
+  edy provider add -name N -kind K [...]   подключить провайдера (kind: openai | anthropic | cli);
+                                           для cli с -preset утилита ставится сама, если её нет
   edy provider list                        список провайдеров
   edy provider remove -name N              удалить провайдера вместе с его ключами
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
@@ -166,9 +169,11 @@ func providerAdd(st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("provider add", flag.ContinueOnError)
 	p := store.Provider{}
 	var models, preset, command string
+	var yes bool
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
 	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
 	fs.StringVar(&preset, "preset", "", "для cli: готовая команда — ollama | claude-code | aider | antigravity")
+	fs.BoolVar(&yes, "y", false, "для cli: устанавливать утилиту без вопроса")
 	fs.StringVar(&command, "command", "", `для cli: команда JSON-массивом, например '["ollama","run","{model}","{prompt}"]'`)
 	fs.StringVar(&p.BaseURL, "base-url", "", "базовый URL API (для OpenAI-совместимых, например http://localhost:11434/v1)")
 	fs.StringVar(&models, "models", "", "модели через запятую (для /v1/models)")
@@ -187,10 +192,16 @@ func providerAdd(st *store.Store, args []string) error {
 		case preset != "" && command != "":
 			return errors.New("укажите либо -preset, либо -command")
 		case preset != "":
-			var ok bool
-			if p.Command, ok = omniroute.CLIPresets[preset]; !ok {
+			pr, ok := omniroute.CLIPresets[preset]
+			if !ok {
 				return fmt.Errorf("неизвестный -preset %q", preset)
 			}
+			bin, err := ensureInstalled(pr, yes, os.Stdin, os.Stdout, runShell)
+			if err != nil {
+				return err
+			}
+			// Сохраняем полный путь: при запуске PATH может не содержать папку установки.
+			p.Command = append([]string{bin}, pr.Command[1:]...)
 		case command != "":
 			if err := json.Unmarshal([]byte(command), &p.Command); err != nil {
 				return fmt.Errorf("-command должен быть JSON-массивом строк: %w", err)
@@ -209,6 +220,38 @@ func providerAdd(st *store.Store, args []string) error {
 	}
 	fmt.Printf("Провайдер %q добавлен. Модели вызываются как \"%s/<модель>\".\n", p.Name, p.Name)
 	return nil
+}
+
+// ensureInstalled находит утилиту профиля, а если её нет — предлагает
+// установить и после установки ищет снова. Возвращает абсолютный путь.
+func ensureInstalled(pr omniroute.CLIPreset, yes bool, in io.Reader, out io.Writer, run func(string) error) (string, error) {
+	name := pr.Command[0]
+	if bin, err := omniroute.FindExecutable(name); err == nil {
+		return bin, nil
+	}
+	fmt.Fprintf(out, "Утилита %q не установлена. Команда установки:\n\n  %s\n\n", name, pr.Install)
+	if !yes {
+		fmt.Fprint(out, "Установить? [y/N] ")
+		answer, _ := bufio.NewReader(in).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" && a != "д" && a != "да" {
+			return "", fmt.Errorf("установка отменена. Установите %q сами и повторите команду", name)
+		}
+	}
+	if err := run(pr.Install); err != nil {
+		return "", fmt.Errorf("установка не удалась: %w", err)
+	}
+	bin, err := omniroute.FindExecutable(name)
+	if err != nil {
+		return "", fmt.Errorf("установка завершилась, но %q не найдена. Откройте новое окно Терминала и повторите команду", name)
+	}
+	fmt.Fprintf(out, "Установлено: %s\n", bin)
+	return bin, nil
+}
+
+func runShell(command string) error {
+	cmd := exec.Command("/bin/bash", "-c", command)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
 }
 
 func providerRemove(st *store.Store, args []string) error {

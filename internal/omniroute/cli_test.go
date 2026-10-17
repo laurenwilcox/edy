@@ -125,12 +125,41 @@ func resolve(p string) string {
 }
 
 func TestAntigravityPresetKeepsModelWithSpaces(t *testing.T) {
-	args, err := expandCommand(CLIPresets["antigravity"], "Claude Opus 5.5 (Thinking)", "привет")
+	args, err := expandCommand(CLIPresets["antigravity"].Command, "Claude Opus 5.5 (Thinking)", "привет")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"agy", "-p", "привет", "--model", "Claude Opus 5.5 (Thinking)"}
 	if strings.Join(args, "|") != strings.Join(want, "|") {
 		t.Fatalf("args = %q", args)
+	}
+}
+
+func TestFindExecutableInExtraDirs(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "edy-test-tool")
+	os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(dir, "not-exec"), []byte("x"), 0o644)
+
+	got, err := findExecutable("edy-test-tool", []string{"/nonexistent", dir})
+	if err != nil || got != bin {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := findExecutable("not-exec", []string{dir}); err == nil {
+		t.Fatal("неисполняемый файл не должен находиться")
+	}
+	if got, err := findExecutable("sh", nil); err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("утилита из PATH: %q, %v", got, err)
+	}
+}
+
+func TestPresetsHaveInstallAndPrompt(t *testing.T) {
+	for name, p := range CLIPresets {
+		if p.Install == "" {
+			t.Errorf("%s: нет команды установки", name)
+		}
+		if _, err := expandCommand(p.Command, "m", "p"); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
