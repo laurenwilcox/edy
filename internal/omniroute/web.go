@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/laurenwilcox/name/internal/webchat"
 )
 
 // WebAsker — то, что адаптеру нужно от менеджера браузеров (webchat.Manager).
 type WebAsker interface {
-	Ask(ctx context.Context, site, prompt string, onText func(full string) error) error
+	Ask(ctx context.Context, c webchat.Conn, prompt string, onText func(full string) error) error
 }
 
 // WebAdapter общается с веб-чатами через браузер. Сайт отвечает только
@@ -33,7 +35,9 @@ func (a *WebAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 		return Usage{}, err
 	}
 	sent := ""
-	err = a.Browser.Ask(ctx, call.Provider.Site, prompt, func(full string) error {
+	// Профиль браузера — имя провайдера: у каждого подключения своё окружение.
+	conn := webchat.Conn{Profile: call.Provider.Name, Site: call.Provider.Site, Browser: call.Provider.Browser}
+	err = a.Browser.Ask(ctx, conn, prompt, func(full string) error {
 		// Отдаём только дописанный хвост. Если сайт переписал начало ответа
 		// (бывает при отрисовке разметки), уже отправленное не трогаем.
 		if !strings.HasPrefix(full, sent) {

@@ -3,6 +3,7 @@ package omniroute
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/webchat"
 )
 
 // fakeCLI ведёт себя как терминальный агент: проверяет, что stdout — терминал,
@@ -177,7 +179,10 @@ func TestAPIPresetsAreConsistent(t *testing.T) {
 
 type fakeBrowser struct{ chunks []string }
 
-func (f fakeBrowser) Ask(ctx context.Context, site, prompt string, onText func(string) error) error {
+func (f fakeBrowser) Ask(ctx context.Context, c webchat.Conn, prompt string, onText func(string) error) error {
+	if c.Profile != "gpt" || c.Site != "chatgpt" || c.Browser != "chromium" {
+		return fmt.Errorf("подключение = %+v", c)
+	}
 	full := ""
 	for _, c := range f.chunks {
 		full += c
@@ -190,7 +195,7 @@ func (f fakeBrowser) Ask(ctx context.Context, site, prompt string, onText func(s
 
 func TestWebAdapterThroughServer(t *testing.T) {
 	st := newTestStore(t)
-	st.AddProvider(store.Provider{Name: "gpt", Kind: store.KindWeb, Site: "chatgpt"})
+	st.AddProvider(store.Provider{Name: "gpt", Kind: store.KindWeb, Site: "chatgpt", Browser: "chromium"})
 	srv := NewServer(st, testToken, nil)
 	srv.RegisterAdapter(store.KindWeb, &WebAdapter{Browser: fakeBrowser{chunks: []string{"При", "вет", "!"}}})
 	rec := serve(srv, newAuthedRequest(http.MethodPost, "/v1/chat/completions", `{"model":"gpt/default","stream":true,"messages":[{"role":"user","content":"hi"}]}`))

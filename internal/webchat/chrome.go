@@ -1,4 +1,4 @@
-// Package webchat управляет Chrome и ведёт диалог с веб-чатами (ChatGPT,
+// Package webchat управляет браузером и ведёт диалог с веб-чатами (ChatGPT,
 // Claude.ai, Gemini) от имени пользователя, в его собственных аккаунтах.
 //
 // Принцип: вести себя как обычный человек, а не маскироваться. Обычный Chrome
@@ -8,8 +8,8 @@ package webchat
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,133 +20,112 @@ import (
 	"strings"
 )
 
-// cftIndexURL — официальный список сборок Chrome for Testing от Google.
-const cftIndexURL = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+// Виды браузера для веб-подключения.
+const (
+	// BrowserChromium — изолированный Chromium, который Edy скачивает в свою папку.
+	BrowserChromium = "chromium"
+	// BrowserChrome — установленный у пользователя Google Chrome, но с отдельной
+	// папкой профиля Edy: обычные вкладки и аккаунты пользователя не затрагиваются.
+	BrowserChrome = "chrome"
+)
 
-// FindChrome ищет браузер: $EDY_CHROME, установленный Google Chrome или
-// Chromium, затем скачанный Edy Chrome for Testing.
-func FindChrome(dataDir string) (string, error) {
+// chromiumSnapshots — официальные сборки Chromium от проекта Chromium.
+const chromiumSnapshots = "https://commondatastorage.googleapis.com/chromium-browser-snapshots"
+
+// FindBrowser ищет исполняемый файл браузера нужного вида.
+// $EDY_CHROME подменяет браузер (для тестов).
+func FindBrowser(dataDir, kind string) (string, error) {
 	if p := os.Getenv("EDY_CHROME"); p != "" {
 		return p, nil
 	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		filepath.Join(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-		"/Applications/Chromium.app/Contents/MacOS/Chromium",
-		"/usr/bin/google-chrome",
-		"/usr/bin/chromium",
+	var candidates []string
+	switch kind {
+	case BrowserChromium:
+		base := filepath.Join(dataDir, "chromium")
+		candidates = []string{
+			filepath.Join(base, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
+			filepath.Join(base, "chrome-linux", "chrome"),
+		}
+	case BrowserChrome:
+		home, _ := os.UserHomeDir()
+		candidates = []string{
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			filepath.Join(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+			"/usr/bin/google-chrome",
+		}
+	default:
+		return "", fmt.Errorf("неизвестный вид браузера %q", kind)
 	}
-	candidates = append(candidates, downloadedChromePaths(dataDir)...)
 	for _, c := range candidates {
 		if info, err := os.Stat(c); err == nil && !info.IsDir() {
 			return c, nil
 		}
 	}
-	return "", errors.New("Chrome не найден")
-}
-
-func downloadedChromePaths(dataDir string) []string {
-	base := filepath.Join(dataDir, "chrome")
-	return []string{
-		filepath.Join(base, "chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
-		filepath.Join(base, "chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
-		filepath.Join(base, "chrome-linux64", "chrome"),
+	if kind == BrowserChrome {
+		return "", errors.New("Google Chrome не установлен — выберите изолированный Chromium")
 	}
+	return "", errors.New("Chromium ещё не скачан")
 }
 
-func cftPlatform() (string, error) {
+func snapshotPlatform() (dir, archive string, err error) {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "darwin/arm64":
-		return "mac-arm64", nil
+		return "Mac_Arm", "chrome-mac.zip", nil
 	case "darwin/amd64":
-		return "mac-x64", nil
+		return "Mac", "chrome-mac.zip", nil
 	case "linux/amd64":
-		return "linux64", nil
+		return "Linux_x64", "chrome-linux.zip", nil
 	}
-	return "", fmt.Errorf("скачивание Chrome не поддерживается для %s/%s", runtime.GOOS, runtime.GOARCH)
+	return "", "", fmt.Errorf("скачивание Chromium не поддерживается для %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
-// DownloadChrome скачивает стабильный Chrome for Testing в dataDir/chrome.
-// Google не советует использовать эту сборку для обычного сёрфинга, а вход
-// в аккаунт Google в ней может блокироваться — поэтому установленный Chrome
-// всегда в приоритете.
-func DownloadChrome(ctx context.Context, dataDir string, log io.Writer) (string, error) {
-	return downloadChrome(ctx, cftIndexURL, dataDir, log)
+// DownloadChromium скачивает свежую сборку Chromium в dataDir/chromium.
+func DownloadChromium(ctx context.Context, dataDir string, log io.Writer) (string, error) {
+	return downloadChromium(ctx, chromiumSnapshots, dataDir, log)
 }
 
-func downloadChrome(ctx context.Context, indexURL, dataDir string, log io.Writer) (string, error) {
-	platform, err := cftPlatform()
+func downloadChromium(ctx context.Context, base, dataDir string, log io.Writer) (string, error) {
+	platform, archive, err := snapshotPlatform()
 	if err != nil {
 		return "", err
 	}
-	var index struct {
-		Channels map[string]struct {
-			Version   string `json:"version"`
-			Downloads struct {
-				Chrome []struct {
-					Platform string `json:"platform"`
-					URL      string `json:"url"`
-				} `json:"chrome"`
-			} `json:"downloads"`
-		} `json:"channels"`
+	var rev bytes.Buffer
+	if err := download(ctx, base+"/"+platform+"/LAST_CHANGE", &rev); err != nil {
+		return "", fmt.Errorf("не удалось узнать последнюю версию Chromium: %w", err)
 	}
-	if err := getJSON(ctx, indexURL, &index); err != nil {
-		return "", fmt.Errorf("не удалось получить список сборок Chrome: %w", err)
+	revision := strings.TrimSpace(rev.String())
+	if revision == "" || strings.ContainsAny(revision, "/.") {
+		return "", fmt.Errorf("неожиданный номер сборки Chromium %q", revision)
 	}
-	stable := index.Channels["Stable"]
-	url := ""
-	for _, d := range stable.Downloads.Chrome {
-		if d.Platform == platform {
-			url = d.URL
-		}
-	}
-	if url == "" {
-		return "", fmt.Errorf("нет сборки Chrome для %s", platform)
-	}
-	fmt.Fprintf(log, "Скачиваю Chrome for Testing %s (%s)…\n", stable.Version, platform)
+	fmt.Fprintf(log, "Скачиваю Chromium (сборка %s, %s)…\n", revision, platform)
 
-	tmp, err := os.CreateTemp(dataDir, "chrome-*.zip")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dataDir, "chromium-*.zip")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
-	if err := download(ctx, url, tmp); err != nil {
+	if err := download(ctx, base+"/"+platform+"/"+revision+"/"+archive, tmp); err != nil {
 		return "", err
 	}
 
-	dest := filepath.Join(dataDir, "chrome")
+	dest := filepath.Join(dataDir, "chromium")
 	if err := os.RemoveAll(dest); err != nil {
 		return "", err
 	}
 	fmt.Fprintln(log, "Распаковываю…")
 	if err := unzip(tmp.Name(), dest); err != nil {
-		return "", fmt.Errorf("распаковка Chrome: %w", err)
+		return "", fmt.Errorf("распаковка Chromium: %w", err)
 	}
-	for _, p := range downloadedChromePaths(dataDir) {
-		if _, err := os.Stat(p); err == nil {
-			fmt.Fprintln(log, "Chrome готов:", p)
-			return p, nil
-		}
-	}
-	return "", errors.New("в скачанном архиве не найден исполняемый файл Chrome")
-}
-
-func getJSON(ctx context.Context, url string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	path, err := FindBrowser(dataDir, BrowserChromium)
 	if err != nil {
-		return err
+		return "", errors.New("в скачанном архиве не найден исполняемый файл Chromium")
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	fmt.Fprintln(log, "Chromium готов:", path)
+	return path, nil
 }
 
 func download(ctx context.Context, url string, w io.Writer) error {

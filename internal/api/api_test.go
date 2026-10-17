@@ -172,13 +172,27 @@ func TestPresetsCatalog(t *testing.T) {
 	}
 }
 
-type fakeWeb struct{ opened string }
+type fakeWeb struct {
+	logged  webchat.Conn
+	removed string
+}
 
 func (f *fakeWeb) Sites() (map[string]webchat.Site, error) { return webchat.DefaultSites, nil }
-func (f *fakeWeb) OpenLogin(ctx context.Context, site string) error {
-	f.opened = site
+func (f *fakeWeb) Login(ctx context.Context, c webchat.Conn) error {
+	f.logged = c
 	return nil
 }
+func (f *fakeWeb) Check(ctx context.Context, c webchat.Conn) webchat.Status {
+	return webchat.Status{State: webchat.StateOK}
+}
+func (f *fakeWeb) Status(profile string) webchat.Status {
+	if profile == f.logged.Profile {
+		return webchat.Status{State: webchat.StateLoginOpen}
+	}
+	return webchat.Status{State: webchat.StateUnknown}
+}
+func (f *fakeWeb) RemoveProfile(name string) error   { f.removed = name; return nil }
+func (f *fakeWeb) BrowserInstalled(kind string) bool { return kind == webchat.BrowserChrome }
 
 func TestWebProviders(t *testing.T) {
 	h, st := setup(t)
@@ -197,8 +211,36 @@ func TestWebProviders(t *testing.T) {
 	if p.Site != "chatgpt" || strings.Join(p.Models, ",") != "chat" {
 		t.Fatalf("p = %+v", p)
 	}
-	if rec := call(h, "POST", "/api/web/login", `{"site":"chatgpt"}`); rec.Code != http.StatusNoContent || web.opened != "chatgpt" {
-		t.Fatalf("login: %d opened=%q", rec.Code, web.opened)
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt2","kind":"web","site":"chatgpt","browser":"chrome"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("add chrome: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt3","kind":"web","site":"chatgpt","browser":"safari"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("неизвестный браузер: %d", rec.Code)
+	}
+	if p2, _ := st.Provider("gpt2"); p2.Browser != "chrome" {
+		t.Fatalf("browser = %q", p2.Browser)
+	}
+	if p.Browser != "chromium" {
+		t.Fatalf("по умолчанию должен быть chromium, got %q", p.Browser)
+	}
+	rec := call(h, "POST", "/api/web/login", `{"provider":"gpt"}`)
+	if rec.Code != http.StatusOK || web.logged != (webchat.Conn{Profile: "gpt", Site: "chatgpt", Browser: "chromium"}) || !strings.Contains(rec.Body.String(), "login_open") {
+		t.Fatalf("login: %d %s %+v", rec.Code, rec.Body, web.logged)
+	}
+	if rec := call(h, "GET", "/api/web/status", ""); !strings.Contains(rec.Body.String(), `"gpt":{"state":"login_open"`) || !strings.Contains(rec.Body.String(), `"gpt2":{"state":"unknown"`) {
+		t.Fatalf("status: %s", rec.Body)
+	}
+	if rec := call(h, "POST", "/api/web/check", `{"provider":"gpt"}`); !strings.Contains(rec.Body.String(), `"state":"ok"`) {
+		t.Fatalf("check: %s", rec.Body)
+	}
+	if rec := call(h, "GET", "/api/web/browsers", ""); rec.Body.String() != "{\"chrome\":true,\"chromium\":false}\n" {
+		t.Fatalf("browsers: %q", rec.Body)
+	}
+	if rec := call(h, "POST", "/api/web/login", `{"provider":"nope"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("неизвестный провайдер: %d", rec.Code)
+	}
+	if rec := call(h, "DELETE", "/api/providers/gpt", ""); rec.Code != http.StatusNoContent || web.removed != "gpt" {
+		t.Fatalf("delete: %d removed=%q", rec.Code, web.removed)
 	}
 	var out struct {
 		Web []webPresetJSON `json:"web"`

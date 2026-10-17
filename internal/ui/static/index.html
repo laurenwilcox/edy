@@ -157,6 +157,17 @@ label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
 .seg button { border: 0; background: none; color: var(--muted); font: inherit; padding: 6px 12px; border-radius: 9px; cursor: pointer; }
 .seg button.on { background: var(--glass-strong); color: var(--text); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .hint-box { margin-top: 12px; color: var(--muted); }
+.browser-choice { display: grid; gap: 8px; }
+.choice { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; color: var(--text); transition: border-color .2s, background .2s; }
+.choice:has(input:checked) { border-color: var(--a1); background: color-mix(in srgb, var(--a1) 7%, transparent); }
+.choice:has(input:disabled) { opacity: .5; cursor: default; }
+.choice input { width: auto; margin-top: 3px; }
+.choice small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--code); color: var(--muted); }
+.status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.status.login_open, .status.checking { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.status.login_required, .status.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .hint-box:empty { display: none; }
 .hint-box code { font-size: 11.5px; }
 .picker { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
@@ -262,6 +273,12 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
               <label class="wide" data-for="web">Сайт
                 <select name="site"></select>
               </label>
+              <div class="wide browser-choice" data-for="web">
+                <label class="choice"><input type="radio" name="browser" value="chromium" checked>
+                  <span><b>Изолированный Chromium</b><small>Edy скачает обычный Chromium (~150 МБ) в свою папку. Полностью отдельное окружение.</small></span></label>
+                <label class="choice"><input type="radio" name="browser" value="chrome">
+                  <span><b>Мой Google Chrome</b><small id="chrome-note">Ваш установленный Chrome, но с отдельным профилем Edy: ваши вкладки и аккаунты не затрагиваются.</small></span></label>
+              </div>
               <label class="wide" data-for="api">Сервис
                 <select name="service"></select>
               </label>
@@ -479,20 +496,46 @@ async function loadProviders() {
     c.style.animationDelay = i * 60 + "ms";
     list.append(c);
   });
+  refreshWebStatus();
+}
+
+// ============ Веб-подключения: статус ============
+const stateText = {
+  unknown: "не проверено", login_open: "открыто окно входа", checking: "проверяю…",
+  ok: "работает", login_required: "нужно войти", error: "ошибка",
+};
+let statusTimer = null;
+
+async function refreshWebStatus() {
+  clearTimeout(statusTimer);
+  let all;
+  try { all = await api("GET", "/api/web/status"); } catch { return; }
+  let pending = false;
+  for (const [name, st] of Object.entries(all)) {
+    const badge = document.querySelector(`[data-status="${CSS.escape(name)}"]`);
+    if (!badge) continue;
+    badge.className = "status " + st.state;
+    badge.textContent = stateText[st.state] || st.state;
+    badge.title = st.message || "";
+    if (st.state === "login_open" || st.state === "checking") pending = true;
+  }
+  // Пока идёт вход или проверка, опрашиваем статус, чтобы сразу показать результат.
+  if (pending && $("#drawer").classList.contains("open")) statusTimer = setTimeout(refreshWebStatus, 2000);
 }
 
 function providerCard(p) {
   const site = presets.web.find((w) => w.name === p.site);
   const target = p.kind === "cli" ? p.command.join(" ")
-    : p.kind === "web" ? (site ? site.url : p.site)
+    : p.kind === "web" ? (site ? site.url : p.site) + (p.browser === "chrome" ? " · Google Chrome, отдельный профиль" : " · изолированный Chromium")
     : (p.base_url || "адрес по умолчанию");
   const card = el("div", { class: "card lift", "data-provider": p.name },
     el("div", { class: "row spread" },
       el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" + (p.kind === "cli" ? " cli" : "") }, kindNames[p.kind] || p.kind)),
       el("div", { class: "row" },
-        p.kind === "web"
-          ? el("button", { class: "btn ghost icon", onclick: (e) => webLogin(p.site, e.currentTarget) }, "Войти")
-          : el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели"),
+        ...(p.kind === "web"
+          ? [el("button", { class: "btn ghost icon", onclick: (e) => webLogin(p.name, p.browser, e.currentTarget) }, "Войти"),
+             el("button", { class: "btn ghost icon", onclick: (e) => webCheck(p.name, e.currentTarget) }, "Проверить")]
+          : [el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели")]),
         el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить"))),
     el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "mono muted" }, target)),
     el("div", { class: "row small", style: "margin-top:8px" },
@@ -501,6 +544,7 @@ function providerCard(p) {
         : [el("span", { class: "muted" }, "модели не указаны")])),
   );
   if (p.kind === "openai" || p.kind === "anthropic") card.append(keysBlock(p));
+  if (p.kind === "web") card.append(el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "status", "data-status": p.name }, "…")));
   return card;
 }
 
@@ -586,19 +630,33 @@ async function openModelEditor(name, autoLoad) {
   if (autoLoad && p.kind !== "cli") load.click();
 }
 
-async function webLogin(site, btn) {
+async function webLogin(provider, browser, btn) {
   btn.disabled = true;
-  btn.textContent = "Открываю Chrome…";
+  btn.textContent = browser === "chromium" && !browsers.chromium ? "Скачиваю Chromium (~150 МБ)…" : "Открываю…";
   try {
-    await api("POST", "/api/web/login", { site });
-    toast("Окно Chrome открыто — войдите в аккаунт. Окно можно свернуть, но не закрывать.");
+    await api("POST", "/api/web/login", { provider });
+    browsers.chromium = browsers.chromium || browser === "chromium";
+    toast("Откроется окно браузера — войдите в аккаунт и закройте окно. Edy проверит подключение сам.");
+    refreshWebStatus();
   } catch (e) { toast(e.message, true); }
   btn.disabled = false;
   btn.textContent = "Войти";
 }
 
+async function webCheck(provider, btn) {
+  btn.disabled = true;
+  btn.textContent = "Проверяю…";
+  try {
+    const st = await api("POST", "/api/web/check", { provider });
+    st.state === "ok" ? toast("Подключение работает") : toast(st.message || stateText[st.state], true);
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false;
+  btn.textContent = "Проверить";
+  refreshWebStatus();
+}
+
 async function removeProvider(name) {
-  if (!confirm(`Удалить провайдера «${name}» вместе с его ключами?`)) return;
+  if (!confirm(`Удалить провайдера «${name}» вместе с его ключами и окружением браузера?`)) return;
   try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
   catch (e) { toast(e.message, true); }
 }
@@ -647,7 +705,8 @@ function syncForm(fill) {
   if (addMode === "cli" && !pr) hint.append("Подстановки: ", el("code", {}, "{prompt}"), " — текст запроса (обязательно), ", el("code", {}, "{model}"), " — имя модели.");
   if (addMode === "api" && pr?.note) hint.append(pr.note);
   if (addMode === "web" && pr) hint.append(
-    `Edy откроет ${pr.url} в отдельном профиле Chrome (если Chrome не установлен — скачает его). После добавления нажмите «Войти» и войдите в свой аккаунт. `,
+    `У подключения будет своё окружение: отдельные cookies, кэш и процесс браузера. Можно подключить несколько аккаунтов одного сайта под разными именами. `,
+    `После добавления нажмите «Войти»: откроется обычное окно браузера без управления — войдите в аккаунт на ${pr.url} и закройте окно. Edy сам проверит, работает ли подключение. `,
     `Чтобы не выглядеть как бот: не чаще одного запроса в ${pr.min_interval_sec} с и не больше ${pr.daily_limit} в день. `,
     el("b", {}, "Автоматизация веб-чатов нарушает правила сервисов — аккаунт могут заблокировать."));
   const link = $("#key-link");
@@ -657,6 +716,17 @@ function syncForm(fill) {
 form.preset.addEventListener("change", () => syncForm(true));
 form.service.addEventListener("change", () => syncForm(true));
 form.site.addEventListener("change", () => syncForm(true));
+
+async function loadBrowsers() {
+  try {
+    const b = await api("GET", "/api/web/browsers");
+    const chrome = form.querySelector("input[name=browser][value=chrome]");
+    chrome.disabled = !b.chrome;
+    if (!b.chrome) $("#chrome-note").textContent = "Google Chrome не найден в «Программах» — доступен только изолированный Chromium.";
+    browsers = b;
+  } catch {}
+}
+let browsers = { chromium: false, chrome: false };
 
 function fillPresetSelects() {
   form.preset.replaceChildren(...presets.cli.map((p) => el("option", { value: p.name }, p.title)), el("option", { value: "" }, "Своя утилита…"));
@@ -678,6 +748,7 @@ form.addEventListener("submit", async (e) => {
   if (addMode === "web") {
     body.kind = "web";
     body.site = form.site.value;
+    body.browser = form.querySelector("input[name=browser]:checked").value;
   } else if (addMode === "cli") {
     body.kind = "cli";
     if (pr) body.preset = pr.name;
@@ -934,6 +1005,7 @@ $("#new-chat").addEventListener("click", () => { if (abort) abort.abort(); histo
   try {
     presets = await api("GET", "/api/presets");
     fillPresetSelects();
+    loadBrowsers();
     await refreshProviders();
   } catch (e) {
     if (e.status === 401) { $("#auth").hidden = false; return; }

@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +61,15 @@ func newTestManager(t *testing.T, sites map[string]Site) *Manager {
 	m := NewManager(dir)
 	m.Headless = true
 	m.ExtraFlags = []string{"--no-sandbox", "--disable-gpu"}
-	t.Cleanup(m.Close)
+	t.Cleanup(func() {
+		m.Close()
+		m.mu.Lock()
+		for _, cmd := range m.logins {
+			killGroup(cmd)
+		}
+		m.mu.Unlock()
+		time.Sleep(300 * time.Millisecond)
+	})
 	return m
 }
 
@@ -82,7 +89,7 @@ func fakeSite(url string) Site {
 func TestAskStreamsAnswer(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
 	var updates []string
-	err := m.Ask(context.Background(), "fake", "привет", func(full string) error {
+	err := m.Ask(context.Background(), Conn{Profile: "fake-1", Site: "fake", Browser: BrowserChromium}, "привет", func(full string) error {
 		updates = append(updates, full)
 		return nil
 	})
@@ -99,14 +106,16 @@ func TestAskStreamsAnswer(t *testing.T) {
 
 func TestPolitenessAndWatchdog(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
-	ask := func() error { return m.Ask(context.Background(), "fake", "q", func(string) error { return nil }) }
+	ask := func() error {
+		return m.Ask(context.Background(), Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil })
+	}
 	if err := ask(); err != nil {
 		t.Fatal(err)
 	}
 
 	// Браузер «упал» — следующий запрос должен перезапустить его сам.
 	m.mu.Lock()
-	m.browsers["fake"].cmd.Process.Kill()
+	killGroup(m.browsers["acc"].cmd)
 	m.mu.Unlock()
 	time.Sleep(300 * time.Millisecond)
 
@@ -132,7 +141,7 @@ func TestLoginRequiredSavesSnapshot(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": s})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err := m.Ask(ctx, "fake", "q", func(string) error { return nil })
+	err := m.Ask(ctx, Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil })
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("err = %v", err)
 	}
@@ -160,17 +169,15 @@ func TestLoadSitesOverrides(t *testing.T) {
 	}
 }
 
-func TestDownloadChromeUnpacksWithSymlinks(t *testing.T) {
-	platform, err := cftPlatform()
+func TestDownloadChromiumUnpacksWithSymlinks(t *testing.T) {
+	platform, archive, err := snapshotPlatform()
 	if err != nil {
 		t.Skip(err)
 	}
-	exe := map[string]string{
-		"mac-arm64": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-		"mac-x64":   "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-		"linux64":   "chrome-linux64/chrome",
-	}[platform]
-
+	exe := "chrome-linux/chrome"
+	if strings.HasPrefix(platform, "Mac") {
+		exe = "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+	}
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)
 	f, _ := zw.CreateHeader(&zip.FileHeader{Name: exe, Method: zip.Deflate, ExternalAttrs: (0o755 | 0o100000) << 16, CreatorVersion: 3 << 8})
@@ -181,30 +188,86 @@ func TestDownloadChromeUnpacksWithSymlinks(t *testing.T) {
 	l.Write([]byte(filepath.Base(exe)))
 	zw.Close()
 
+	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/index.json" {
-			fmt.Fprintf(w, `{"channels":{"Stable":{"version":"150.0.1","downloads":{"chrome":[{"platform":%q,"url":"%s/chrome.zip"}]}}}}`, platform, "http://"+r.Host)
+		paths = append(paths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/LAST_CHANGE") {
+			fmt.Fprint(w, "1500123\n")
 			return
 		}
 		w.Write(zbuf.Bytes())
 	}))
 	defer srv.Close()
 
+	t.Setenv("EDY_CHROME", "")
 	dir := t.TempDir()
 	var log bytes.Buffer
-	path, err := downloadChrome(context.Background(), srv.URL+"/index.json", dir, &log)
+	path, err := downloadChromium(context.Background(), srv.URL, dir, &log)
 	if err != nil {
 		t.Fatal(err, log.String())
+	}
+	if want := "/" + platform + "/1500123/" + archive; paths[len(paths)-1] != want {
+		t.Fatalf("скачан %q, ожидался %q", paths[len(paths)-1], want)
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode()&0o100 == 0 {
 		t.Fatalf("исполняемый файл не распакован: %v %v", info, err)
 	}
-	if runtime.GOOS != "windows" {
-		target, err := os.Readlink(filepath.Join(filepath.Dir(path), "Current"))
-		if err != nil || target != filepath.Base(exe) {
-			t.Fatalf("символическая ссылка: %q %v", target, err)
+	if target, err := os.Readlink(filepath.Join(filepath.Dir(path), "Current")); err != nil || target != filepath.Base(exe) {
+		t.Fatalf("символическая ссылка: %q %v", target, err)
+	}
+}
+
+func TestLoginWindowThenAutoCheck(t *testing.T) {
+	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
+	c := Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}
+	if st := m.Status("acc"); st.State != StateUnknown {
+		t.Fatalf("начальный статус = %+v", st)
+	}
+	if err := m.Login(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if st := m.Status("acc"); st.State != StateLoginOpen {
+		t.Fatalf("статус при открытом окне входа = %+v", st)
+	}
+	// Пока окно входа открыто, управлять профилем нельзя.
+	if err := m.Ask(context.Background(), c, "q", func(string) error { return nil }); !errors.Is(err, ErrLoginOpen) {
+		t.Fatalf("err = %v", err)
+	}
+	// Пользователь закрыл окно — Edy сам проверяет подключение.
+	m.mu.Lock()
+	killGroup(m.logins["acc"])
+	m.mu.Unlock()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		st := m.Status("acc")
+		if st.State == StateOK {
+			break
 		}
+		if time.Now().After(deadline) || st.State == StateError || st.State == StateLoginRequired {
+			t.Fatalf("после закрытия окна входа статус = %+v", st)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func TestCheckReportsLoginRequired(t *testing.T) {
+	s := fakeSite(fakeServer(t))
+	s.Input = "#no-such-input"
+	m := newTestManager(t, map[string]Site{"fake": s})
+	st := m.Check(context.Background(), Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium})
+	if st.State != StateLoginRequired {
+		t.Fatalf("статус = %+v", st)
+	}
+}
+
+func TestChromeKindNeedsInstalledChrome(t *testing.T) {
+	t.Setenv("EDY_CHROME", "")
+	if _, err := FindBrowser(t.TempDir(), BrowserChromium); err == nil {
+		t.Fatal("без скачанного Chromium должна быть ошибка")
+	}
+	if _, err := FindBrowser(t.TempDir(), "netscape"); err == nil {
+		t.Fatal("неизвестный вид браузера должен отклоняться")
 	}
 }
 
@@ -218,5 +281,34 @@ func TestUnzipRejectsPathTraversal(t *testing.T) {
 	os.WriteFile(src, zbuf.Bytes(), 0o600)
 	if err := unzip(src, filepath.Join(t.TempDir(), "out")); err == nil {
 		t.Fatal("архив с ../ должен отклоняться")
+	}
+}
+
+func TestProfilesAreIsolated(t *testing.T) {
+	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
+	for _, profile := range []string{"work", "home"} {
+		if err := m.Ask(context.Background(), Conn{Profile: profile, Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.mu.Lock()
+	work, home := m.browsers["work"], m.browsers["home"]
+	m.mu.Unlock()
+	if work == nil || home == nil || work.cmd.Process.Pid == home.cmd.Process.Pid {
+		t.Fatal("у каждого профиля должен быть свой процесс браузера")
+	}
+	for _, p := range []string{"work", "home"} {
+		if _, err := os.Stat(filepath.Join(m.DataDir, "web-profiles", p)); err != nil {
+			t.Fatalf("нет папки профиля %s: %v", p, err)
+		}
+	}
+	if err := m.RemoveProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(m.DataDir, "web-profiles", "work")); !os.IsNotExist(err) {
+		t.Fatal("папка удалённого профиля осталась")
+	}
+	if err := m.RemoveProfile("../evil"); err == nil {
+		t.Fatal("имя с ../ должно отклоняться")
 	}
 }

@@ -45,8 +45,8 @@ const usage = `Edy — ядро ИИ-IDE.
   edy provider list                        список провайдеров
   edy provider remove -name N              удалить провайдера вместе с его ключами
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
-  edy web chrome                           скачать Chrome для веб-чатов (если нет установленного)
-  edy web login <сайт>                     войти в веб-чат (chatgpt, claude, gemini); edy serve должен быть остановлен
+  edy web chromium                         скачать изолированный Chromium в папку Edy
+  edy web login <провайдер>                войти в аккаунт веб-чата и проверить подключение
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
   edy spend                                расходы за сегодня
 
@@ -87,19 +87,19 @@ func run(args []string) error {
 	case cmd == "provider list":
 		return providerList(st)
 	case cmd == "provider remove":
-		return providerRemove(st, args[2:])
+		return providerRemove(st, home, args[2:])
 	case cmd == "key add":
 		return keyAdd(st, args[2:])
-	case cmd == "web chrome":
+	case cmd == "web chromium":
 		web := webchat.NewManager(home)
 		web.Log = os.Stdout
-		path, err := web.EnsureChrome(context.Background())
+		path, err := web.EnsureBrowser(context.Background(), webchat.BrowserChromium)
 		if err == nil {
-			fmt.Println("Chrome:", path)
+			fmt.Println("Chromium:", path)
 		}
 		return err
 	case cmd == "web login" && len(args) == 3:
-		return webLogin(home, args[2])
+		return webLogin(st, home, args[2])
 	case cmd == "budget set" && len(args) == 3:
 		v, err := strconv.ParseFloat(args[2], 64)
 		if err != nil || v < 0 {
@@ -217,6 +217,7 @@ func providerAdd(st *store.Store, args []string) error {
 	p := store.Provider{}
 	var models, preset, command string
 	fs.StringVar(&p.Site, "site", "", "для web: веб-чат — chatgpt | claude | gemini")
+	fs.StringVar(&p.Browser, "browser", webchat.BrowserChromium, "для web: chromium (изолированный, скачивается) | chrome (установленный Google Chrome, отдельный профиль)")
 	var yes bool
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
 	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
@@ -260,6 +261,9 @@ func providerAdd(st *store.Store, args []string) error {
 	case store.KindWeb:
 		if p.Site == "" {
 			return errors.New("для -kind web нужен -site")
+		}
+		if p.Browser != webchat.BrowserChromium && p.Browser != webchat.BrowserChrome {
+			return errors.New("-browser должен быть chromium или chrome")
 		}
 		if models == "" {
 			models = "chat"
@@ -318,25 +322,46 @@ func presetNames() string {
 	return strings.Join(names, " | ")
 }
 
-// webLogin открывает сайт в профиле Edy и ждёт, пока пользователь войдёт.
-func webLogin(home, site string) error {
+// webLogin открывает сайт провайдера в обычном окне его браузера, ждёт, пока
+// пользователь войдёт и закроет окно, и печатает результат проверки.
+// Пока идёт вход, edy serve для этого провайдера лучше не использовать.
+func webLogin(st *store.Store, home, provider string) error {
+	p, err := st.Provider(provider)
+	if err != nil || p.Kind != store.KindWeb {
+		return fmt.Errorf("веб-провайдер %q не найден", provider)
+	}
 	web := webchat.NewManager(home)
 	web.Log = os.Stdout
 	defer web.Close()
-	if err := web.OpenLogin(context.Background(), site); err != nil {
+	if err := web.Login(context.Background(), webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser}); err != nil {
 		return err
 	}
-	fmt.Print("Войдите в аккаунт в открывшемся окне Chrome, затем нажмите Enter здесь. ")
-	bufio.NewReader(os.Stdin).ReadString('\n')
-	fmt.Println("Вход сохранён в профиле Edy.")
-	return nil
+	fmt.Println("Войдите в аккаунт в открывшемся окне браузера, затем закройте это окно.")
+	for {
+		st := web.Status(p.Name)
+		switch st.State {
+		case webchat.StateLoginOpen, webchat.StateChecking, webchat.StateUnknown:
+			time.Sleep(500 * time.Millisecond)
+			continue
+		case webchat.StateOK:
+			fmt.Println("✓ Подключение работает.")
+			return nil
+		default:
+			return fmt.Errorf("подключение не работает: %s", st.Message)
+		}
+	}
 }
 
-func providerRemove(st *store.Store, args []string) error {
+func providerRemove(st *store.Store, home string, args []string) error {
 	fs := flag.NewFlagSet("provider remove", flag.ContinueOnError)
 	name := fs.String("name", "", "имя провайдера")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if p, err := st.Provider(*name); err == nil && p.Kind == store.KindWeb {
+		if err := webchat.NewManager(home).RemoveProfile(p.Name); err != nil {
+			return err
+		}
 	}
 	if err := st.DeleteProvider(*name); errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("провайдер %q не найден", *name)

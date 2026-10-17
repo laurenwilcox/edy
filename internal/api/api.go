@@ -23,7 +23,11 @@ import (
 // WebManager — то, что API нужно от менеджера браузеров.
 type WebManager interface {
 	Sites() (map[string]webchat.Site, error)
-	OpenLogin(ctx context.Context, site string) error
+	Login(ctx context.Context, c webchat.Conn) error
+	Check(ctx context.Context, c webchat.Conn) webchat.Status
+	Status(profile string) webchat.Status
+	RemoveProfile(name string) error
+	BrowserInstalled(kind string) bool
 }
 
 const installTimeout = 10 * time.Minute
@@ -60,6 +64,9 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("DELETE /api/keys/{id}", h.deleteKey)
 	m.HandleFunc("POST /api/install", h.install)
 	m.HandleFunc("POST /api/web/login", h.webLogin)
+	m.HandleFunc("POST /api/web/check", h.webCheck)
+	m.HandleFunc("GET /api/web/status", h.webStatus)
+	m.HandleFunc("GET /api/web/browsers", h.webBrowsers)
 	m.HandleFunc("GET /api/usage", h.usage)
 	m.HandleFunc("PUT /api/budget", h.setBudget)
 	h.mux = m
@@ -193,6 +200,7 @@ type providerJSON struct {
 	PriceOut float64         `json:"price_out"`
 	Command  []string        `json:"command"`
 	Site     string          `json:"site"`
+	Browser  string          `json:"browser"`
 	Keys     []store.KeyInfo `json:"keys"`
 }
 
@@ -214,7 +222,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 			models = []string{}
 		}
 		out = append(out, providerJSON{Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: models,
-			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Keys: keys})
+			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, Keys: keys})
 	}
 	reply(w, out)
 }
@@ -229,6 +237,7 @@ type addProviderReq struct {
 	Preset   string   `json:"preset"`
 	Command  []string `json:"command"`
 	Site     string   `json:"site"`
+	Browser  string   `json:"browser"`
 }
 
 // needInstall — ответ 409, когда утилиту профиля надо сначала установить.
@@ -301,6 +310,15 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.Site = req.Site
+		switch req.Browser {
+		case webchat.BrowserChromium, webchat.BrowserChrome:
+			p.Browser = req.Browser
+		case "":
+			p.Browser = webchat.BrowserChromium
+		default:
+			fail(w, http.StatusBadRequest, "браузер должен быть chromium или chrome")
+			return
+		}
 		if len(p.Models) == 0 {
 			p.Models = []string{"chat"} // модель выбирается на самом сайте
 		}
@@ -319,7 +337,16 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	if err := h.Store.DeleteProvider(r.PathValue("name")); errors.Is(err, store.ErrNotFound) {
+	name := r.PathValue("name")
+	p, _ := h.Store.Provider(name)
+	if p.Kind == store.KindWeb && h.Web != nil {
+		// Вместе с провайдером удаляется его окружение браузера: cookies и вход.
+		if err := h.Web.RemoveProfile(name); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := h.Store.DeleteProvider(name); errors.Is(err, store.ErrNotFound) {
 		fail(w, http.StatusNotFound, "провайдер не найден")
 	} else if err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
@@ -403,27 +430,78 @@ func (h *Handler) install(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]string{"path": bin, "output": output})
 }
 
-// webLogin открывает сайт в окне Chrome, чтобы пользователь вошёл в аккаунт.
-// При первом запуске Chrome может скачиваться — это несколько минут.
-func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
+// webConn находит веб-провайдера по имени из запроса.
+func (h *Handler) webConn(w http.ResponseWriter, r *http.Request) (webchat.Conn, bool) {
 	if h.Web == nil {
 		fail(w, http.StatusBadRequest, "веб-чаты выключены")
-		return
+		return webchat.Conn{}, false
 	}
 	var req struct {
-		Site string `json:"site"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return webchat.Conn{}, false
+	}
+	p, err := h.Store.Provider(req.Provider)
+	if err != nil || p.Kind != store.KindWeb {
+		fail(w, http.StatusNotFound, "веб-провайдер не найден")
+		return webchat.Conn{}, false
+	}
+	return webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser}, true
+}
+
+// webLogin открывает сайт в обычном окне браузера подключения (без управления),
+// чтобы пользователь вошёл в аккаунт. Изолированный Chromium при первом входе
+// скачивается — это несколько минут.
+func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.webConn(w, r)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), installTimeout)
 	defer cancel()
-	if err := h.Web.OpenLogin(ctx, req.Site); err != nil {
+	if err := h.Web.Login(ctx, c); err != nil {
 		fail(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	reply(w, h.Web.Status(c.Profile))
+}
+
+// webCheck проверяет, что подключение работает (вход выполнен).
+func (h *Handler) webCheck(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.webConn(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), installTimeout)
+	defer cancel()
+	reply(w, h.Web.Check(ctx, c))
+}
+
+// webStatus возвращает состояние всех веб-подключений.
+func (h *Handler) webStatus(w http.ResponseWriter, r *http.Request) {
+	out := map[string]webchat.Status{}
+	if h.Web != nil {
+		providers, err := h.Store.Providers()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, p := range providers {
+			if p.Kind == store.KindWeb {
+				out[p.Name] = h.Web.Status(p.Name)
+			}
+		}
+	}
+	reply(w, out)
+}
+
+func (h *Handler) webBrowsers(w http.ResponseWriter, r *http.Request) {
+	reply(w, map[string]bool{
+		webchat.BrowserChromium: h.Web != nil && h.Web.BrowserInstalled(webchat.BrowserChromium),
+		webchat.BrowserChrome:   h.Web != nil && h.Web.BrowserInstalled(webchat.BrowserChrome),
+	})
 }
 
 func runInstall(ctx context.Context, command string) (string, error) {
