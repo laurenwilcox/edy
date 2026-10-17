@@ -9,24 +9,24 @@
   --bg: #eef0f7; --bg-2: #e4e7f3;
   --glass: rgba(255,255,255,.66); --glass-strong: rgba(255,255,255,.86); --glass-border: rgba(255,255,255,.75);
   --text: #171a24; --muted: #646b7d; --line: rgba(23,26,36,.09);
-  --a1: #7c3aed; --a2: #06b6d4; --a3: #ec4899;
-  --grad: linear-gradient(135deg, var(--a1), var(--a2));
+  --a1: #6366f1; --a2: #0ea5e9; --a3: #a78bfa;
+  --grad: linear-gradient(135deg, var(--a1), color-mix(in srgb, var(--a1) 65%, var(--a2)));
   --on-grad: #ffffff;
   --field: rgba(255,255,255,.75); --code: rgba(23,26,36,.06);
   --danger: #e11d48; --ok: #10b981; --warn: #f59e0b;
-  --shadow: 0 10px 40px -12px rgba(40,30,90,.25);
-  --blob-opacity: .55;
+  --shadow: 0 8px 30px -14px rgba(30,30,60,.18);
+  --blob-opacity: .22;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0b0c14; --bg-2: #10121d;
     --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
     --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
-    --a1: #8b5cf6; --a2: #22d3ee; --a3: #f472b6;
+    --a1: #818cf8; --a2: #38bdf8; --a3: #a78bfa;
     --field: rgba(255,255,255,.05); --code: rgba(255,255,255,.07);
     --danger: #fb7185; --ok: #34d399; --warn: #fbbf24;
     --shadow: 0 10px 40px -10px rgba(0,0,0,.6);
-    --blob-opacity: .35;
+    --blob-opacity: .13;
   }
 }
 * { box-sizing: border-box; }
@@ -57,14 +57,13 @@ body {
 .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; }
 .drawer { width: 0; flex: none; overflow: hidden; transition: width .45s cubic-bezier(.2,.9,.2,1); }
 .drawer.open { width: min(500px, 42vw); }
-.drawer-inner { width: min(500px, 42vw); height: 100%; border-radius: 22px; display: flex; flex-direction: column; overflow: hidden; opacity: 0; transform: translateX(30px); transition: opacity .35s, transform .45s cubic-bezier(.2,.9,.2,1); }
+.drawer-inner { width: min(500px, 42vw); height: 100%; border-radius: 22px; display: flex; flex-direction: column; overflow: hidden; opacity: 0; transform: translateX(-30px); transition: opacity .35s, transform .45s cubic-bezier(.2,.9,.2,1); }
 .drawer.open .drawer-inner { opacity: 1; transform: none; }
 .side { width: 236px; flex: none; border-radius: 22px; padding: 18px 12px; display: flex; flex-direction: column; gap: 6px; }
 
 /* Меню */
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
-.logo { width: 34px; height: 34px; border-radius: 11px; background: var(--grad); display: grid; place-items: center; color: var(--on-grad); font-weight: 800; box-shadow: 0 6px 20px -4px var(--a1); animation: pulse 4s ease-in-out infinite; }
-@keyframes pulse { 50% { box-shadow: 0 6px 28px 0 var(--a2); } }
+.logo { width: 34px; height: 34px; border-radius: 11px; background: var(--grad); display: grid; place-items: center; color: var(--on-grad); font-weight: 800; }
 .brand b { font-size: 18px; letter-spacing: .3px; }
 .brand small { display: block; color: var(--muted); font-size: 11px; margin-top: -2px; }
 .menu-group > button, .menu-item { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text); font: inherit; padding: 9px 10px; border-radius: 12px; cursor: pointer; text-align: left; transition: background .2s, transform .2s; }
@@ -77,7 +76,7 @@ body {
 .submenu .menu-item { font-size: 13.5px; color: var(--muted); padding: 7px 10px; position: relative; }
 .submenu .menu-item::before { content: ""; position: absolute; left: -6px; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--line); transform: translateY(-50%); transition: background .2s, box-shadow .2s; }
 .submenu .menu-item.active { color: var(--text); background: var(--code); font-weight: 600; }
-.submenu .menu-item.active::before { background: var(--a2); box-shadow: 0 0 10px var(--a2); }
+.submenu .menu-item.active::before { background: var(--a1); }
 .menu-item[disabled] { opacity: .45; cursor: default; }
 .menu-item[disabled]:hover { background: none; }
 .soon { margin-left: auto; font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
@@ -93,7 +92,7 @@ body {
 .messages { flex: 1; overflow-y: auto; padding: 22px 22px 8px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
 .msg { max-width: min(760px, 88%); padding: 11px 15px; border-radius: 18px; animation: rise .35s cubic-bezier(.2,.9,.2,1); white-space: pre-wrap; word-wrap: break-word; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
-.msg.user { align-self: flex-end; background: var(--grad); color: var(--on-grad); border-bottom-right-radius: 6px; box-shadow: 0 8px 24px -10px var(--a1); }
+.msg.user { align-self: flex-end; background: var(--grad); color: var(--on-grad); border-bottom-right-radius: 6px; }
 .msg.bot { align-self: flex-start; background: var(--glass-strong); border: 1px solid var(--glass-border); border-bottom-left-radius: 6px; }
 .msg.bot .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; white-space: normal; }
 .msg.error { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
@@ -108,17 +107,17 @@ body {
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
 
 .welcome { margin: auto; text-align: center; max-width: 520px; padding: 20px; animation: rise .5s; }
-.welcome h3 { font-size: 26px; margin: 0 0 6px; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.welcome h3 { font-size: 26px; margin: 0 0 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
 .chip { border: 1px solid var(--line); background: var(--field); color: var(--text); padding: 7px 13px; border-radius: 99px; font: inherit; font-size: 13px; cursor: pointer; transition: transform .2s, border-color .2s; }
-.chip:hover { transform: translateY(-2px); border-color: var(--a2); }
+.chip:hover { border-color: var(--a1); }
 
 .composer { padding: 12px 16px 16px; }
 .composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 18px; background: var(--field); border: 1px solid var(--line); transition: border-color .25s, box-shadow .25s; }
 .composer-box:focus-within { border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 15%, transparent); }
 .composer textarea { flex: 1; resize: none; border: 0; background: none; color: var(--text); font: inherit; max-height: 180px; padding: 6px 0; outline: none; }
-.send { width: 40px; height: 40px; border-radius: 13px; border: 0; background: var(--grad); color: var(--on-grad); cursor: pointer; font-size: 17px; flex: none; transition: transform .2s, box-shadow .2s; box-shadow: 0 6px 18px -6px var(--a1); }
-.send:hover { transform: translateY(-1px) scale(1.04); box-shadow: 0 8px 24px -4px var(--a2); }
+.send { width: 40px; height: 40px; border-radius: 13px; border: 0; background: var(--grad); color: var(--on-grad); cursor: pointer; font-size: 17px; flex: none; transition: transform .2s, opacity .2s; }
+.send:hover { opacity: .9; }
 .send.stop { background: var(--danger); box-shadow: none; }
 .hint { font-size: 11.5px; color: var(--muted); margin: 6px 4px 0; }
 
@@ -129,7 +128,7 @@ body {
 .panel-body > section { animation: rise .35s; }
 
 .card { background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 16px; padding: 15px; margin-bottom: 12px; transition: transform .25s, box-shadow .25s; animation: rise .4s both; }
-.card.lift:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -16px var(--a1); }
+.card.lift:hover { transform: translateY(-1px); }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spread { justify-content: space-between; }
 .muted { color: var(--muted); }
@@ -139,8 +138,8 @@ body {
 .badge.off { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code); padding: 2px 7px; border-radius: 7px; word-break: break-all; }
 
-.btn { border: 0; border-radius: 11px; padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer; background: var(--grad); color: var(--on-grad); transition: transform .2s, box-shadow .2s, opacity .2s; box-shadow: 0 6px 18px -8px var(--a1); white-space: nowrap; }
-.btn:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px var(--a2); }
+.btn { border: 0; border-radius: 11px; padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer; background: var(--grad); color: var(--on-grad); transition: transform .2s, opacity .2s; white-space: nowrap; }
+.btn:hover { opacity: .9; }
 .btn.ghost { background: var(--field); color: var(--text); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
 .btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
 .btn.icon { padding: 6px 10px; }
@@ -167,10 +166,10 @@ th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line
 th { color: var(--muted); font-weight: 500; font-size: 11.5px; }
 #usage-rows code { white-space: nowrap; word-break: normal; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.stat { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .meter { height: 9px; background: var(--code); border-radius: 99px; overflow: hidden; margin-top: 12px; }
-.meter > div { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--ok), var(--a2)); transition: width 1s cubic-bezier(.2,.9,.2,1); }
-.meter.warn > div { background: linear-gradient(90deg, var(--warn), var(--a3)); }
+.meter > div { height: 100%; width: 0; border-radius: 99px; background: var(--ok); transition: width 1s cubic-bezier(.2,.9,.2,1); }
+.meter.warn > div { background: var(--warn); }
 .meter.over > div { background: var(--danger); }
 .notice { border-left: 3px solid var(--warn); }
 pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: var(--code); padding: 10px; border-radius: 10px; font-size: 12px; }
@@ -182,7 +181,7 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 
 @media (max-width: 900px) {
   .app { padding: 8px; gap: 8px; }
-  .side { position: fixed; top: 8px; right: 8px; bottom: 8px; z-index: 5; transform: translateX(calc(100% + 16px)); transition: transform .4s cubic-bezier(.2,.9,.2,1); background: var(--glass-strong); }
+  .side { position: fixed; top: 8px; left: 8px; bottom: 8px; z-index: 5; transform: translateX(calc(-100% - 16px)); transition: transform .4s cubic-bezier(.2,.9,.2,1); background: var(--glass-strong); }
   .side.show { transform: none; }
   .menu-toggle { display: inline-block; }
   .drawer, .drawer.open { position: fixed; inset: 8px; z-index: 4; width: auto; pointer-events: none; }
@@ -201,24 +200,24 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 <div class="aurora"><i></i><i></i><i></i></div>
 
 <div class="app">
-  <!-- Слева: чат с ботами -->
-  <main class="chat glass">
-    <div class="chat-head">
-      <h2>Чат</h2>
-      <select id="model" title="Модель"></select>
-      <span class="grow"></span>
-      <button class="btn ghost icon" id="new-chat" title="Новый чат">＋ Новый</button>
-      <button class="btn ghost icon menu-toggle" id="menu-toggle" title="Меню">☰</button>
+  <!-- Слева: меню -->
+  <nav class="side glass" id="side">
+    <div class="brand"><div class="logo">E</div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
+    <button class="menu-item" id="go-chat"><span class="ico">💬</span>Чат</button>
+    <div class="menu-group open" id="grp-providers">
+      <button type="button"><span class="ico">🔌</span>Провайдеры<span class="chev">›</span></button>
+      <div class="submenu"><div>
+        <button class="menu-item" data-open="p-list">Подключённые</button>
+        <button class="menu-item" data-open="p-add">Добавить</button>
+        <button class="menu-item" data-open="p-usage">Расходы</button>
+        <button class="menu-item" data-open="p-connect">Подключение</button>
+      </div></div>
     </div>
-    <div class="messages" id="messages"></div>
-    <div class="composer">
-      <form class="composer-box" id="composer">
-        <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
-        <button class="send" id="send" type="submit" title="Отправить">➤</button>
-      </form>
-      <div class="hint">Enter — отправить, Shift+Enter — новая строка</div>
-    </div>
-  </main>
+    <button class="menu-item" disabled><span class="ico">🤖</span>Агенты<span class="soon">этап 2</span></button>
+    <button class="menu-item" disabled><span class="ico">🗂</span>Проект<span class="soon">этап 3</span></button>
+    <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
+  </nav>
+
 
   <!-- Выезжающая панель раздела -->
   <aside class="drawer" id="drawer">
@@ -320,23 +319,25 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
     </div>
   </aside>
 
-  <!-- Справа: меню -->
-  <nav class="side glass" id="side">
-    <div class="brand"><div class="logo">E</div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
-    <button class="menu-item" id="go-chat"><span class="ico">💬</span>Чат</button>
-    <div class="menu-group open" id="grp-providers">
-      <button type="button"><span class="ico">🔌</span>Провайдеры<span class="chev">›</span></button>
-      <div class="submenu"><div>
-        <button class="menu-item" data-open="p-list">Подключённые</button>
-        <button class="menu-item" data-open="p-add">Добавить</button>
-        <button class="menu-item" data-open="p-usage">Расходы</button>
-        <button class="menu-item" data-open="p-connect">Подключение</button>
-      </div></div>
+  <!-- Справа: чат с ботами -->
+  <main class="chat glass">
+    <div class="chat-head">
+      <button class="btn ghost icon menu-toggle" id="menu-toggle" title="Меню">☰</button>
+      <h2>Чат</h2>
+      <select id="model" title="Модель"></select>
+      <span class="grow"></span>
+      <button class="btn ghost icon" id="new-chat" title="Новый чат">＋ Новый</button>
     </div>
-    <button class="menu-item" disabled><span class="ico">🤖</span>Агенты<span class="soon">этап 2</span></button>
-    <button class="menu-item" disabled><span class="ico">🗂</span>Проект<span class="soon">этап 3</span></button>
-    <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
-  </nav>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <form class="composer-box" id="composer">
+        <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
+        <button class="send" id="send" type="submit" title="Отправить">➤</button>
+      </form>
+      <div class="hint">Enter — отправить, Shift+Enter — новая строка</div>
+    </div>
+  </main>
+
 </div>
 
 <div id="auth" class="toast error" hidden>Нет токена доступа. Откройте интерфейс командой edy ui.</div>
