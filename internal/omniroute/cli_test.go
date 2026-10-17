@@ -72,11 +72,10 @@ func TestCLIAdapterFailure(t *testing.T) {
 	}
 }
 
-func TestCLIAdapterRejectsImagesAndTools(t *testing.T) {
+func TestCLIAdapterRejectsImages(t *testing.T) {
 	srv, _ := setupCLI(t)
 	for _, body := range []string{
 		`{"model":"local/x","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`,
-		`{"model":"local/x","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f"}}]}`,
 	} {
 		if rec := serve(srv, newAuthedRequest(http.MethodPost, "/v1/chat/completions", body)); rec.Code != http.StatusBadRequest {
 			t.Errorf("code = %d body = %s", rec.Code, rec.Body)

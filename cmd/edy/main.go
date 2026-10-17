@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -24,6 +25,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/api"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
@@ -47,6 +49,9 @@ const usage = `Edy — ядро ИИ-IDE.
   edy key add -provider N [-label L]       добавить API-ключ (читается из stdin)
   edy web chromium                         скачать изолированный Chromium в папку Edy
   edy web login <провайдер>                войти в аккаунт веб-чата и проверить подключение
+  edy task -model M[,M2] [-project DIR] "задача"
+                                           агент выполняет задачу в проекте (Go/Python, git):
+                                           хуки, снимки, Circuit Breaker, Approve в ветку edy/…
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
   edy spend                                расходы за сегодня
 
@@ -100,6 +105,8 @@ func run(args []string) error {
 		return err
 	case cmd == "web login" && len(args) == 3:
 		return webLogin(st, home, args[2])
+	case args[0] == "task":
+		return runTask(st, home, args[1:])
 	case cmd == "budget set" && len(args) == 3:
 		v, err := strconv.ParseFloat(args[2], 64)
 		if err != nil || v < 0 {
@@ -350,6 +357,93 @@ func webLogin(st *store.Store, home, provider string) error {
 			return fmt.Errorf("подключение не работает: %s", st.Message)
 		}
 	}
+}
+
+// runTask запускает агента в проекте. OmniRoute работает прямо в процессе,
+// поэтому edy serve для этого не нужен.
+func runTask(st *store.Store, home string, args []string) error {
+	fs := flag.NewFlagSet("task", flag.ContinueOnError)
+	models := fs.String("model", "", "модели через запятую, от слабой к сильной: при 3 провалах задача переходит к следующей")
+	project := fs.String("project", ".", "папка проекта (git-репозиторий без незакоммиченных изменений)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	goal := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if goal == "" || *models == "" {
+		return errors.New(`нужны -model и текст задачи, например: edy task -model agy/claude-sonnet-4-6 "Добавь функцию Sub"`)
+	}
+	root, err := filepath.Abs(*project)
+	if err != nil {
+		return err
+	}
+	tok, err := ensureToken(st, home)
+	if err != nil {
+		return err
+	}
+	web := webchat.NewManager(home)
+	web.Log = os.Stderr
+	defer web.Close()
+	router := omniroute.NewServer(st, tok, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
+
+	var chain []string
+	for _, m := range strings.Split(*models, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			chain = append(chain, m)
+		}
+	}
+	icons := map[string]string{"model": "🤖", "tool": "🔧", "checkpoint": "📸", "hooks": "🧪", "breaker": "⚡", "info": "ℹ️ ", "error": "⚠️ "}
+	task := &agent.Task{
+		Root:   root,
+		Goal:   goal,
+		Models: chain,
+		LLM:    &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: &http.Client{Transport: handlerTransport{router}}},
+		OnEvent: func(e agent.Event) {
+			fmt.Printf("%s %s\n", icons[e.Kind], e.Text)
+		},
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	res, err := task.Run(ctx)
+	if err != nil {
+		return err
+	}
+	if res.Status != agent.StatusDone {
+		return errors.New("задача не выполнена: проект возвращён в исходное состояние")
+	}
+	fmt.Printf("\nИтог: %s\nИзменения:\n%s\n\n", res.Summary, res.Diff)
+	fmt.Print("Применить (Approve) — один коммит в новую ветку? [y — да / n — откатить] ")
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if a := strings.ToLower(strings.TrimSpace(answer)); a == "y" || a == "д" || a == "да" || a == "yes" {
+		branch := agent.BranchName(goal, time.Now())
+		if err := agent.Approve(context.Background(), root, branch, "Edy: "+firstLineOf(goal)+"\n\n"+res.Summary); err != nil {
+			return err
+		}
+		fmt.Printf("✓ Готово: ветка %s, проект переключён на неё.\n", branch)
+		return nil
+	}
+	if err := agent.Reject(context.Background(), root, res.Baseline); err != nil {
+		return err
+	}
+	fmt.Println("Изменения откачены.")
+	return nil
+}
+
+func firstLineOf(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// handlerTransport вызывает HTTP-обработчик OmniRoute прямо в процессе, без сети.
+type handlerTransport struct{ h http.Handler }
+
+func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	t.h.ServeHTTP(rec, r)
+	return rec.Result(), nil
 }
 
 func providerRemove(st *store.Store, home string, args []string) error {

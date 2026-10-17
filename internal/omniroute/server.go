@@ -155,6 +155,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", fmt.Sprintf("нет адаптера для типа %q", provider.Kind))
 		return
 	}
+	// Текстовые провайдеры получают tools через эмуляцию в промпте.
+	if len(req.Tools) > 0 && (provider.Kind == store.KindCLI || provider.Kind == store.KindWeb) {
+		adapter = &toolEmuAdapter{inner: adapter}
+	}
 	if msg, err := s.checkBudget(); err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
