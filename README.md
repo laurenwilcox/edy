@@ -22,6 +22,8 @@ go build -o edy ./cmd/edy
 # Терминальные агенты через виртуальный терминал (PTY)
 ./edy provider add -name ollama-cli -kind cli -preset ollama -models llama3.1
 ./edy provider add -name claude-cli -kind cli -preset claude-code -models sonnet
+# Google Antigravity: модели Claude и Gemini по подписке Google (имена моделей — из `agy models`)
+./edy provider add -name agy -kind cli -preset antigravity -models "Claude Opus 5.5 (Thinking)"
 
 ./edy budget set 5      # не больше $5 в день
 ./edy serve             # http://127.0.0.1:11435/v1

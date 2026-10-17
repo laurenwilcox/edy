@@ -21,6 +21,8 @@ var CLIPresets = map[string][]string{
 	"ollama":      {"ollama", "run", "{model}", "--nowordwrap", "{prompt}"},
 	"claude-code": {"claude", "-p", "--model", "{model}", "{prompt}"},
 	"aider":       {"aider", "--model", "{model}", "--yes-always", "--no-pretty", "--message", "{prompt}"},
+	// Google Antigravity CLI. Имена моделей — как в `agy models`, например "Claude Opus 5.5 (Thinking)".
+	"antigravity": {"agy", "-p", "{prompt}", "--model", "{model}"},
 }
 
 // WorkdirHeader задаёт рабочую папку CLI-утилиты (обычно корень проекта).

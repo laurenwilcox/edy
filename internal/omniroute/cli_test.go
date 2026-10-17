@@ -119,3 +119,14 @@ func resolve(p string) string {
 	}
 	return p
 }
+
+func TestAntigravityPresetKeepsModelWithSpaces(t *testing.T) {
+	args, err := expandCommand(CLIPresets["antigravity"], "Claude Opus 5.5 (Thinking)", "привет")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agy", "-p", "привет", "--model", "Claude Opus 5.5 (Thinking)"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("args = %q", args)
+	}
+}

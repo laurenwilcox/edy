@@ -165,7 +165,7 @@ func providerAdd(st *store.Store, args []string) error {
 	var models, preset, command string
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
 	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
-	fs.StringVar(&preset, "preset", "", "для cli: готовая команда — ollama | claude-code | aider")
+	fs.StringVar(&preset, "preset", "", "для cli: готовая команда — ollama | claude-code | aider | antigravity")
 	fs.StringVar(&command, "command", "", `для cli: команда JSON-массивом, например '["ollama","run","{model}","{prompt}"]'`)
 	fs.StringVar(&p.BaseURL, "base-url", "", "базовый URL API (для OpenAI-совместимых, например http://localhost:11434/v1)")
 	fs.StringVar(&models, "models", "", "модели через запятую (для /v1/models)")
