@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/tasks"
 	"github.com/laurenwilcox/name/internal/webchat"
 )
 
@@ -46,6 +48,9 @@ type Handler struct {
 
 	// Web — менеджер браузеров для веб-чатов; nil, если веб-чаты выключены.
 	Web WebManager
+	// LLM — доступ к моделям через OmniRoute для Оркестратора; Tasks — фоновые задачи агента.
+	LLM   agent.LLM
+	Tasks *tasks.Manager
 
 	mux *http.ServeMux
 }
@@ -69,6 +74,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("GET /api/web/browsers", h.webBrowsers)
 	m.HandleFunc("GET /api/usage", h.usage)
 	m.HandleFunc("PUT /api/budget", h.setBudget)
+	h.registerProjectRoutes(m)
 	h.mux = m
 	return h
 }

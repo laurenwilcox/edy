@@ -267,6 +267,11 @@ func CheckClean(ctx context.Context, root string) error {
 	return nil
 }
 
+// Branch возвращает текущую ветку проекта.
+func Branch(ctx context.Context, root string) (string, error) {
+	return gitIn(ctx, root, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
 // excludeEdyDir прячет .edy от основного git, не меняя .gitignore проекта.
 func excludeEdyDir(root string) error {
 	gitDir, err := gitIn(context.Background(), root, "rev-parse", "--absolute-git-dir")

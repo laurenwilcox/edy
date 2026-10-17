@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 )
 
@@ -109,3 +110,17 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 }
 
 func unmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
+
+// InProcess возвращает HTTP-клиент, который вызывает обработчик OmniRoute
+// прямо в процессе, без сети.
+func InProcess(h http.Handler) *http.Client {
+	return &http.Client{Transport: handlerTransport{h}}
+}
+
+type handlerTransport struct{ h http.Handler }
+
+func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	t.h.ServeHTTP(rec, r)
+	return rec.Result(), nil
+}

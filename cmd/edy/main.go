@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,6 +28,7 @@ import (
 	"github.com/laurenwilcox/name/internal/api"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/tasks"
 	"github.com/laurenwilcox/name/internal/ui"
 	"github.com/laurenwilcox/name/internal/vault"
 	"github.com/laurenwilcox/name/internal/webchat"
@@ -183,6 +183,8 @@ func serve(st *store.Store, home string, args []string, openBrowser bool) error 
 	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
 	apiHandler := api.New(st, tok, *addr)
 	apiHandler.Web = web
+	apiHandler.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
+	apiHandler.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", router)
 	mux.Handle("/healthz", router)
@@ -397,7 +399,7 @@ func runTask(st *store.Store, home string, args []string) error {
 		Root:   root,
 		Goal:   goal,
 		Models: chain,
-		LLM:    &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: &http.Client{Transport: handlerTransport{router}}},
+		LLM:    &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)},
 		OnEvent: func(e agent.Event) {
 			fmt.Printf("%s %s\n", icons[e.Kind], e.Text)
 		},
@@ -435,15 +437,6 @@ func firstLineOf(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-// handlerTransport вызывает HTTP-обработчик OmniRoute прямо в процессе, без сети.
-type handlerTransport struct{ h http.Handler }
-
-func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	rec := httptest.NewRecorder()
-	t.h.ServeHTTP(rec, r)
-	return rec.Result(), nil
 }
 
 func providerRemove(st *store.Store, home string, args []string) error {

@@ -202,6 +202,30 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .toast { position: fixed; bottom: 22px; left: 50%; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border-radius: 12px; max-width: 90vw; color: var(--on-grad); background: var(--grad); box-shadow: var(--shadow); animation: rise .3s; }
 .toast.error { background: var(--danger); }
 .menu-toggle { display: none; }
+.orch-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--a1) 4%, transparent); }
+.orch-bar label { font-size: 11.5px; }
+.orch-bar select { width: auto; max-width: 240px; padding: 6px 9px; }
+.messages[hidden] { display: none !important; }
+.plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
+.plan-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; white-space: normal; }
+.msg.task { max-width: min(820px, 94%); width: 100%; white-space: normal; }
+.task-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.task-head .grow { flex: 1; }
+.feed { margin-top: 8px; display: grid; gap: 3px; font-size: 12.5px; max-height: 320px; overflow-y: auto; }
+.feed div { display: flex; gap: 6px; animation: rise .25s; }
+.feed .k-hooks, .feed .k-breaker, .feed .k-error { white-space: pre-wrap; }
+.feed .k-breaker { color: var(--warn); font-weight: 600; }
+.feed .k-error { color: var(--danger); }
+.feed .k-model { color: var(--muted); }
+.task-result { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.task-result pre { white-space: pre-wrap; background: var(--code); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
+.spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--a1); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.card.current { border-color: var(--a1); }
+h3.sub { font-size: 14px; margin: 18px 0 10px; }
+.cp { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.cp:last-child { border-bottom: 0; }
+.cp .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 900px) {
   .app { padding: 8px; gap: 8px; }
@@ -238,7 +262,7 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
       </div></div>
     </div>
     <button class="menu-item" disabled><span class="ico">🤖</span>Агенты<span class="soon">этап 2</span></button>
-    <button class="menu-item" disabled><span class="ico">🗂</span>Проект<span class="soon">этап 3</span></button>
+    <button class="menu-item" data-open="p-project"><span class="ico">🗂</span>Проект</button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
 
@@ -335,6 +359,19 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
           <p class="muted small">Для CLI-утилит токены оцениваются примерно.</p>
         </section>
 
+        <section id="p-project">
+          <form id="project-form" class="card">
+            <label>Папка проекта (полный путь)
+              <input name="path" placeholder="/Users/vova/projects/my-app" autocomplete="off">
+            </label>
+            <div class="hint-box small">Проект должен быть git-репозиторием без незакоммиченных изменений: результат агента ляжет отдельным коммитом в новую ветку edy/….</div>
+            <div class="row" style="margin-top:12px"><button class="btn" type="submit">Добавить</button></div>
+          </form>
+          <div id="project-list"></div>
+          <h3 class="sub">Снимки текущего проекта (Shadow Git)</h3>
+          <div class="card" id="checkpoints"><div class="muted small">Выберите проект.</div></div>
+        </section>
+
         <section id="p-connect">
           <div class="card">
             <p style="margin-top:0">Любая программа, которая работает с OpenAI API, может использовать модели Edy.</p>
@@ -369,12 +406,22 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
   <main class="chat glass">
     <div class="chat-head">
       <button class="btn ghost icon menu-toggle" id="menu-toggle" title="Меню">☰</button>
-      <h2>Чат</h2>
+      <div class="seg" id="mode-seg">
+        <button type="button" data-chat-mode="chat" class="on">Чат</button>
+        <button type="button" data-chat-mode="orch">Оркестратор</button>
+      </div>
       <select id="model" title="Модель"></select>
       <span class="grow"></span>
       <button class="btn ghost icon" id="new-chat" title="Новый чат">＋ Новый</button>
     </div>
+    <div class="orch-bar" id="orch-bar" hidden>
+      <label>Проект <select id="project"></select></label>
+      <label>Исполнитель <select id="worker"></select></label>
+      <label>Резерв (Circuit Breaker) <select id="fallback"></select></label>
+      <span class="small muted" id="project-state"></span>
+    </div>
     <div class="messages" id="messages"></div>
+    <div class="messages" id="orch-messages" hidden></div>
     <div class="composer">
       <form class="composer-box" id="composer">
         <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
@@ -443,8 +490,8 @@ async function api(method, path, body) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -858,19 +905,27 @@ for (const b of document.querySelectorAll("[data-copy]")) {
 }
 
 // ============ Чат ============
-const msgsBox = $("#messages");
+let msgsBox = $("#messages");
 const input = $("#input");
 const sendBtn = $("#send");
 let history_ = [];
 let abort = null;
 
 function fillModels() {
-  const sel = $("#model");
-  const current = sel.value || store.get("edy-model");
   const all = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
-  sel.replaceChildren(...(all.length ? all.map((m) => el("option", { value: m }, m)) : [el("option", { value: "" }, "нет моделей")]));
-  if (all.includes(current)) sel.value = current;
+  const fill = (sel, key, empty) => {
+    const current = sel.value || store.get(key);
+    const opts = all.map((m) => el("option", { value: m }, m));
+    if (empty) opts.unshift(el("option", { value: "" }, empty));
+    sel.replaceChildren(...(opts.length ? opts : [el("option", { value: "" }, "нет моделей")]));
+    if (all.includes(current) || (empty && current === "")) sel.value = current;
+  };
+  fill($("#model"), "edy-model");
+  fill($("#worker"), "edy-worker");
+  fill($("#fallback"), "edy-fallback", "— нет");
 }
+$("#worker").addEventListener("change", (e) => store.set("edy-worker", e.target.value));
+$("#fallback").addEventListener("change", (e) => store.set("edy-fallback", e.target.value));
 $("#model").addEventListener("change", (e) => store.set("edy-model", e.target.value));
 
 function chatWith(model) {
@@ -881,6 +936,14 @@ function chatWith(model) {
 }
 
 function showWelcome() {
+  if (chatMode === "orch") {
+    msgsBox.replaceChildren(el("div", { class: "welcome" },
+      el("h3", {}, "Оркестратор"),
+      el("div", { class: "muted" }, "Выберите проект и опишите задачу. Оркестратор посмотрит на структуру проекта, уточнит детали и предложит план. После «Начать работу» агент внесёт правки, Edy прогонит тесты и сохранит снимки, а вы решите — Approve или Reject."),
+      el("div", { class: "chips" }, ...["Добавь функцию и тест к ней", "Найди и исправь падающий тест", "Сделай рефакторинг модуля"].map((t) =>
+        el("button", { class: "chip", onclick: () => { input.value = t; input.focus(); } }, t)))));
+    return;
+  }
   msgsBox.replaceChildren(el("div", { class: "welcome" },
     el("h3", {}, "Привет! Я Edy"),
     el("div", { class: "muted" }, "Выберите модель вверху и задайте вопрос. Все запросы идут через OmniRoute, поэтому работают ротация ключей и учёт расходов."),
@@ -924,6 +987,7 @@ function setBusy(busy) {
 }
 
 async function send() {
+  if (chatMode === "orch") return sendOrch();
   if (abort) { abort.abort(); return; }
   const text = input.value.trim();
   const model = $("#model").value;
@@ -996,7 +1060,236 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
 });
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
-$("#new-chat").addEventListener("click", () => { if (abort) abort.abort(); history_ = []; showWelcome(); input.focus(); });
+$("#new-chat").addEventListener("click", () => {
+  if (chatMode === "orch") orchHistory = [];
+  else { if (abort) abort.abort(); history_ = []; }
+  showWelcome();
+  input.focus();
+});
+
+// ============ Режимы чата ============
+let chatMode = "chat";
+function setChatMode(mode) {
+  chatMode = mode;
+  store.set("edy-chat-mode", mode);
+  for (const b of document.querySelectorAll("#mode-seg button")) b.classList.toggle("on", b.dataset.chatMode === mode);
+  $("#orch-bar").hidden = mode !== "orch";
+  $("#messages").hidden = mode !== "chat";
+  $("#orch-messages").hidden = mode !== "orch";
+  msgsBox = mode === "orch" ? $("#orch-messages") : $("#messages");
+  $("#model").title = mode === "orch" ? "Модель Оркестратора" : "Модель";
+  input.placeholder = mode === "orch" ? "Опишите задачу для проекта…" : "Напишите сообщение…";
+  if (!msgsBox.children.length) showWelcome();
+  input.focus();
+}
+for (const b of document.querySelectorAll("#mode-seg button")) b.addEventListener("click", () => setChatMode(b.dataset.chatMode));
+
+// ============ Оркестратор ============
+let orchHistory = [];
+let orchBusy = false;
+
+async function sendOrch() {
+  if (orchBusy) return;
+  const text = input.value.trim();
+  const project = $("#project").value;
+  const model = $("#model").value;
+  if (!text) return;
+  if (!project) { toast("Сначала добавьте проект", true); openPanel("p-project"); return; }
+  if (!model) { toast("Сначала добавьте провайдера с моделями", true); openPanel("p-add"); return; }
+  input.value = ""; autosize();
+  addMessage("user", text);
+  orchHistory.push({ role: "user", content: text });
+  const { m, body } = addMessage("bot", "", "Оркестратор · " + model);
+  body.append(el("span", { class: "typing" }, el("span"), el("span"), el("span")));
+  orchBusy = true;
+  try {
+    const r = await api("POST", "/api/orchestrator", { project, model, messages: orchHistory });
+    renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
+    orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
+    if (r.plan) m.append(planCard(r.plan, project));
+  } catch (e) {
+    orchHistory.pop();
+    m.classList.add("error");
+    renderText(body, "⚠ " + e.message);
+  } finally {
+    orchBusy = false;
+    msgsBox.scrollTop = msgsBox.scrollHeight;
+  }
+}
+
+function planCard(plan, project) {
+  const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
+  const box = el("div", { class: "plan" }, plan, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
+  start.addEventListener("click", async () => {
+    const worker = $("#worker").value;
+    const fallback = $("#fallback").value;
+    if (!worker) { toast("Выберите модель-исполнителя", true); return; }
+    start.disabled = true;
+    const request = orchHistory.filter((x) => x.role === "user").map((x) => x.content).join("\n");
+    try {
+      const v = await api("POST", "/api/tasks", { project, request, plan, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
+      start.textContent = "Работа начата";
+      watchTask(v);
+      refreshProjectState();
+    } catch (e) {
+      toast(e.message, true);
+      start.disabled = false;
+    }
+  });
+  return box;
+}
+
+// ============ Ход работы агента ============
+const kindIcon = { model: "🤖", tool: "🔧", checkpoint: "📸", hooks: "🧪", breaker: "⚡", info: "ℹ️", error: "⚠️" };
+const stateTitle = { running: "Агент работает", done: "Готово — нужно ваше решение", needs_human: "Нужна помощь человека", failed: "Ошибка", cancelled: "Остановлено", approved: "Применено", rejected: "Откачено" };
+
+function watchTask(v) {
+  if (msgsBox.querySelector(".welcome")) msgsBox.replaceChildren();
+  const title = el("span", {}, stateTitle.running);
+  const spin = el("span", { class: "spinner" });
+  const stop = el("button", { class: "btn danger icon", type: "button" }, "Остановить");
+  const feed = el("div", { class: "feed" });
+  const result = el("div", { class: "task-result", hidden: "" });
+  const card = el("div", { class: "msg bot task" },
+    el("div", { class: "who" }, "Исполнитель · " + v.models.join(" → ")),
+    el("div", { class: "task-head" }, spin, title, el("span", { class: "grow" }), stop),
+    feed, result);
+  msgsBox.append(card);
+  msgsBox.scrollTop = msgsBox.scrollHeight;
+  stop.addEventListener("click", async () => {
+    stop.disabled = true;
+    try { await api("POST", `/api/tasks/${v.id}/cancel`); } catch (e) { toast(e.message, true); }
+  });
+
+  let from = 0;
+  const poll = async () => {
+    let t;
+    try { t = await api("GET", `/api/tasks/${v.id}?from=${from}`); } catch (e) { setTimeout(poll, 2000); return; }
+    from = t.next_from;
+    const stick = msgsBox.scrollTop + msgsBox.clientHeight >= msgsBox.scrollHeight - 40;
+    for (const e of t.events) feed.append(el("div", { class: "k-" + e.kind }, el("span", {}, kindIcon[e.kind] || "•"), el("span", {}, e.text)));
+    feed.scrollTop = feed.scrollHeight;
+    if (stick) msgsBox.scrollTop = msgsBox.scrollHeight;
+    if (t.state === "running") { setTimeout(poll, 1000); return; }
+    spin.remove(); stop.remove();
+    title.textContent = stateTitle[t.state] || t.state;
+    showResult(t, result, title);
+    refreshProjectState();
+  };
+  poll();
+}
+
+function showResult(t, box, title) {
+  box.hidden = false;
+  box.replaceChildren();
+  if (t.state === "done") {
+    const approve = el("button", { class: "btn", type: "button" }, "✓ Approve — в новую ветку");
+    const reject = el("button", { class: "btn danger", type: "button" }, "✕ Reject — откатить");
+    const decide = async (action) => {
+      approve.disabled = reject.disabled = true;
+      try {
+        const r = await api("POST", `/api/tasks/${t.id}/${action}`);
+        title.textContent = stateTitle[r.state];
+        box.replaceChildren(r.state === "approved"
+          ? el("div", {}, "✓ Один коммит в ветке ", el("code", {}, r.branch), ". Проект переключён на неё, основная ветка не изменилась.")
+          : el("div", {}, "Изменения откачены, проект в исходном состоянии."));
+        refreshProjectState();
+      } catch (e) { toast(e.message, true); approve.disabled = reject.disabled = false; }
+    };
+    approve.addEventListener("click", () => decide("approve"));
+    reject.addEventListener("click", () => decide("reject"));
+    box.append(
+      el("div", {}, el("b", {}, "Итог: "), t.summary || "—", el("span", { class: "muted small" }, "  · " + t.model)),
+      t.diff ? el("pre", {}, t.diff) : "",
+      el("div", { class: "row" }, approve, reject));
+  } else if (t.state === "needs_human") {
+    box.append("Ни одна модель не прошла проверки. Проект возвращён в исходное состояние — можно уточнить план или выбрать модель сильнее.");
+  } else if (t.state === "failed") {
+    box.append("⚠ " + (t.error || "ошибка"));
+  } else if (t.state === "cancelled") {
+    box.append("Задача остановлена, изменения откачены.");
+  }
+}
+
+// ============ Проекты ============
+let projects = [];
+
+async function refreshProjectState() {
+  try { projects = await api("GET", "/api/projects"); } catch { return; }
+  const sel = $("#project");
+  const current = sel.value || store.get("edy-project");
+  sel.replaceChildren(...(projects.length ? projects.map((p) => el("option", { value: p.path }, p.name)) : [el("option", { value: "" }, "нет проектов")]));
+  if (projects.some((p) => p.path === current)) sel.value = current;
+  const p = projects.find((x) => x.path === sel.value);
+  $("#project-state").textContent = !p ? "" : p.running ? "идёт задача"
+    : p.pending ? "результат ждёт решения: Approve или Reject"
+    : p.ready ? `ветка ${p.branch} · готов` : "⚠ " + p.problem;
+  if ($("#drawer").classList.contains("open") && !$("#p-project").hidden) renderProjects();
+}
+$("#project").addEventListener("change", (e) => { store.set("edy-project", e.target.value); refreshProjectState(); });
+
+async function loadProjects() {
+  await refreshProjectState();
+}
+
+function renderProjects() {
+  const list = $("#project-list");
+  const current = $("#project").value;
+  list.replaceChildren(...projects.map((p) => el("div", { class: "card" + (p.path === current ? " current" : "") },
+    el("div", { class: "row spread" },
+      el("div", { class: "row" }, el("strong", {}, p.name), p.branch ? el("span", { class: "badge" }, p.branch) : "",
+        p.running ? el("span", { class: "status checking" }, "идёт задача")
+          : p.pending ? el("span", { class: "status login_open" }, "ждёт решения")
+          : p.ready ? el("span", { class: "status ok" }, "готов") : el("span", { class: "status error" }, "не готов")),
+      el("div", { class: "row" },
+        p.path === current ? "" : el("button", { class: "btn ghost icon", onclick: () => { $("#project").value = p.path; store.set("edy-project", p.path); refreshProjectState(); } }, "Выбрать"),
+        el("button", { class: "btn danger icon", onclick: () => removeProject(p.path) }, "Убрать"))),
+    el("div", { class: "small", style: "margin-top:6px" }, el("span", { class: "mono muted" }, p.path)),
+    p.problem && !p.pending && !p.running ? el("div", { class: "small", style: "margin-top:6px;color:var(--danger)" }, p.problem) : "")));
+  loadCheckpoints(current);
+}
+
+async function loadCheckpoints(path) {
+  const box = $("#checkpoints");
+  if (!path) { box.replaceChildren(el("div", { class: "muted small" }, "Выберите проект.")); return; }
+  let cps;
+  try { cps = await api("GET", "/api/projects/checkpoints?path=" + encodeURIComponent(path)); } catch (e) { box.replaceChildren(el("div", { class: "muted small" }, e.message)); return; }
+  if (!cps.length) { box.replaceChildren(el("div", { class: "muted small" }, "Снимков пока нет — они появятся, когда агент начнёт работу.")); return; }
+  box.replaceChildren(...cps.map((c, i) => el("div", { class: "cp" },
+    el("span", { class: "mono" }, "№" + (cps.length - 1 - i)),
+    el("span", { class: "grow", title: c.message }, c.message),
+    el("span", { class: "small muted" }, new Date(c.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })),
+    i === 0 ? "" : el("button", { class: "btn ghost icon", onclick: () => restoreCheckpoint(path, c, cps.length - 1 - i) }, "Откатить сюда"))));
+}
+
+async function restoreCheckpoint(path, c, n) {
+  if (!confirm(`Вернуть проект к снимку №${n} «${c.message}»? Изменения после него будут потеряны.`)) return;
+  try {
+    await api("POST", "/api/projects/restore", { path, id: c.id });
+    toast(`Проект возвращён к снимку №${n}`);
+    refreshProjectState();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function removeProject(path) {
+  if (!confirm("Убрать проект из списка? Файлы не удаляются.")) return;
+  try { await api("DELETE", "/api/projects?path=" + encodeURIComponent(path)); refreshProjectState(); } catch (e) { toast(e.message, true); }
+}
+
+$("#project-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const path = e.target.path.value.trim();
+  try {
+    const p = await api("POST", "/api/projects", { path });
+    e.target.path.value = "";
+    $("#project").value = "";
+    store.set("edy-project", p.path);
+    toast(p.ready ? `Проект «${p.name}» добавлен` : `Проект добавлен, но: ${p.problem}`, !p.ready);
+    await refreshProjectState();
+    $("#project").value = p.path;
+    refreshProjectState();
+  } catch (err) { toast(err.message, true); }
+});
 
 // ============ Старт ============
 (async () => {
@@ -1007,10 +1300,12 @@ $("#new-chat").addEventListener("click", () => { if (abort) abort.abort(); histo
     fillPresetSelects();
     loadBrowsers();
     await refreshProviders();
+    await refreshProjectState();
   } catch (e) {
     if (e.status === 401) { $("#auth").hidden = false; return; }
     toast(e.message, true);
   }
+  if (store.get("edy-chat-mode") === "orch") setChatMode("orch");
   const last = store.get("edy-panel");
   if (last && titles[last]) openPanel(last);
   input.focus();
