@@ -142,7 +142,8 @@ internal/api/projects.go  API проектов, снимков, Оркестра
 - **Ссылки.** Внешние ссылки в окне открываются в браузере по умолчанию через `POST /api/open` (только http/https).
 - **Один экземпляр.** Повторный запуск приложения показывает уже открытое окно.
 - **Сборка — только на Mac**, нужны Go и Xcode Command Line Tools: `scripts/build-macos-app.sh` → `build/Edy.app`.
-  - В бандл кладётся и команда `edy`.
+  - Команда `edy` кладётся в `Contents/Resources/bin/edy`, а не рядом с окном: файловая система Mac
+    не различает регистр, и `edy` перезаписал бы `Edy`.
   - В `Info.plist` разрешена локальная сеть (`NSAllowsLocalNetworking`).
   - Приложение подписывается ad-hoc.
 - **Без тега `desktop`** `cmd/edy-app` собирается заглушкой, поэтому `go build ./...` и `go test ./...` работают без CGO.

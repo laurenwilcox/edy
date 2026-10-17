@@ -17,7 +17,7 @@ fi
 VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
 APP="build/Edy.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 
 echo "Собираю окно Edy ($VERSION)…"
 CGO_ENABLED=1 \
@@ -25,8 +25,16 @@ CGO_LDFLAGS="-framework UniformTypeIdentifiers" \
 MACOSX_DEPLOYMENT_TARGET=13.0 \
   go build -tags desktop,production -trimpath -ldflags "-s -w" -o "$APP/Contents/MacOS/Edy" ./cmd/edy-app
 
+# Команда edy лежит отдельно от окна: файловая система Mac не различает регистр,
+# и «edy» рядом с «Edy» перезаписал бы само приложение.
 echo "Собираю команду edy…"
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$APP/Contents/MacOS/edy" ./cmd/edy
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$APP/Contents/Resources/bin/edy" ./cmd/edy
+
+# Проверка: в MacOS/Edy должно лежать окно, а не копия команды edy.
+if cmp -s "$APP/Contents/MacOS/Edy" "$APP/Contents/Resources/bin/edy"; then
+  echo "Ошибка сборки: вместо окна в бандле оказалась команда edy" >&2
+  exit 1
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -57,4 +65,5 @@ codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 echo
 echo "Готово: $APP"
 echo "Запуск:      open $APP"
-echo "Установить:  cp -R $APP /Applications/"
+echo "Установить:  rm -rf /Applications/Edy.app && cp -R $APP /Applications/"
+echo "Команда edy: $APP/Contents/Resources/bin/edy"

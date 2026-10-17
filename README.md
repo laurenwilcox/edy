@@ -15,7 +15,7 @@
 git clone -b claude/elegant-edison-gu1b8f https://github.com/laurenwilcox/name.git edy
 cd edy
 scripts/build-macos-app.sh
-open build/Edy.app            # или: cp -R build/Edy.app /Applications/
+open build/Edy.app            # или: rm -rf /Applications/Edy.app && cp -R build/Edy.app /Applications/
 ```
 
 ## Интерфейс в браузере
