@@ -163,3 +163,14 @@ func TestPresetsHaveInstallAndPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIPresetsAreConsistent(t *testing.T) {
+	for name, p := range APIPresets {
+		if p.Kind != store.KindOpenAI && p.Kind != store.KindAnthropic {
+			t.Errorf("%s: неизвестный тип %q", name, p.Kind)
+		}
+		if p.Kind == store.KindOpenAI && !strings.HasPrefix(p.BaseURL, "http") {
+			t.Errorf("%s: нет адреса API", name)
+		}
+	}
+}

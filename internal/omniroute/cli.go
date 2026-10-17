@@ -16,35 +16,6 @@ import (
 	"github.com/creack/pty"
 )
 
-// CLIPreset — готовый профиль терминального агента.
-type CLIPreset struct {
-	// Command — аргументы запуска: {model} заменяется на имя модели, {prompt} — на текст запроса.
-	Command []string
-	// Install — команда установки для macOS (выполняется через bash после подтверждения).
-	Install string
-}
-
-// CLIPresets — профили популярных терминальных агентов.
-var CLIPresets = map[string]CLIPreset{
-	"ollama": {
-		Command: []string{"ollama", "run", "{model}", "--nowordwrap", "{prompt}"},
-		Install: "brew install ollama",
-	},
-	"claude-code": {
-		Command: []string{"claude", "-p", "--model", "{model}", "{prompt}"},
-		Install: "curl -fsSL https://claude.ai/install.sh | bash",
-	},
-	"aider": {
-		Command: []string{"aider", "--model", "{model}", "--yes-always", "--no-pretty", "--message", "{prompt}"},
-		Install: "curl -LsSf https://aider.chat/install.sh | sh",
-	},
-	// Google Antigravity CLI. Имена моделей — как в `agy models`, например "Claude Opus 5.5 (Thinking)".
-	"antigravity": {
-		Command: []string{"agy", "-p", "{prompt}", "--model", "{model}"},
-		Install: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-	},
-}
-
 // extraBinDirs — папки, куда ставят утилиты установщики и Homebrew. Их часто
 // нет в PATH процесса, запущенного не из настроенного терминала.
 func extraBinDirs() []string {

@@ -133,3 +133,40 @@ func jsonInt(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+func TestRemoteModelsAndSetModels(t *testing.T) {
+	h, st := setup(t)
+	call(h, "POST", "/api/providers", `{"name":"or","kind":"openai","base_url":"https://openrouter.ai/api/v1"}`)
+	call(h, "POST", "/api/providers/or/keys", `{"secret":"sk-or-1"}`)
+	var gotKey string
+	h.ListModels = func(ctx context.Context, p store.Provider, key string) ([]string, error) {
+		gotKey = key
+		return []string{"a/one", "b/two"}, nil
+	}
+	rec := call(h, "GET", "/api/providers/or/remote-models", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "b/two") || gotKey != "sk-or-1" {
+		t.Fatalf("remote: %d %s key=%q", rec.Code, rec.Body, gotKey)
+	}
+	if rec := call(h, "PUT", "/api/providers/or/models", `{"models":["a/one"," ","bad,name"]}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("set: %d", rec.Code)
+	}
+	p, _ := st.Provider("or")
+	if strings.Join(p.Models, "|") != "a/one" {
+		t.Fatalf("models = %q", p.Models)
+	}
+	if rec := call(h, "PUT", "/api/providers/nope/models", `{"models":[]}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing: %d", rec.Code)
+	}
+}
+
+func TestPresetsCatalog(t *testing.T) {
+	h, _ := setup(t)
+	var out struct {
+		CLI []cliPresetJSON `json:"cli"`
+		API []apiPresetJSON `json:"api"`
+	}
+	json.Unmarshal(call(h, "GET", "/api/presets", "").Body.Bytes(), &out)
+	if len(out.CLI) < 10 || len(out.API) < 15 {
+		t.Fatalf("cli=%d api=%d", len(out.CLI), len(out.API))
+	}
+}

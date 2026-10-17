@@ -28,15 +28,16 @@ type Handler struct {
 	Token string
 	Addr  string // адрес OmniRoute для экрана «Подключение»
 
-	// FindExecutable и Install подменяются в тестах.
+	// FindExecutable, Install и ListModels подменяются в тестах.
 	FindExecutable func(name string) (string, error)
 	Install        func(ctx context.Context, command string) (output string, err error)
+	ListModels     func(ctx context.Context, p store.Provider, key string) ([]string, error)
 
 	mux *http.ServeMux
 }
 
 func New(st *store.Store, token, addr string) *Handler {
-	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall}
+	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/info", h.info)
 	m.HandleFunc("GET /api/presets", h.presets)
@@ -44,6 +45,8 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("POST /api/providers", h.addProvider)
 	m.HandleFunc("DELETE /api/providers/{name}", h.deleteProvider)
 	m.HandleFunc("POST /api/providers/{name}/keys", h.addKey)
+	m.HandleFunc("GET /api/providers/{name}/remote-models", h.remoteModels)
+	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
 	m.HandleFunc("DELETE /api/keys/{id}", h.deleteKey)
 	m.HandleFunc("POST /api/install", h.install)
 	m.HandleFunc("GET /api/usage", h.usage)
@@ -65,19 +68,89 @@ func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]string{"base_url": "http://" + h.Addr + "/v1", "token": h.Token})
 }
 
-type presetJSON struct {
+type cliPresetJSON struct {
 	Name    string   `json:"name"`
+	Title   string   `json:"title"`
 	Command []string `json:"command"`
 	Install string   `json:"install"`
+	Note    string   `json:"note"`
+}
+
+type apiPresetJSON struct {
+	Name    string `json:"name"`
+	Title   string `json:"title"`
+	Kind    string `json:"kind"`
+	BaseURL string `json:"base_url"`
+	KeyURL  string `json:"key_url"`
+	Note    string `json:"note"`
 }
 
 func (h *Handler) presets(w http.ResponseWriter, r *http.Request) {
-	out := []presetJSON{}
+	out := struct {
+		CLI []cliPresetJSON `json:"cli"`
+		API []apiPresetJSON `json:"api"`
+	}{CLI: []cliPresetJSON{}, API: []apiPresetJSON{}}
 	for name, p := range omniroute.CLIPresets {
-		out = append(out, presetJSON{Name: name, Command: p.Command, Install: p.Install})
+		out.CLI = append(out.CLI, cliPresetJSON{Name: name, Title: p.Title, Command: p.Command, Install: p.Install, Note: p.Note})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	for name, p := range omniroute.APIPresets {
+		out.API = append(out.API, apiPresetJSON{Name: name, Title: p.Title, Kind: p.Kind, BaseURL: p.BaseURL, KeyURL: p.KeyURL, Note: p.Note})
+	}
+	sort.Slice(out.CLI, func(i, j int) bool { return out.CLI[i].Title < out.CLI[j].Title })
+	sort.Slice(out.API, func(i, j int) bool { return out.API[i].Title < out.API[j].Title })
 	reply(w, out)
+}
+
+// remoteModels спрашивает у провайдера список моделей первым рабочим ключом.
+func (h *Handler) remoteModels(w http.ResponseWriter, r *http.Request) {
+	p, err := h.Store.Provider(r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		fail(w, http.StatusNotFound, "провайдер не найден")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	keys, err := h.Store.Keys(p.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	key := ""
+	if len(keys) > 0 {
+		key = keys[0].Secret
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	models, err := h.ListModels(ctx, p, key)
+	if err != nil {
+		fail(w, http.StatusBadGateway, "не удалось получить список моделей: "+err.Error())
+		return
+	}
+	reply(w, map[string][]string{"models": models})
+}
+
+func (h *Handler) setModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	var models []string
+	for _, m := range req.Models {
+		if m = strings.TrimSpace(m); m != "" && !strings.Contains(m, ",") {
+			models = append(models, m)
+		}
+	}
+	if err := h.Store.SetModels(r.PathValue("name"), models); errors.Is(err, store.ErrNotFound) {
+		fail(w, http.StatusNotFound, "провайдер не найден")
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 type providerJSON struct {

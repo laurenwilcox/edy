@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -198,7 +199,7 @@ func providerAdd(st *store.Store, args []string) error {
 	var yes bool
 	fs.StringVar(&p.Name, "name", "", "имя провайдера — префикс модели, например anthropic")
 	fs.StringVar(&p.Kind, "kind", "", "тип: openai | anthropic | cli")
-	fs.StringVar(&preset, "preset", "", "для cli: готовая команда — ollama | claude-code | aider | antigravity")
+	fs.StringVar(&preset, "preset", "", "для cli: готовый профиль — "+presetNames())
 	fs.BoolVar(&yes, "y", false, "для cli: устанавливать утилиту без вопроса")
 	fs.StringVar(&command, "command", "", `для cli: команда JSON-массивом, например '["ollama","run","{model}","{prompt}"]'`)
 	fs.StringVar(&p.BaseURL, "base-url", "", "базовый URL API (для OpenAI-совместимых, например http://localhost:11434/v1)")
@@ -278,6 +279,15 @@ func runShell(command string) error {
 	cmd := exec.Command("/bin/bash", "-c", command)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
+}
+
+func presetNames() string {
+	names := make([]string, 0, len(omniroute.CLIPresets))
+	for n := range omniroute.CLIPresets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " | ")
 }
 
 func providerRemove(st *store.Store, args []string) error {

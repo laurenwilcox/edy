@@ -153,6 +153,19 @@ label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
 .keys { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; }
 .key-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
 
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--code); gap: 2px; }
+.seg button { border: 0; background: none; color: var(--muted); font: inherit; padding: 6px 12px; border-radius: 9px; cursor: pointer; }
+.seg button.on { background: var(--glass-strong); color: var(--text); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.hint-box { margin-top: 12px; color: var(--muted); }
+.hint-box:empty { display: none; }
+.hint-box code { font-size: 11.5px; }
+.picker { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
+.picker-list { max-height: 260px; overflow-y: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--code); }
+.picker-list label { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; padding: 4px 6px; border-radius: 7px; cursor: pointer; }
+.picker-list label:hover { background: var(--field); }
+.picker-list input { width: auto; }
+a { color: var(--a1); }
+
 /* Поля «Подключение»: подпись сверху, значение и кнопки на одной линии */
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
 .field-label { font-size: 12.5px; color: var(--muted); }
@@ -234,34 +247,46 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 
         <section id="p-add">
           <form id="add-form" class="card">
-            <div class="form-grid">
-              <label class="wide">Тип
-                <select name="kind">
-                  <option value="cli">Терминальная утилита (по подписке)</option>
-                  <option value="anthropic">Anthropic API</option>
-                  <option value="openai">OpenAI-совместимый API</option>
-                </select>
-              </label>
-              <label>Имя (префикс модели)
-                <input name="name" placeholder="agy" required>
-              </label>
-              <label data-for="cli">Профиль
+            <div class="seg" role="tablist">
+              <button type="button" data-mode="cli" class="on">Утилита по подписке</button>
+              <button type="button" data-mode="api">API-ключ</button>
+            </div>
+            <div class="form-grid" style="margin-top:14px">
+              <label class="wide" data-for="cli">Утилита
                 <select name="preset"></select>
               </label>
-              <label data-for="openai">Адрес API
-                <input name="base_url" placeholder="http://localhost:11434/v1">
+              <label class="wide" data-for="cli-custom">Команда запуска (аргументы через пробел)
+                <input name="command" placeholder="mytool --model {model} {prompt}">
+              </label>
+              <label class="wide" data-for="api">Сервис
+                <select name="service"></select>
+              </label>
+              <label class="wide" data-for="api-custom">Формат API
+                <select name="kind">
+                  <option value="openai">OpenAI-совместимый</option>
+                  <option value="anthropic">Anthropic</option>
+                </select>
+              </label>
+              <label class="wide" data-for="api">Адрес API
+                <input name="base_url" placeholder="https://…/v1">
+              </label>
+              <label data-for="api"><span class="row spread">API-ключ <span id="key-link"></span></span>
+                <input name="secret" type="password" autocomplete="off" placeholder="можно добавить позже">
+              </label>
+              <label>Имя (префикс модели)
+                <input name="name" required>
               </label>
               <label class="wide">Модели через запятую
-                <input name="models" placeholder="claude-sonnet-4-6">
+                <input name="models" placeholder="для API можно оставить пустым и загрузить список после добавления">
               </label>
-              <label data-for="openai anthropic">$ за 1M входных токенов
+              <label data-for="api">$ за 1M входных токенов
                 <input name="price_in" type="number" min="0" step="any" value="0">
               </label>
-              <label data-for="openai anthropic">$ за 1M выходных токенов
+              <label data-for="api">$ за 1M выходных токенов
                 <input name="price_out" type="number" min="0" step="any" value="0">
               </label>
             </div>
-            <div class="muted small" id="preset-hint" style="margin-top:10px"></div>
+            <div class="hint-box small" id="preset-hint"></div>
             <div class="row" style="margin-top:14px"><button class="btn" type="submit">Добавить</button></div>
           </form>
           <div id="install-box" class="card notice" hidden></div>
@@ -407,7 +432,7 @@ function openPanel(id) {
   $("#drawer").classList.add("open");
   $("#side").classList.remove("show");
   store.set("edy-panel", id);
-  loaders[id]();
+  return loaders[id]();
 }
 function closePanel() {
   $("#drawer").classList.remove("open");
@@ -429,7 +454,7 @@ document.addEventListener("click", (e) => {
 
 // ============ Провайдеры ============
 const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм." };
-let presets = [];
+let presets = { cli: [], api: [] };
 let providers = [];
 
 async function refreshProviders() {
@@ -454,10 +479,12 @@ async function loadProviders() {
 
 function providerCard(p) {
   const target = p.kind === "cli" ? p.command.join(" ") : (p.base_url || "адрес по умолчанию");
-  const card = el("div", { class: "card lift" },
+  const card = el("div", { class: "card lift", "data-provider": p.name },
     el("div", { class: "row spread" },
       el("div", { class: "row" }, el("strong", {}, p.name), el("span", { class: "badge" + (p.kind === "cli" ? " cli" : "") }, kindNames[p.kind] || p.kind)),
-      el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить")),
+      el("div", { class: "row" },
+        el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели"),
+        el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить"))),
     el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "mono muted" }, target)),
     el("div", { class: "row small", style: "margin-top:8px" },
       ...(p.models.length
@@ -491,6 +518,65 @@ function keysBlock(p) {
   return box;
 }
 
+// Редактор моделей: ручной список и (для API) загрузка списка у провайдера.
+async function openModelEditor(name, autoLoad) {
+  const card = document.querySelector(`[data-provider="${CSS.escape(name)}"]`);
+  const p = providers.find((x) => x.name === name);
+  if (!card || !p) return;
+  card.querySelector(".picker")?.remove();
+  const chosen = new Set(p.models);
+  const manual = el("input", { value: p.models.join(", "), placeholder: "модели через запятую" });
+  const list = el("div", { class: "picker-list", hidden: "" });
+  const filter = el("input", { placeholder: "поиск модели…", hidden: "" });
+  let remote = [];
+  const renderList = () => {
+    const q = filter.value.toLowerCase();
+    list.replaceChildren(...remote.filter((m) => m.toLowerCase().includes(q)).slice(0, 400).map((m) => {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = chosen.has(m);
+      cb.addEventListener("change", () => {
+        cb.checked ? chosen.add(m) : chosen.delete(m);
+        manual.value = [...chosen].join(", ");
+      });
+      return el("label", {}, cb, m);
+    }));
+  };
+  filter.addEventListener("input", renderList);
+  manual.addEventListener("input", () => {
+    chosen.clear();
+    manual.value.split(",").map((m) => m.trim()).filter(Boolean).forEach((m) => chosen.add(m));
+  });
+  const load = el("button", { class: "btn ghost", type: "button" }, "Загрузить с сервера");
+  load.addEventListener("click", async () => {
+    load.disabled = true; load.textContent = "Загружаю…";
+    try {
+      remote = (await api("GET", `/api/providers/${encodeURIComponent(name)}/remote-models`)).models;
+      list.hidden = filter.hidden = false;
+      renderList();
+      load.textContent = `Найдено: ${remote.length}`;
+    } catch (e) {
+      toast(e.message, true);
+      load.disabled = false; load.textContent = "Загрузить с сервера";
+    }
+  });
+  const save = el("button", { class: "btn", type: "button" }, "Сохранить");
+  save.addEventListener("click", async () => {
+    try {
+      await api("PUT", `/api/providers/${encodeURIComponent(name)}/models`, { models: [...chosen] });
+      toast("Модели сохранены");
+      loadProviders();
+    } catch (e) { toast(e.message, true); }
+  });
+  const box = el("div", { class: "picker" },
+    el("div", { class: "small muted" }, "Модели, доступные в чате и для агентов:"),
+    manual, filter, list,
+    el("div", { class: "row" }, p.kind !== "cli" ? load : "", save,
+      el("button", { class: "btn ghost", type: "button", onclick: () => box.remove() }, "Отмена")));
+  card.append(box);
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (autoLoad && p.kind !== "cli") load.click();
+}
+
 async function removeProvider(name) {
   if (!confirm(`Удалить провайдера «${name}» вместе с его ключами?`)) return;
   try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
@@ -504,32 +590,82 @@ async function removeKey(id) {
 
 // ============ Форма добавления ============
 const form = $("#add-form");
-function syncForm() {
-  const kind = form.kind.value;
-  for (const l of form.querySelectorAll("[data-for]")) l.hidden = !l.dataset.for.split(" ").includes(kind);
-  const pr = presets.find((p) => p.name === form.preset.value);
-  $("#preset-hint").textContent = kind === "cli" && pr ? "Запуск: " + pr.command.join(" ") : "";
+let addMode = "cli";
+
+for (const b of form.querySelectorAll(".seg button")) {
+  b.addEventListener("click", () => {
+    addMode = b.dataset.mode;
+    for (const x of form.querySelectorAll(".seg button")) x.classList.toggle("on", x === b);
+    syncForm(true);
+  });
 }
-form.kind.addEventListener("change", syncForm);
-form.preset.addEventListener("change", syncForm);
+
+function currentPreset() {
+  return addMode === "cli"
+    ? presets.cli.find((p) => p.name === form.preset.value)
+    : presets.api.find((p) => p.name === form.service.value);
+}
+
+// syncForm показывает нужные поля; fill=true подставляет значения выбранного профиля.
+function syncForm(fill) {
+  const pr = currentPreset();
+  const custom = !pr;
+  const visible = new Set([addMode, addMode + (custom ? "-custom" : "")]);
+  for (const l of form.querySelectorAll("[data-for]")) l.hidden = !l.dataset.for.split(" ").some((f) => visible.has(f));
+  if (fill) {
+    form.name.value = pr ? (addMode === "cli" ? ({ "claude-code": "claude", antigravity: "agy" }[pr.name] || pr.name) : pr.name) : "";
+    if (addMode === "api") {
+      form.base_url.value = pr ? pr.base_url : "";
+      form.base_url.placeholder = pr && pr.kind === "anthropic" ? "по умолчанию — api.anthropic.com" : "https://…/v1";
+    }
+  }
+  const hint = $("#preset-hint");
+  hint.replaceChildren();
+  if (addMode === "cli" && pr) hint.append("Запуск: ", el("code", {}, pr.command.join(" ")), pr.note ? el("div", { style: "margin-top:4px" }, pr.note) : "");
+  if (addMode === "cli" && !pr) hint.append("Подстановки: ", el("code", {}, "{prompt}"), " — текст запроса (обязательно), ", el("code", {}, "{model}"), " — имя модели.");
+  if (addMode === "api" && pr?.note) hint.append(pr.note);
+  const link = $("#key-link");
+  link.replaceChildren();
+  if (addMode === "api" && pr?.key_url) link.append(el("a", { href: pr.key_url, target: "_blank", rel: "noopener" }, "получить ключ ↗"));
+}
+form.preset.addEventListener("change", () => syncForm(true));
+form.service.addEventListener("change", () => syncForm(true));
+
+function fillPresetSelects() {
+  form.preset.replaceChildren(...presets.cli.map((p) => el("option", { value: p.name }, p.title)), el("option", { value: "" }, "Своя утилита…"));
+  form.service.replaceChildren(...presets.api.map((p) => el("option", { value: p.name }, p.title)), el("option", { value: "" }, "Другой сервис…"));
+  form.preset.value = "antigravity";
+  form.service.value = "anthropic";
+  syncForm(true);
+}
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#install-box").hidden = true;
-  const kind = form.kind.value;
+  const pr = currentPreset();
   const body = {
-    name: form.name.value.trim(), kind,
-    preset: kind === "cli" ? form.preset.value : "",
-    base_url: kind === "openai" ? form.base_url.value : "",
+    name: form.name.value.trim(),
     models: form.models.value.split(","),
-    price_in: kind === "cli" ? 0 : Number(form.price_in.value) || 0,
-    price_out: kind === "cli" ? 0 : Number(form.price_out.value) || 0,
   };
+  if (addMode === "cli") {
+    body.kind = "cli";
+    if (pr) body.preset = pr.name;
+    else body.command = form.command.value.trim().split(/\s+/).filter(Boolean);
+  } else {
+    body.kind = pr ? pr.kind : form.kind.value;
+    body.base_url = form.base_url.value.trim();
+    body.price_in = Number(form.price_in.value) || 0;
+    body.price_out = Number(form.price_out.value) || 0;
+  }
   try {
     await api("POST", "/api/providers", body);
+    const secret = addMode === "api" ? form.secret.value.trim() : "";
+    if (secret) await api("POST", `/api/providers/${encodeURIComponent(body.name)}/keys`, { label: "основной", secret });
     toast(`Провайдер «${body.name}» добавлен`);
-    form.name.value = ""; form.models.value = "";
-    openPanel("p-list");
+    form.secret.value = ""; form.models.value = "";
+    await openPanel("p-list");
+    // Для API без моделей сразу предлагаем загрузить список.
+    if (addMode === "api" && !body.models.some((m) => m.trim())) openModelEditor(body.name, true);
   } catch (err) {
     if (err.status === 409 && err.data?.install) return offerInstall(err.data);
     toast(err.message, true);
@@ -766,14 +902,12 @@ $("#new-chat").addEventListener("click", () => { if (abort) abort.abort(); histo
   if (!token) { $("#auth").hidden = false; return; }
   try {
     presets = await api("GET", "/api/presets");
-    form.preset.replaceChildren(...presets.map((p) => el("option", { value: p.name }, p.name)));
-    form.preset.value = presets.some((p) => p.name === "antigravity") ? "antigravity" : presets[0]?.name;
+    fillPresetSelects();
     await refreshProviders();
   } catch (e) {
     if (e.status === 401) { $("#auth").hidden = false; return; }
     toast(e.message, true);
   }
-  syncForm();
   const last = store.get("edy-panel");
   if (last && titles[last]) openPanel(last);
   input.focus();

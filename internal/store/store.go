@@ -142,6 +142,18 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 	return res.LastInsertId()
 }
 
+// SetModels заменяет список моделей провайдера.
+func (s *Store) SetModels(name string, models []string) error {
+	res, err := s.db.Exec(`UPDATE providers SET models = ? WHERE name = ?`, strings.Join(models, ","), name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteProvider удаляет провайдера вместе с его ключами.
 func (s *Store) DeleteProvider(name string) error {
 	res, err := s.db.Exec(`DELETE FROM providers WHERE name = ?`, name)
