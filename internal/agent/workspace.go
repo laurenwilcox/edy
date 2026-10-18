@@ -1,15 +1,18 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/laurenwilcox/name/internal/codeindex"
 	"github.com/laurenwilcox/name/internal/skills"
@@ -241,4 +244,61 @@ func unwrapPath(err error) error {
 		return pe.Err
 	}
 	return err
+}
+
+// Files возвращает файлы проекта (без служебных папок), не больше limit.
+func (w Workspace) Files(limit int) ([]string, error) {
+	root, err := filepath.EvalSymlinks(w.Root)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != root && skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		r, _ := filepath.Rel(root, p)
+		files = append(files, filepath.ToSlash(r))
+		if len(files) >= limit {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files, err
+}
+
+// ReadText читает файл проекта для просмотра: не больше limit байт, без
+// двоичных файлов.
+func (w Workspace) ReadText(rel string, limit int) (text string, truncated bool, err error) {
+	p, err := w.resolve(rel)
+	if err != nil {
+		return "", false, err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return "", false, unwrapPath(err)
+	}
+	defer f.Close()
+	buf := make([]byte, limit+1)
+	n, _ := io.ReadFull(f, buf)
+	buf = buf[:n]
+	if n > limit {
+		buf, truncated = buf[:limit], true
+	}
+	// Обрезка могла разрезать последний символ UTF-8 — его отбрасываем.
+	check := buf
+	for i := 0; i < 3 && len(check) > 0 && !utf8.Valid(check); i++ {
+		check = check[:len(check)-1]
+	}
+	if bytes.IndexByte(buf, 0) >= 0 || !utf8.Valid(check) {
+		return "", false, errors.New("двоичный файл — просмотр только для текста")
+	}
+	return string(check), truncated, nil
 }

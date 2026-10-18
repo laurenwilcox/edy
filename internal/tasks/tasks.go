@@ -108,7 +108,12 @@ type record struct {
 	View
 	Baseline  string `json:"baseline,omitempty"`
 	AllSkills bool   `json:"all_skills,omitempty"` // задача без Оркестратора получает все скиллы
+	// Patch — полный diff готового результата: сохраняется, чтобы его можно
+	// было посмотреть и после Approve, когда изменения уже в коммите.
+	Patch string `json:"patch,omitempty"`
 }
+
+const patchLimit = 400 << 10
 
 type run struct {
 	id      string
@@ -474,6 +479,7 @@ func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Sk
 			x.State, x.Error = StateFailed, err.Error()
 		case res.Status == agent.StatusDone:
 			x.State, x.Summary, x.Model, x.Diff = StateDone, res.Summary, res.Model, res.Diff
+			x.Patch, _ = agent.Shadow{Root: x.Project}.Patch(context.Background(), x.Baseline, patchLimit)
 		default:
 			x.State = StateNeedsHuman
 		}
@@ -527,11 +533,11 @@ func (m *Manager) review(r record, agentID string) *Review {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	patch, err := agent.Shadow{Root: r.Project}.Patch(ctx, r.Baseline, 60<<10)
-	var rv Review
-	if err == nil {
-		rv, err = m.Review(ctx, r.View, patch)
+	patch := r.Patch
+	if len(patch) > 60<<10 {
+		patch = patch[:60<<10] + "\n… (изменения обрезаны: показаны первые 60 КБ)"
 	}
+	rv, err := m.Review(ctx, r.View, patch)
 	switch {
 	case err != nil:
 		rv = Review{Verdict: "error", Text: err.Error(), Model: rv.Model}
@@ -713,6 +719,39 @@ func (m *Manager) Cancel(id string) error {
 		return nil
 	}
 	return errors.New("задача уже не выполняется")
+}
+
+// Patch возвращает полный diff результата задачи.
+func (m *Manager) Patch(id string) (string, error) {
+	r, err := m.load(id)
+	if err != nil {
+		return "", err
+	}
+	return r.Patch, nil
+}
+
+// RevertFile откатывает один файл результата к состоянию до задачи — когда
+// остальное устраивает, а правка одного файла нет.
+func (m *Manager) RevertFile(id, file string) (View, error) {
+	r, err := m.load(id)
+	if err != nil {
+		return View{}, err
+	}
+	if r.State != StateDone {
+		return View{}, errors.New("откатить файл можно, пока результат ждёт решения")
+	}
+	ctx := context.Background()
+	sh := agent.Shadow{Root: r.Project}
+	if err := sh.RestoreFile(ctx, r.Baseline, file); err != nil {
+		return View{}, err
+	}
+	patch, _ := sh.Patch(ctx, r.Baseline, patchLimit)
+	diff, _ := sh.Diff(ctx, r.Baseline)
+	if _, err := m.update(id, func(x *record) error { x.Patch, x.Diff = patch, diff; return nil }); err != nil {
+		return View{}, err
+	}
+	m.event(id, "", "info", "Файл "+file+" откачен к состоянию до задачи")
+	return m.Get(id, 0), nil
 }
 
 // Comment добавляет комментарий в историю карточки.

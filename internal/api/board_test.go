@@ -76,3 +76,56 @@ func TestBoardAPI(t *testing.T) {
 	}
 	h.Tasks.Wait()
 }
+
+func TestPatchRevertAndFileViewer(t *testing.T) {
+	h, st := setup(t)
+	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "{prompt}"}, Models: []string{"m"}})
+	b := &brain{}
+	h.LLM = b
+	h.Tasks = tasks.NewManager(b, st)
+	dir := gitProject(t)
+	call(h, "POST", "/api/projects", fmt.Sprintf(`{"path":%q}`, dir))
+
+	var files struct{ Files []string }
+	json.Unmarshal(call(h, "GET", "/api/projects/files?path="+dir, "").Body.Bytes(), &files)
+	if strings.Join(files.Files, ",") != "calc.go,calc_test.go,go.mod" {
+		t.Fatalf("файлы: %v", files.Files)
+	}
+	var f struct{ Text string }
+	json.Unmarshal(call(h, "GET", "/api/projects/file?path="+dir+"&file=calc.go", "").Body.Bytes(), &f)
+	if !strings.Contains(f.Text, "func Add") {
+		t.Fatalf("файл: %q", f.Text)
+	}
+	for _, bad := range []string{"../etc/passwd", ".git/config", "/etc/passwd"} {
+		if rec := call(h, "GET", "/api/projects/file?path="+dir+"&file="+bad, ""); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", bad, rec.Code)
+		}
+	}
+
+	var v tasks.View
+	json.Unmarshal(call(h, "POST", "/api/tasks", fmt.Sprintf(`{"project":%q,"request":"почини","models":["agy/m"]}`, dir)).Body.Bytes(), &v)
+	deadline := time.Now().Add(time.Minute)
+	for (v.State == tasks.StateRunning || v.State == tasks.StateQueued) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		json.Unmarshal(call(h, "GET", "/api/tasks/"+v.ID, "").Body.Bytes(), &v)
+	}
+	var p struct{ Patch string }
+	json.Unmarshal(call(h, "GET", "/api/tasks/"+v.ID+"/patch", "").Body.Bytes(), &p)
+	if !strings.Contains(p.Patch, "+func Add(a, b int) int { return a + b }") {
+		t.Fatalf("patch:\n%s", p.Patch)
+	}
+	rec := call(h, "POST", "/api/tasks/"+v.ID+"/revert-file", `{"file":"calc.go"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("откат файла: %d %s", rec.Code, rec.Body)
+	}
+	json.Unmarshal(call(h, "GET", "/api/tasks/"+v.ID+"/patch", "").Body.Bytes(), &p)
+	json.Unmarshal(call(h, "GET", "/api/projects/file?path="+dir+"&file=calc.go", "").Body.Bytes(), &f)
+	if strings.Contains(p.Patch, "calc.go") || !strings.Contains(f.Text, "a - b") {
+		t.Fatalf("после отката файла: patch=%q файл=%q", p.Patch, f.Text)
+	}
+	if rec := call(h, "POST", "/api/tasks/"+v.ID+"/revert-file", `{"file":"../x"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("выход за проект: %d", rec.Code)
+	}
+	h.Tasks.Reject(v.ID)
+	h.Tasks.Wait()
+}

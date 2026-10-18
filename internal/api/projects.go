@@ -36,6 +36,10 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/board", h.createTask)
 	m.HandleFunc("PUT /api/tasks/{id}", h.editTask)
 	m.HandleFunc("DELETE /api/tasks/{id}", h.deleteTask)
+	m.HandleFunc("GET /api/tasks/{id}/patch", h.taskPatch)
+	m.HandleFunc("POST /api/tasks/{id}/revert-file", h.revertFile)
+	m.HandleFunc("GET /api/projects/files", h.projectFiles)
+	m.HandleFunc("GET /api/projects/file", h.projectFile)
 	m.HandleFunc("GET /api/tasks/{id}", h.getTask)
 	m.HandleFunc("POST /api/tasks/{id}/{action}", h.taskAction)
 }
@@ -570,6 +574,71 @@ func (h *Handler) taskAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, v)
+}
+
+func (h *Handler) taskPatch(w http.ResponseWriter, r *http.Request) {
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	patch, err := h.Tasks.Patch(r.PathValue("id"))
+	if err != nil {
+		fail(w, http.StatusNotFound, err.Error())
+		return
+	}
+	reply(w, map[string]string{"patch": patch})
+}
+
+func (h *Handler) revertFile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.File == "" {
+		fail(w, http.StatusBadRequest, "укажите файл")
+		return
+	}
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	v, err := h.Tasks.RevertFile(r.PathValue("id"), req.File)
+	if err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	reply(w, v)
+}
+
+// projectFiles — список файлов проекта для просмотра.
+func (h *Handler) projectFiles(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if !h.knownProject(w, path) {
+		return
+	}
+	files, err := agent.Workspace{Root: path}.Files(5000)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if files == nil {
+		files = []string{}
+	}
+	reply(w, map[string]any{"files": files, "truncated": len(files) >= 5000})
+}
+
+// projectFile — текст файла проекта (только внутри проекта, не больше 1 МБ).
+func (h *Handler) projectFile(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	path := q.Get("path")
+	if !h.knownProject(w, path) {
+		return
+	}
+	text, truncated, err := agent.Workspace{Root: path}.ReadText(q.Get("file"), 1<<20)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	reply(w, map[string]any{"file": q.Get("file"), "text": text, "truncated": truncated})
 }
 
 func splitModelName(m string) (provider, model string, ok bool) {

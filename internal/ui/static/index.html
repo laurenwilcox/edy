@@ -205,6 +205,33 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .orch-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--a1) 4%, transparent); }
 .orch-bar label { font-size: 11.5px; }
 .orch-bar select { width: auto; max-width: 240px; padding: 6px 9px; }
+/* ---- Код: подсветка, diff, просмотр файлов ---- */
+.code { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 10px; overflow: auto; }
+.code table { border-collapse: collapse; width: 100%; }
+.code td { padding: 0 10px; white-space: pre; vertical-align: top; border: 0; }
+.code td.ln { width: 1%; text-align: right; color: var(--muted); opacity: .6; user-select: none; padding-right: 8px; border-right: 1px solid var(--line); }
+.code tr.d-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.code tr.d-del { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.code tr.d-hunk td { color: var(--a2); background: color-mix(in srgb, var(--a2) 7%, transparent); padding-top: 3px; padding-bottom: 3px; }
+.code td.sign { width: 1%; padding: 0 4px; user-select: none; color: var(--muted); }
+.hl-kw { color: #c026d3; font-weight: 600; } .hl-type { color: #0891b2; } .hl-str { color: #16a34a; } .hl-num { color: #ea580c; }
+.hl-com { color: var(--muted); font-style: italic; } .hl-lit { color: #ea580c; font-weight: 600; } .hl-fn { color: #2563eb; } .hl-tag { color: #dc2626; } .hl-attr { color: #ca8a04; }
+@media (prefers-color-scheme: dark) { .hl-kw { color: #e879f9; } .hl-type { color: #67e8f9; } .hl-str { color: #86efac; } .hl-num, .hl-lit { color: #fdba74; } .hl-fn { color: #93c5fd; } .hl-tag { color: #fca5a5; } .hl-attr { color: #fde047; } }
+.dfile { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+.dfile > summary { display: flex; gap: 8px; align-items: center; padding: 8px 10px; cursor: pointer; font-size: 13px; background: color-mix(in srgb, var(--text) 3%, transparent); list-style: none; }
+.dfile > summary::-webkit-details-marker { display: none; }
+.dfile > summary .path { font-family: ui-monospace, Menlo, monospace; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfile .code { border-radius: 0; max-height: 520px; }
+.plus { color: var(--ok); font-weight: 600; } .minus { color: var(--danger); font-weight: 600; }
+.fv { display: grid; grid-template-columns: 260px 1fr; gap: 12px; height: min(78vh, 760px); }
+.fv-list { display: flex; flex-direction: column; min-height: 0; }
+.fv-files { flex: 1; overflow-y: auto; margin-top: 8px; font: 12.5px ui-monospace, Menlo, monospace; }
+.fv-files div { padding: 3px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fv-files div:hover { background: color-mix(in srgb, var(--a1) 10%, transparent); }
+.fv-files div.on { background: color-mix(in srgb, var(--a1) 18%, transparent); color: var(--a1); font-weight: 600; }
+.fv-view { min-height: 0; display: flex; flex-direction: column; }
+.fv-view .code { flex: 1; }
+@media (max-width: 760px) { .fv { grid-template-columns: 1fr; height: auto; } .fv-files { max-height: 180px; } .fv-view .code { max-height: 60vh; } }
 /* ---- Доска задач ---- */
 .board-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .board-bar { display: flex; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
@@ -482,7 +509,10 @@ h3.sub:first-child { margin-top: 0; }
         </section>
 
         <section id="p-project">
-          <button class="btn" type="button" id="open-board" style="width:100%;margin-bottom:12px">📋 Доска задач проекта</button>
+          <div class="row" style="margin-bottom:12px;flex-wrap:nowrap">
+            <button class="btn" type="button" id="open-board" style="flex:1">📋 Доска задач</button>
+            <button class="btn ghost" type="button" id="open-files" style="flex:1">📂 Файлы проекта</button>
+          </div>
           <form id="project-form" class="card">
             <label>Папка проекта (полный путь)
               <input name="path" placeholder="/Users/vova/projects/my-app" autocomplete="off">
@@ -720,6 +750,10 @@ h3.sub:first-child { margin-top: 0; }
     </div>
   </main>
 
+</div>
+
+<div class="modal" id="file-modal" hidden style="z-index:950">
+  <div class="modal-box glass" style="width:min(1200px,100%)" id="file-modal-box"></div>
 </div>
 
 <div class="modal" id="task-modal" hidden>
@@ -1670,6 +1704,201 @@ function showResult(t, box, title) {
 }
 
 
+// ============ Подсветка кода ============
+// Лёгкий подсветчик без внешних библиотек: интерфейс работает офлайн, а
+// политика безопасности страницы запрещает сторонние скрипты.
+const LANGS = (() => {
+  const c = { line: "//", block: ["/*", "*/"], str: ['"', "'", "`"] };
+  const L = (kw, types, lit, extra = {}) => ({ ...c, kw: new Set(kw.split(" ")), types: new Set((types || "").split(" ")), lit: new Set((lit || "").split(" ")), ...extra });
+  const js = L("async await break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return static super switch this throw try typeof var void while with yield interface type enum implements as readonly declare", "string number boolean any unknown never object void Promise Array Record Map Set", "true false null undefined NaN");
+  return {
+    go: L("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var", "bool byte error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr any comparable", "true false nil iota", { str: ['"', "`", "'"] }),
+    py: L("and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case", "int float str bool list dict set tuple bytes object type", "True False None self", { line: "#", block: null, str: ['"""', "'''", '"', "'"] }),
+    js, ts: js,
+    json: L("", "", "true false null", { line: null, block: null, str: ['"'] }),
+    sh: L("if then else elif fi for while do done case esac function in return export local echo exit set unset source", "", "true false", { line: "#", block: null, str: ['"', "'"] }),
+    yaml: L("", "", "true false null yes no on off", { line: "#", block: null, str: ['"', "'"] }),
+    toml: L("", "", "true false", { line: "#", block: null, str: ['"""', '"', "'"] }),
+    css: L("important media import from to", "", "", { line: null, str: ['"', "'"] }),
+    sql: L("select from where insert into values update set delete create table index drop alter add primary key foreign references join left right inner outer on and or not null as order by group having limit offset distinct union all exists in is like case when then else end begin commit", "integer int text real blob varchar boolean timestamp", "true false null", { line: "--", str: ["'", '"'], nocase: true }),
+    rust: L("as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while", "i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec Option Result Box", "true false None Some Ok Err"),
+    c: L("auto break case const continue default do else enum extern for goto if inline register restrict return sizeof static struct switch typedef union volatile while class public private protected virtual template typename namespace using new delete try catch throw", "int char float double long short signed unsigned void bool size_t", "true false NULL nullptr"),
+    java: L("abstract assert break case catch class const continue default do else enum extends final finally for if implements import instanceof interface native new package private protected public return static super switch synchronized this throw throws try volatile while var record fun val when object companion", "int long short byte char float double boolean void String", "true false null"),
+    swift: L("class struct enum protocol extension func var let if else guard switch case default for while repeat return break continue import in where throws throw try catch defer self Self init deinit public private internal fileprivate open static final override mutating async await", "Int Double Float String Bool Character Array Dictionary Set Optional Any", "true false nil"),
+    md: L("", "", "", { line: null, block: null, str: ["`"] }),
+    html: L("", "", "", { line: null, block: ["<!--", "-->"], str: ['"', "'"], markup: true }),
+  };
+})();
+const EXT = { go: "go", py: "py", js: "js", mjs: "js", cjs: "js", jsx: "js", ts: "ts", tsx: "ts", json: "json", sh: "sh", bash: "sh", zsh: "sh", yml: "yaml", yaml: "yaml", toml: "toml", css: "css", scss: "css", sql: "sql", rs: "rust", c: "c", h: "c", cc: "c", cpp: "c", hpp: "c", java: "java", kt: "java", swift: "swift", md: "md", html: "html", htm: "html", xml: "html", vue: "html", svelte: "html" };
+function langOf(file) {
+  const base = file.split("/").pop().toLowerCase();
+  if (base === "dockerfile" || base === "makefile" || base.endsWith(".env")) return LANGS.sh;
+  return LANGS[EXT[base.split(".").pop()]] || null;
+}
+const esc = (t) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+
+// tokenize разбивает код на [класс, текст]; текст может содержать переводы строк.
+function tokenize(code, lang) {
+  if (!lang) return [["", code]];
+  const out = [];
+  let i = 0, plain = "";
+  const push = (cls, text) => { if (plain) { out.push(["", plain]); plain = ""; } out.push([cls, text]); };
+  const n = code.length;
+  while (i < n) {
+    const ch = code[i];
+    if (lang.line && code.startsWith(lang.line, i)) { const e = code.indexOf("\n", i); const j = e < 0 ? n : e; push("hl-com", code.slice(i, j)); i = j; continue; }
+    if (lang.block && code.startsWith(lang.block[0], i)) { const e = code.indexOf(lang.block[1], i + lang.block[0].length); const j = e < 0 ? n : e + lang.block[1].length; push("hl-com", code.slice(i, j)); i = j; continue; }
+    if (lang.markup && ch === "<" && /[a-zA-Z\/!?]/.test(code[i + 1] || "")) {
+      const end = code.indexOf(">", i); const j = end < 0 ? n : end + 1;
+      const tag = code.slice(i, j);
+      const name = /^<\/?[!?a-zA-Z0-9-:]*/.exec(tag)[0];
+      push("hl-tag", name);
+      const rest = tag.slice(name.length);
+      for (const part of rest.split(/("[^"]*"|'[^']*'|[a-zA-Z-:]+(?==)|\/?>$)/)) {
+        if (!part) continue;
+        if (/^["']/.test(part)) push("hl-str", part);
+        else if (/^\/?>$/.test(part)) push("hl-tag", part);
+        else if (/^[a-zA-Z-:]+$/.test(part)) push("hl-attr", part);
+        else plain += part;
+      }
+      i = j; continue;
+    }
+    const q = !lang.markup && lang.str.find((s) => code.startsWith(s, i));
+    if (q) {
+      const single = q.length === 1 && q !== "`";
+      let j = i + q.length;
+      while (j < n && !code.startsWith(q, j)) { if (code[j] === "\\" && single) j++; else if (code[j] === "\n" && single) break; j++; }
+      j = Math.min(n, j + (code.startsWith(q, j) ? q.length : 0));
+      push("hl-str", code.slice(i, j)); i = j; continue;
+    }
+    if (/[0-9]/.test(ch) && !/[\w$]/.test(code[i - 1] || "")) { const m = /^(0x[\da-fA-F_]+|\d[\d_]*(\.\d+)?([eE][+-]?\d+)?)/.exec(code.slice(i)); push("hl-num", m[0]); i += m[0].length; continue; }
+    if (/[A-Za-z_$]/.test(ch)) {
+      const w = /^[A-Za-z_$][\w$]*/.exec(code.slice(i))[0];
+      const k = lang.nocase ? w.toLowerCase() : w;
+      const cls = lang.kw.has(k) ? "hl-kw" : lang.types.has(k) ? "hl-type" : lang.lit.has(k) ? "hl-lit" : code[i + w.length] === "(" ? "hl-fn" : "";
+      if (cls) push(cls, w); else plain += w;
+      i += w.length; continue;
+    }
+    plain += ch; i++;
+  }
+  if (plain) out.push(["", plain]);
+  return out;
+}
+
+// highlightLines возвращает HTML каждой строки (подсветка не рвётся на
+// многострочных комментариях и строках).
+function highlightLines(code, lang) {
+  const lines = [""];
+  for (const [cls, text] of tokenize(code, lang)) {
+    text.split("\n").forEach((p, k) => {
+      if (k > 0) lines.push("");
+      if (p) lines[lines.length - 1] += cls ? `<span class="${cls}">${esc(p)}</span>` : esc(p);
+    });
+  }
+  return lines;
+}
+
+function codeTable(text, file) {
+  const lines = highlightLines(text, langOf(file));
+  const wrap = el("div", { class: "code" });
+  wrap.innerHTML = "<table>" + lines.map((l, i) => `<tr><td class="ln">${i + 1}</td><td>${l || " "}</td></tr>`).join("") + "</table>";
+  return wrap;
+}
+
+// ============ Просмотр изменений ============
+function parsePatch(patch) {
+  const files = [];
+  let f = null, hunk = null, oldN = 0, newN = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      const m = / b\/(.*)$/.exec(line);
+      f = { path: m ? m[1] : line, status: "изменён", add: 0, del: 0, hunks: [], binary: false };
+      files.push(f); hunk = null; continue;
+    }
+    if (!f) continue;
+    if (!hunk) {
+      if (line.startsWith("new file mode")) { f.status = "новый"; continue; }
+      if (line.startsWith("deleted file mode")) { f.status = "удалён"; continue; }
+      if (line.startsWith("Binary files")) { f.binary = true; continue; }
+      if (line.startsWith("rename to ")) { f.path = line.slice(10); f.status = "переименован"; continue; }
+    }
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (h) { oldN = +h[1]; newN = +h[2]; hunk = { header: line, lines: [] }; f.hunks.push(hunk); continue; }
+    if (!hunk || line.startsWith("\\")) continue;
+    const t = line[0], text = line.slice(1);
+    if (t === "+") { hunk.lines.push({ t: "+", n: newN++, text }); f.add++; }
+    else if (t === "-") { hunk.lines.push({ t: "-", o: oldN++, text }); f.del++; }
+    else if (t === " ") { hunk.lines.push({ t: " ", o: oldN++, n: newN++, text }); }
+  }
+  return files;
+}
+
+function diffViewer(patch, opts = {}) {
+  const files = parsePatch(patch || "");
+  if (!files.length) return el("div", { class: "muted small" }, "Изменений нет.");
+  const total = files.reduce((a, f) => [a[0] + f.add, a[1] + f.del], [0, 0]);
+  return el("div", {},
+    el("div", { class: "small", style: "margin-bottom:8px" }, `${files.length} файл(ов) · `, el("span", { class: "plus" }, "+" + total[0]), " ", el("span", { class: "minus" }, "−" + total[1])),
+    ...files.map((f) => {
+      const lang = langOf(f.path);
+      const rows = [];
+      for (const h of f.hunks) {
+        rows.push(`<tr class="d-hunk"><td class="ln"></td><td class="ln"></td><td class="sign"></td><td>${esc(h.header)}</td></tr>`);
+        for (const l of h.lines) {
+          const html = highlightLines(l.text, lang)[0] || " ";
+          const cls = l.t === "+" ? "d-add" : l.t === "-" ? "d-del" : "";
+          rows.push(`<tr class="${cls}"><td class="ln">${l.o ?? ""}</td><td class="ln">${l.n ?? ""}</td><td class="sign">${l.t === " " ? "" : esc(l.t)}</td><td>${html}</td></tr>`);
+        }
+      }
+      const code = el("div", { class: "code" });
+      code.innerHTML = f.binary ? `<div style="padding:10px">двоичный файл</div>` : "<table>" + rows.join("") + "</table>";
+      const acts = [];
+      if (opts.project && f.status !== "удалён") acts.push(el("button", { class: "btn ghost icon", type: "button", onclick: (e) => { e.preventDefault(); openFiles(opts.project, f.path); } }, "Открыть"));
+      if (opts.onRevert) acts.push(el("button", { class: "btn danger icon", type: "button", title: "Вернуть этот файл к состоянию до задачи", onclick: (e) => { e.preventDefault(); opts.onRevert(f.path); } }, "↩ Откатить файл"));
+      const d = el("details", { class: "dfile" },
+        el("summary", {}, el("span", { class: "path", title: f.path }, f.path), el("span", { class: "badge" + (f.status === "новый" ? "" : f.status === "удалён" ? " off" : " cli") }, f.status),
+          el("span", { class: "plus small" }, "+" + f.add), el("span", { class: "minus small" }, "−" + f.del), ...acts),
+        code);
+      d.open = files.length <= 6;
+      return d;
+    }));
+}
+
+// ============ Файлы проекта ============
+async function openFiles(project, file) {
+  if (!project) return toast("Выберите проект", true);
+  let list;
+  try { list = await api("GET", "/api/projects/files?path=" + encodeURIComponent(project)); } catch (e) { return toast(e.message, true); }
+  const filter = el("input", { placeholder: "Фильтр: имя файла", autocomplete: "off" });
+  const filesBox = el("div", { class: "fv-files" });
+  const view = el("div", { class: "fv-view" }, el("div", { class: "muted small" }, "Выберите файл слева."));
+  const show = async (f) => {
+    for (const d of filesBox.children) d.classList.toggle("on", d.dataset.f === f);
+    view.replaceChildren(el("div", { class: "muted small" }, "Открываю…"));
+    try {
+      const r = await api("GET", `/api/projects/file?path=${encodeURIComponent(project)}&file=${encodeURIComponent(f)}`);
+      view.replaceChildren(el("div", { class: "row small", style: "margin-bottom:6px" }, el("strong", { class: "mono" }, f), r.truncated ? el("span", { class: "muted" }, "· показан первый 1 МБ") : ""), codeTable(r.text, f));
+    } catch (e) { view.replaceChildren(el("div", { class: "small" }, e.message)); }
+  };
+  const render = () => {
+    const q = filter.value.toLowerCase();
+    filesBox.replaceChildren(...list.files.filter((f) => f.toLowerCase().includes(q)).slice(0, 1500).map((f) => {
+      const d = el("div", { title: f, onclick: () => show(f) }, f);
+      d.dataset.f = f;
+      return d;
+    }));
+  };
+  filter.addEventListener("input", render);
+  render();
+  $("#file-modal-box").replaceChildren(
+    el("div", { class: "modal-head" }, el("h3", {}, "📂 " + project.split("/").pop()), el("button", { class: "btn ghost icon", onclick: () => ($("#file-modal").hidden = true) }, "✕")),
+    el("div", { class: "fv", style: "margin-top:12px" }, el("div", { class: "fv-list" }, filter, filesBox), view));
+  $("#file-modal").hidden = false;
+  if (file) show(file); else filter.focus();
+}
+$("#file-modal").addEventListener("click", (e) => { if (e.target.id === "file-modal") $("#file-modal").hidden = true; });
+$("#open-files").addEventListener("click", () => openFiles($("#project").value));
+
 // ============ Доска задач ============
 const columns = [
   { id: "backlog", title: "📥 Пул задач", hint: "Идеи. Обсудите с Оркестратором или перетащите в очередь", states: ["backlog"] },
@@ -1834,7 +2063,11 @@ $("#open-board").addEventListener("click", () => { closePanel(); setChatMode("bo
 function closeTask() { $("#task-modal").hidden = true; clearTimeout(taskTimer); }
 let taskTimer = null;
 $("#task-modal").addEventListener("click", (e) => { if (e.target.id === "task-modal") closeTask(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#task-modal").hidden) closeTask(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#file-modal").hidden) $("#file-modal").hidden = true;
+  else if (!$("#task-modal").hidden) closeTask();
+});
 
 async function openTask(id) {
   clearTimeout(taskTimer);
@@ -1907,8 +2140,21 @@ async function openTask(id) {
   if (t.state === "running" || t.state === "queued") taskTimer = setTimeout(() => { if (!$("#task-modal").hidden) openTask(id); }, 3000);
 }
 
-// diffView — сводка изменений (подробный просмотр строк — ниже).
-function diffView(t) { return el("pre", { class: "log" }, t.diff); }
+// diffView — изменения задачи по файлам; пока результат ждёт решения,
+// отдельный файл можно откатить.
+function diffView(t) {
+  const box = el("div", {}, el("div", { class: "muted small" }, "Загружаю изменения…"));
+  api("GET", `/api/tasks/${t.id}/patch`).then((r) => {
+    box.replaceChildren(r.patch ? diffViewer(r.patch, {
+      project: t.project,
+      onRevert: t.state === "done" ? async (file) => {
+        if (!confirm(`Откатить ${file} к состоянию до задачи? Остальные изменения останутся.`)) return;
+        try { await api("POST", `/api/tasks/${t.id}/revert-file`, { file }); toast("Файл откачен"); openTask(t.id); } catch (e) { toast(e.message, true); }
+      } : null,
+    }) : el("pre", { class: "log" }, t.diff));
+  }).catch(() => box.replaceChildren(el("pre", { class: "log" }, t.diff)));
+  return box;
+}
 
 // ============ Проекты ============
 let projects = [];

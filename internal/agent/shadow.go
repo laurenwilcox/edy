@@ -145,3 +145,23 @@ func (s Shadow) Patch(ctx context.Context, from string, limit int) (string, erro
 	}
 	return out, nil
 }
+
+// RestoreFile возвращает один файл к снимку: изменённый — восстанавливается,
+// созданный после снимка — удаляется.
+func (s Shadow) RestoreFile(ctx context.Context, id, file string) error {
+	if id == "" || strings.ContainsAny(id, " -") {
+		return errors.New("некорректный id снимка")
+	}
+	if _, err := (Workspace{Root: s.Root}).resolve(file); err != nil {
+		return err
+	}
+	if _, err := s.git(ctx, "cat-file", "-e", id+":"+file); err == nil {
+		_, err := s.git(ctx, "checkout", id, "--", file)
+		return err
+	}
+	// В снимке файла не было — его создала задача.
+	if err := os.Remove(filepath.Join(s.Root, file)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
