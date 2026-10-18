@@ -993,6 +993,20 @@ git) или `push` (`gitops.Push` текущей ветки в `origin`, отв�
 ссылки http(s)"`). Открывает в браузере по умолчанию (`open`/`xdg-open`). Нужно окну Wails: WKWebView не
 открывает `target="_blank"` сам. Ответ `204`; `500` — ошибка запуска.
 
+### 15.5. Микро-агенты: `POST /api/micro`, `GET|PUT /api/micro/settings`
+
+`microRun`, `micro.go`. Тело `{"task": string, "input"?: string, "fields": micro.Field[], "model"?: string, "name"?: string}`;
+`Field = {name, type: string|number|integer|boolean|array, required?, enum?, min?, max?, description?}`.
+Ответ `micro.Result = {"model", "data", "attempts"}`. Нет модели — 503, невалидный JSON после 3 попыток — 502.
+`/api/micro/settings`: `{"model": string}` — модель по умолчанию (`micro.model`); ответ `{"model", "effective"}` — выбранная и та, что будет использована.
+
+### 15.6. Оформление: `GET|PUT /api/ui/prefs`, `POST /api/ui/bot`
+
+`uiprefs.go`. `UIPrefs = {theme, accent, font_size, font, sidebar, animations}` (значения — белый список,
+см. `uiFields`). `PUT` принимает частичный объект, проверяет каждое поле и сохраняет в `ui.prefs`.
+`POST /api/ui/bot` тело `{"text": string}` → микро-агент выбирает изменения → ответ `{"prefs", "changed": string[], "comment"}`.
+Без модели — 503.
+
 ---
 
 ## 16. MCP по HTTP: `/mcp`

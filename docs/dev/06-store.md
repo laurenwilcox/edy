@@ -231,7 +231,7 @@ upsert `ON CONFLICT(key) DO UPDATE`). Все ключи — раздел 5.
 | Колонка | Тип | Значение |
 |---|---|---|
 | `id` | TEXT PK | см. ниже форматы |
-| `role` | TEXT NOT NULL | `orchestrator`, `executor`, `mcp`, `reviewer` (`agents.go:11-16`) |
+| `role` | TEXT NOT NULL | `orchestrator`, `executor`, `mcp`, `reviewer`, `micro` (`agents.go:11-16`) |
 | `model` | TEXT NOT NULL | `провайдер/модель`; у MCP-клиента — «имя версия» клиента |
 | `project` | TEXT '' | путь проекта |
 | `task_id` | TEXT '' | задача доски (для исполнителей и ревьюеров) |
@@ -433,6 +433,8 @@ settings["project:<path>"].account_id → git_accounts.id   (логическа�
 | `projects` | `settingProjects`, `internal/api/projects.go:27` | JSON-массив абсолютных путей, ≤ 10, последний добавленный первым | `saveProjectPaths` (`projects.go:81`): добавление/удаление проекта, `git clone` | `projectPaths` (`projects.go:70`), т. е. `knownProject` во всех маршрутах |
 | `task_templates` | `settingTemplates`, `internal/api/projects.go:671` | JSON-массив строк, ≤ 50, каждая ≤ 1000 рун | `addTemplate`/`deleteTemplate` (`projects.go:713, 729`) | `customTemplates` (`projects.go:674`) |
 | `embed_model` | `semantic.SettingModel`, `internal/semantic/semantic.go:33` | `провайдер/модель` или `""` (поиск по смыслу выключен) | `Engine.SetModel` (`semantic.go:169`) ← `PUT /api/semantic` | `Engine.Model` (`semantic.go:158`) |
+| `micro.model` | `api.SettingMicroModel`, `internal/api/micro.go:15` | `провайдер/модель` или `""` (самая дешёвая) | `PUT /api/micro/settings` | `microModel` (`micro.go`) |
+| `ui.prefs` | `api.SettingUIPrefs`, `internal/api/uiprefs.go:13` | JSON `UIPrefs` | `PUT /api/ui/prefs`, `POST /api/ui/bot` | `GET /api/ui/prefs` |
 | `project:<абсолютный путь>` | — (`internal/store/git.go:134, 152`) | JSON `ProjectSettings` | `SetProjectSettings` ← `PUT /api/git/settings`, `POST /api/git/clone` (`gitapi.go:163, 240`) | `ProjectSettings` ← API (`gitapi.go:178, 263, 292`; `projects.go:265`), `internal/app/app.go:131, 149, 153` (ревьюер, MaxParallel, AutoApprove) |
 
 ### 5.1. `ProjectSettings`

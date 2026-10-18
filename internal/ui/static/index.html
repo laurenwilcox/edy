@@ -17,8 +17,9 @@
   --shadow: 0 8px 30px -14px rgba(30,30,60,.18);
   --blob-opacity: .22;
 }
+/* Тема: system — как в macOS; data-theme на <html> задаёт её явно (UI-бот, «Оформление») */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b0c14; --bg-2: #10121d;
     --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
     --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
@@ -29,12 +30,32 @@
     --blob-opacity: .13;
   }
 }
+:root[data-theme="dark"] {
+    --bg: #0b0c14; --bg-2: #10121d;
+    --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
+    --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
+    --a1: #818cf8; --a2: #38bdf8; --a3: #a78bfa;
+    --field: rgba(255,255,255,.05); --code: rgba(255,255,255,.07);
+    --danger: #fb7185; --ok: #34d399; --warn: #fbbf24;
+    --shadow: 0 10px 40px -10px rgba(0,0,0,.6);
+    --blob-opacity: .13;
+}
+/* Акцентный цвет (indigo — по умолчанию, без переопределения) */
+:root[data-accent="blue"] { --a1: #3b82f6; --a2: #06b6d4; --a3: #60a5fa; }
+:root[data-accent="green"] { --a1: #10b981; --a2: #84cc16; --a3: #34d399; }
+:root[data-accent="orange"] { --a1: #f97316; --a2: #f59e0b; --a3: #fb923c; }
+:root[data-accent="pink"] { --a1: #ec4899; --a2: #a855f7; --a3: #f472b6; }
+:root[data-accent="red"] { --a1: #ef4444; --a2: #f97316; --a3: #f87171; }
+:root[data-font="serif"] { --font: Charter, "Iowan Old Style", Georgia, serif; }
+:root[data-font="mono"] { --font: "SF Mono", Menlo, monospace; }
+:root[data-anim="off"] .aurora { display: none; }
+:root[data-anim="off"] *, :root[data-anim="off"] *::before, :root[data-anim="off"] *::after { animation: none !important; transition: none !important; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0; color: var(--text); background: linear-gradient(160deg, var(--bg), var(--bg-2));
-  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font: var(--fs, 14px)/1.55 var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
   overflow: hidden;
 }
 
@@ -54,6 +75,7 @@ body {
 
 /* Раскладка: чат | выезжающая панель | меню */
 .app { position: relative; z-index: 1; height: 100%; display: flex; gap: 14px; padding: 14px; }
+.app.side-right { flex-direction: row-reverse; }
 .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; }
 .drawer { width: 0; flex: none; overflow: hidden; transition: width .45s cubic-bezier(.2,.9,.2,1); }
 .drawer.open { width: min(500px, 42vw); }
@@ -235,7 +257,8 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .code td.sign { width: 1%; padding: 0 4px; user-select: none; color: var(--muted); }
 .hl-kw { color: #c026d3; font-weight: 600; } .hl-type { color: #0891b2; } .hl-str { color: #16a34a; } .hl-num { color: #ea580c; }
 .hl-com { color: var(--muted); font-style: italic; } .hl-lit { color: #ea580c; font-weight: 600; } .hl-fn { color: #2563eb; } .hl-tag { color: #dc2626; } .hl-attr { color: #ca8a04; }
-@media (prefers-color-scheme: dark) { .hl-kw { color: #e879f9; } .hl-type { color: #67e8f9; } .hl-str { color: #86efac; } .hl-num, .hl-lit { color: #fdba74; } .hl-fn { color: #93c5fd; } .hl-tag { color: #fca5a5; } .hl-attr { color: #fde047; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hl-kw { color: #e879f9; } :root:not([data-theme="light"]) .hl-type { color: #67e8f9; } :root:not([data-theme="light"]) .hl-str { color: #86efac; } :root:not([data-theme="light"]) .hl-num, :root:not([data-theme="light"]) .hl-lit { color: #fdba74; } :root:not([data-theme="light"]) .hl-fn { color: #93c5fd; } :root:not([data-theme="light"]) .hl-tag { color: #fca5a5; } :root:not([data-theme="light"]) .hl-attr { color: #fde047; } }
+:root[data-theme="dark"] .hl-kw { color: #e879f9; } :root[data-theme="dark"] .hl-type { color: #67e8f9; } :root[data-theme="dark"] .hl-str { color: #86efac; } :root[data-theme="dark"] .hl-num, :root[data-theme="dark"] .hl-lit { color: #fdba74; } :root[data-theme="dark"] .hl-fn { color: #93c5fd; } :root[data-theme="dark"] .hl-tag { color: #fca5a5; } :root[data-theme="dark"] .hl-attr { color: #fde047; }
 .dfile { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
 .dfile > summary { display: flex; gap: 8px; align-items: center; padding: 8px 10px; cursor: pointer; font-size: 13px; background: color-mix(in srgb, var(--text) 3%, transparent); list-style: none; }
 .dfile > summary::-webkit-details-marker { display: none; }
@@ -446,6 +469,7 @@ h3.sub:first-child { margin-top: 0; }
     <button class="menu-item" data-open="p-team"><span class="ico">👥</span>Команда</button>
     <button class="menu-item" data-open="p-mcp"><span class="ico">🧩</span>MCP-серверы</button>
     <button class="menu-item" data-open="p-agents"><span class="ico">🤖</span>Агенты<span class="soon" id="agents-running" hidden></span></button>
+    <button class="menu-item" data-open="p-look"><span class="ico">🎨</span>Оформление</button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
 
@@ -766,6 +790,25 @@ h3.sub:first-child { margin-top: 0; }
           <div id="agent-detail" hidden></div>
         </section>
 
+        <section id="p-look">
+          <div class="card">
+            <p class="small" style="margin-top:0">Опишите словами, что поменять, — UI-бот подберёт тему, акцент, шрифт и раскладку. Бот меняет только эти настройки: сломать интерфейс он не может.</p>
+            <form id="look-bot" class="row" style="flex-wrap:nowrap">
+              <input name="text" placeholder="например: тёмная тема, зелёный акцент, шрифт покрупнее" style="flex:1" required>
+              <button class="btn" type="submit">Применить</button>
+            </form>
+          </div>
+          <form class="card" id="look-form">
+            <label>Тема <select name="theme"><option value="system">Как в системе</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
+            <label>Акцент <select name="accent"><option value="indigo">Индиго</option><option value="blue">Синий</option><option value="green">Зелёный</option><option value="orange">Оранжевый</option><option value="pink">Розовый</option><option value="red">Красный</option></select></label>
+            <label>Шрифт <select name="font"><option value="system">Системный</option><option value="serif">С засечками</option><option value="mono">Моноширинный</option></select></label>
+            <label><span>Размер шрифта: <b id="look-fs">14</b> px</span><input name="font_size" type="range" min="12" max="18" step="1"></label>
+            <label>Меню <select name="sidebar"><option value="left">Слева</option><option value="right">Справа</option></select></label>
+            <label>Анимации <select name="animations"><option value="on">Включены</option><option value="off">Выключены</option></select></label>
+            <div class="row" style="margin-top:14px"><button class="btn ghost" type="button" id="look-reset">По умолчанию</button></div>
+          </form>
+        </section>
+
         <section id="p-connect">
           <div class="card">
             <p style="margin-top:0">Любая программа, которая работает с OpenAI API, может использовать модели Edy.</p>
@@ -942,8 +985,8 @@ if (inApp) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-team": "Команда", "p-mcp": "MCP-серверы", "p-agents": "Агенты" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-team": loadTeam, "p-mcp": loadMCPServers, "p-agents": loadAgents };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-team": "Команда", "p-mcp": "MCP-серверы", "p-agents": "Агенты", "p-look": "Оформление" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-team": loadTeam, "p-mcp": loadMCPServers, "p-agents": loadAgents, "p-look": loadLook };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -3136,10 +3179,67 @@ async function showAgent(id) {
   if (a.state === "running" && $("#drawer").classList.contains("open") && !$("#p-agents").hidden) agentsTimer = setTimeout(() => showAgent(id), 2000);
 }
 
+// ============ Оформление (UI-бот) ============
+const lookDefaults = { theme: "system", accent: "indigo", font_size: 14, font: "system", sidebar: "left", animations: "on" };
+
+// applyPrefs меняет только data-атрибуты и переменные: CSS интерфейса не трогается.
+function applyPrefs(p) {
+  const r = document.documentElement;
+  r.dataset.theme = p.theme;
+  r.dataset.accent = p.accent;
+  r.dataset.font = p.font;
+  r.dataset.anim = p.animations;
+  r.style.setProperty("--fs", p.font_size + "px");
+  document.querySelector(".app")?.classList.toggle("side-right", p.sidebar === "right");
+  store.set("edy-prefs", JSON.stringify(p));
+}
+
+function fillLook(p) {
+  const f = $("#look-form");
+  for (const k of Object.keys(lookDefaults)) f.elements[k].value = p[k];
+  $("#look-fs").textContent = p.font_size;
+}
+
+async function loadLook() {
+  try { fillLook(await api("GET", "/api/ui/prefs")); } catch (e) { toast(e.message, true); }
+}
+
+async function saveLook(patch) {
+  try {
+    const p = await api("PUT", "/api/ui/prefs", patch);
+    applyPrefs(p);
+    fillLook(p);
+  } catch (e) { toast(e.message, true); }
+}
+
+$("#look-form").addEventListener("change", (e) => {
+  const n = e.target.name;
+  if (!n || !(n in lookDefaults)) return;
+  saveLook({ [n]: n === "font_size" ? Number(e.target.value) : e.target.value });
+});
+$("#look-form").elements.font_size.addEventListener("input", (e) => { $("#look-fs").textContent = e.target.value; });
+$("#look-reset").onclick = () => saveLook(lookDefaults);
+$("#look-bot").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector("button");
+  btn.disabled = true;
+  try {
+    const r = await api("POST", "/api/ui/bot", { text: f.elements.text.value });
+    applyPrefs(r.prefs);
+    fillLook(r.prefs);
+    toast(r.comment || (r.changed.length ? "Готово" : "Ничего не поменялось"));
+    if (r.changed.length) f.reset();
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; }
+});
+// Сохранённое оформление применяем сразу, до ответа сервера, чтобы не мигало.
+try { const p = JSON.parse(store.get("edy-prefs") || "null"); if (p) applyPrefs(p); } catch {}
+
 // ============ Старт ============
 (async () => {
   showWelcome();
   if (!token) { $("#auth").hidden = false; return; }
+  api("GET", "/api/ui/prefs").then(applyPrefs).catch(() => {});
   try {
     presets = await api("GET", "/api/presets");
     fillPresetSelects();
