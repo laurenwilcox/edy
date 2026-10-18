@@ -160,3 +160,22 @@ func TestStdio(t *testing.T) {
 		t.Fatalf("ответы:\n%s", out.String())
 	}
 }
+
+func TestTaskSessionSeesOnlyGivenSkills(t *testing.T) {
+	root := project(t)
+	for _, n := range []string{"review", "secret-notes"} {
+		os.MkdirAll(filepath.Join(root, ".edy", "skills", n), 0o755)
+		os.WriteFile(filepath.Join(root, ".edy", "skills", n, "SKILL.md"), []byte("---\nname: "+n+"\ndescription: "+n+"\n---\nтекст "+n), 0o644)
+	}
+	s := &Server{Root: root, Home: t.TempDir(), Skills: []string{"review"}}
+	if out, _ := callTool(t, s, "list_skills", nil); !strings.Contains(out, "review") || strings.Contains(out, "secret-notes") {
+		t.Fatalf("list_skills: %s", out)
+	}
+	if _, isErr := callTool(t, s, "use_skill", map[string]any{"name": "secret-notes"}); !isErr {
+		t.Fatal("невыданный скилл недоступен")
+	}
+	s.Skills = []string{}
+	if out, _ := callTool(t, s, "list_skills", nil); !strings.Contains(out, "скиллы не выданы") {
+		t.Fatalf("без скиллов: %s", out)
+	}
+}

@@ -242,6 +242,11 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .dd-empty { padding: 8px 10px; color: var(--muted); }
 .messages[hidden] { display: none !important; }
 .plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
+.plan.proposal { border-style: dashed; }
+.caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+.cap { border: 1px solid var(--line); background: transparent; color: var(--muted); padding: 3px 10px; border-radius: 99px; font: inherit; font-size: 12px; cursor: pointer; transition: all .15s; }
+.cap.on { background: color-mix(in srgb, var(--a1) 14%, transparent); border-color: color-mix(in srgb, var(--a1) 40%, transparent); color: var(--a1); font-weight: 600; }
+.cap:disabled { opacity: .45; cursor: not-allowed; }
 .plan-mcp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; white-space: normal; font-size: 13px; }
 #mcp-presets { justify-content: flex-start; margin: 0 0 12px; }
 .mcp-row { display: flex; gap: 12px; align-items: flex-start; }
@@ -563,6 +568,9 @@ h3.sub:first-child { margin-top: 0; }
             <label class="wide">Для чего (Оркестратор выбирает по этому описанию)
               <input name="description" placeholder="Браузер: открыть страницу, кликнуть, скриншот" autocomplete="off" required>
             </label>
+            <label class="wide">Аккаунт — к чему привязан (необязательно)
+              <input name="account" placeholder="GitHub: рабочий аккаунт" autocomplete="off">
+            </label>
             <label class="wide" data-mcp="http">Адрес <input name="url" placeholder="https://…/mcp" autocomplete="off"></label>
             <label class="wide" data-mcp="http">Заголовки — по одному в строке, «Имя: значение»
               <textarea name="headers" rows="2" placeholder="Authorization: Bearer …"></textarea>
@@ -768,7 +776,10 @@ async function refreshProviders() {
 }
 
 async function loadProviders() {
-  try { await refreshProviders(); } catch (e) { return toast(e.message, true); }
+  try {
+    await refreshProviders();
+    if (!capCatalog.length) capCatalog = await api("GET", "/api/caps");
+  } catch (e) { return toast(e.message, true); }
   const list = $("#provider-list");
   list.replaceChildren();
   if (!providers.length) list.append(el("div", { class: "card empty" }, "Пока ни одного провайдера."));
@@ -804,6 +815,28 @@ async function refreshWebStatus() {
   if (pending && $("#drawer").classList.contains("open")) statusTimer = setTimeout(refreshWebStatus, 2000);
 }
 
+// Теги возможностей: по ним Оркестратор решает, что выдать исполнителю.
+let capCatalog = [];
+function capsBlock(p) {
+  const on = new Set(p.caps);
+  const save = async (caps) => {
+    try { await api("PUT", `/api/providers/${encodeURIComponent(p.name)}/caps`, { caps }); loadProviders(); }
+    catch (e) { toast(e.message, true); }
+  };
+  return el("div", { class: "caps" },
+    el("span", { class: "small muted" }, "Умеет:"),
+    ...capCatalog.map((c) => {
+      const locked = c.id === "mcp" && !p.can_mcp;
+      const b = el("button", { class: "cap" + (on.has(c.id) ? " on" : ""), type: "button",
+        title: locked ? "Эта утилита не умеет подключать MCP из Edy" : c.hint,
+        onclick: () => { const next = new Set(on); next.has(c.id) ? next.delete(c.id) : next.add(c.id); save([...next]); } }, c.title);
+      b.disabled = locked;
+      return b;
+    }),
+    p.caps_auto ? el("span", { class: "small muted" }, "· автоматически")
+      : el("button", { class: "btn ghost icon", type: "button", onclick: () => save(null) }, "Сбросить"));
+}
+
 function providerCard(p) {
   const site = presets.web.find((w) => w.name === p.site);
   const target = p.kind === "cli" ? p.command.join(" ")
@@ -824,6 +857,7 @@ function providerCard(p) {
         ? p.models.map((m) => el("button", { class: "chip", title: "Открыть чат с этой моделью", onclick: () => chatWith(p.name + "/" + m) }, p.name + "/" + m))
         : [el("span", { class: "muted" }, "модели не указаны")])),
   );
+  card.append(capsBlock(p));
   if (p.kind === "openai" || p.kind === "anthropic") card.append(keysBlock(p));
   if (p.kind === "web") card.append(el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "status", "data-status": p.name }, "…")));
   return card;
@@ -1175,8 +1209,10 @@ async function loadMCPServers() {
     el("div", { class: "mcp-row" },
       el("div", { class: "grow" },
         el("div", { class: "row" }, el("strong", {}, m.name), el("span", { class: "badge" + (m.type === "http" ? "" : " cli") }, m.type === "http" ? "HTTP" : "stdio"),
+          (m.headers?.length || m.env?.length) ? el("span", { class: "badge" }, "🔒 приватный") : "",
           m.enabled ? "" : el("span", { class: "badge off" }, "выключен")),
         el("div", { class: "small", style: "margin-top:4px" }, m.description),
+        m.account ? el("div", { class: "small muted", style: "margin-top:2px" }, "👤 " + m.account) : "",
         el("div", { class: "small muted mono", style: "margin-top:6px;display:inline-block" },
           m.type === "http" ? m.url : [m.command, ...(m.args || [])].join(" ")),
         (m.headers?.length || m.env?.length) ? el("div", { class: "small muted", style: "margin-top:4px" },
@@ -1198,7 +1234,7 @@ function fillMCPPreset(p) {
   const f = $("#mcp-form");
   f.name.value = p.name; f.type.value = p.type; f.description.value = p.description;
   f.url.value = p.url || ""; f.command.value = p.command || ""; f.args.value = (p.args || []).join("\n");
-  f.headers.value = p.secret && p.type === "http" ? p.secret : ""; f.env.value = "";
+  f.headers.value = p.secret && p.type === "http" ? p.secret : ""; f.env.value = ""; f.account.value = "";
   $("#mcp-note").textContent = p.note ? p.note + " Заголовки и переменные хранятся зашифрованными." : "Заголовки и переменные хранятся зашифрованными.";
   syncMCPForm();
 }
@@ -1212,7 +1248,7 @@ $("#mcp-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   try {
-    await api("POST", "/api/mcp-servers", { name: f.name.value.trim(), type: f.type.value, description: f.description.value.trim(),
+    await api("POST", "/api/mcp-servers", { name: f.name.value.trim(), type: f.type.value, description: f.description.value.trim(), account: f.account.value.trim(),
       url: f.url.value, headers: f.headers.value, command: f.command.value, args: f.args.value, env: f.env.value });
     toast("Сервер сохранён — Оркестратор увидит его в следующем ответе");
     f.reset(); syncMCPForm(); loadMCPServers();
@@ -1423,10 +1459,13 @@ async function sendOrch() {
   body.append(el("span", { class: "typing" }, el("span"), el("span"), el("span")));
   orchBusy = true;
   try {
-    const r = await api("POST", "/api/orchestrator", { project, model, messages: orchHistory, conversation: orchConversation });
+    // Оркестратор видит возможности исполнителя и резерва и по ним решает, что выдать.
+    const executors = [$("#worker").value, $("#fallback").value].filter((x, i, a) => x && a.indexOf(x) === i);
+    const r = await api("POST", "/api/orchestrator", { project, model, executors, messages: orchHistory, conversation: orchConversation });
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
-    if (r.plan) m.append(planCard(r.plan, project, r.mcp || []));
+    for (const pr of r.new_mcp || []) m.append(proposalCard(pr));
+    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || []));
   } catch (e) {
     orchHistory.pop();
     m.classList.add("error");
@@ -1437,10 +1476,28 @@ async function sendOrch() {
   }
 }
 
-function planCard(plan, project, mcp) {
+// proposalCard — Оркестратор предлагает MCP-сервер, которого нет в каталоге.
+// Добавляет его пользователь: форма каталога открывается уже заполненной.
+function proposalCard(pr) {
+  const where = pr.type === "http" ? pr.url : [pr.command, ...(pr.args || [])].join(" ");
+  return el("div", { class: "plan proposal" },
+    el("div", {}, "🆕 Оркестратор предлагает добавить MCP-сервер ", el("strong", {}, pr.name), " — " + (pr.description || "")),
+    el("div", { class: "small mono muted", style: "margin-top:6px" }, where),
+    pr.secrets ? el("div", { class: "small", style: "margin-top:4px" }, "🔑 Понадобится: " + pr.secrets) : "",
+    el("div", { class: "plan-actions" },
+      el("button", { class: "btn ghost", type: "button", onclick: () => {
+        openPanel("p-mcp");
+        setTimeout(() => fillMCPPreset({ name: pr.name, type: pr.type, description: pr.description, url: pr.url, command: pr.command, args: pr.args,
+          secret: pr.type === "http" && pr.secrets ? "Authorization: Bearer <" + pr.secrets + ">" : "", note: pr.secrets ? "Понадобится: " + pr.secrets + "." : "" }), 300);
+      } }, "Проверить и добавить в каталог"),
+      el("span", { class: "small muted" }, "Сервер появится в каталоге и в следующий раз возьмётся из базы.")));
+}
+
+function planCard(plan, project, mcp, skills) {
   const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
-  const tools = mcp && mcp.length ? el("div", { class: "plan-mcp" }, "🧩 Оркестратор выдаёт исполнителю MCP: ",
-    ...mcp.map((n) => el("span", { class: "badge" }, n)), el("span", { class: "small muted" }, " (только исполнителю с пометкой «· MCP»)")) : "";
+  const given = (icon, title, list, cls) => el("div", { class: "plan-mcp" }, icon + " " + title + ": ",
+    ...(list.length ? list.map((n) => el("span", { class: "badge" + cls }, n)) : [el("span", { class: "small muted" }, "не нужны")]));
+  const tools = el("div", {}, given("🧩", "MCP для исполнителя", mcp, ""), given("📘", "Скиллы", skills, " cli"));
   const box = el("div", { class: "plan" }, plan, tools, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
   start.addEventListener("click", async () => {
     const worker = $("#worker").value;

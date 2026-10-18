@@ -14,7 +14,9 @@ import (
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/codeindex"
 	"github.com/laurenwilcox/name/internal/gitops"
+	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/orchestrator"
+	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
 )
@@ -220,6 +222,7 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		Model        string      `json:"model"`
 		Messages     []agent.Msg `json:"messages"`
 		Conversation string      `json:"conversation"` // id разговора: один разговор — один агент в журнале
+		Executors    []string    `json:"executors"`    // выбранные исполнитель и резерв
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -238,7 +241,7 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	agentID := h.journalOrchestrator(req.Conversation, req.Model, req.Project, history)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, h.orchestratorServers())
+	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, h.orchestratorContext(req.Project, req.Executors))
 	if agentID != "" {
 		switch {
 		case err != nil:
@@ -249,6 +252,9 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 			h.Store.AddAgentEvent(agentID, "plan", out.Plan, time.Now())
 			if len(out.MCP) > 0 {
 				h.Store.AddAgentEvent(agentID, "info", "Выдаёт исполнителю MCP: "+strings.Join(out.MCP, ", "), time.Now())
+			}
+			if len(out.Skills) > 0 {
+				h.Store.AddAgentEvent(agentID, "info", "Выдаёт исполнителю скиллы: "+strings.Join(out.Skills, ", "), time.Now())
 			}
 			h.Store.TouchAgent(agentID, store.AgentDone, "Предложен план")
 		default:
@@ -261,6 +267,51 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, out)
+}
+
+// orchestratorContext — что Оркестратор знает кроме проекта: возможности
+// исполнителей и других моделей, скиллы проекта и каталог MCP-серверов.
+func (h *Handler) orchestratorContext(project string, executors []string) orchestrator.Context {
+	var c orchestrator.Context
+	providers, _ := h.Store.Providers()
+	byName := map[string]store.Provider{}
+	for _, p := range providers {
+		byName[p.Name] = p
+	}
+	describe := func(model string) (orchestrator.Executor, bool) {
+		name, _, ok := splitModelName(model)
+		p, found := byName[name]
+		if !ok || !found {
+			return orchestrator.Executor{}, false
+		}
+		e := orchestrator.Executor{Model: model, MCP: omniroute.HasCap(p, omniroute.CapMCP)}
+		for _, cp := range omniroute.Caps(p) {
+			e.Caps = append(e.Caps, omniroute.CapTitle(cp))
+		}
+		return e, true
+	}
+	chosen := map[string]bool{}
+	for _, m := range executors {
+		if e, ok := describe(m); ok && !chosen[m] {
+			chosen[m] = true
+			c.Executors = append(c.Executors, e)
+		}
+	}
+	for _, p := range providers {
+		for _, m := range p.Models {
+			full := p.Name + "/" + m
+			if e, ok := describe(full); ok && !chosen[full] && len(c.Others) < 30 {
+				c.Others = append(c.Others, e)
+			}
+		}
+	}
+	if list, err := skills.Load(skills.Dirs(h.Home, project)); err == nil {
+		for _, sk := range list {
+			c.Skills = append(c.Skills, orchestrator.Skill{Name: sk.Name, Description: sk.Description})
+		}
+	}
+	c.Servers = h.orchestratorServers()
+	return c
 }
 
 // orchestratorServers — включённые серверы каталога MCP для инструкций Оркестратора.
@@ -276,7 +327,7 @@ func (h *Handler) orchestratorServers() []orchestrator.Server {
 			if desc == "" {
 				desc = "без описания"
 			}
-			out = append(out, orchestrator.Server{Name: m.Name, Description: desc})
+			out = append(out, orchestrator.Server{Name: m.Name, Description: desc, Account: m.Account})
 		}
 	}
 	return out
@@ -339,9 +390,18 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "неизвестная модель "+m)
 		return
 	}
-	// Внешние MCP-серверы берутся из утверждённого плана: их выбрал Оркестратор.
-	mcpServers := orchestrator.PlanMCP(req.Plan, h.orchestratorServers())
-	v, err := h.Tasks.StartWithMCP(req.Project, orchestrator.Goal(req.Request, req.Plan), models, mcpServers)
+	// Скиллы и внешние MCP-серверы берутся из утверждённого плана: их выдал
+	// Оркестратор. Без плана (задача поставлена напрямую) — все скиллы.
+	var opts tasks.Options
+	if strings.TrimSpace(req.Plan) != "" {
+		oc := h.orchestratorContext(req.Project, models)
+		opts.MCP = orchestrator.PlanMCP(req.Plan, oc.Servers)
+		opts.Skills = orchestrator.PlanSkills(req.Plan, oc.Skills)
+		if opts.Skills == nil {
+			opts.Skills = []string{}
+		}
+	}
+	v, err := h.Tasks.StartWith(req.Project, orchestrator.Goal(req.Request, req.Plan), models, opts)
 	if errors.Is(err, tasks.ErrBusy) {
 		fail(w, http.StatusConflict, err.Error())
 		return

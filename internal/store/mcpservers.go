@@ -32,7 +32,9 @@ type MCPServer struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
+	// Account — к какому аккаунту привязан сервер (например «GitHub: работа»).
+	Account string `json:"account"`
+	Enabled bool   `json:"enabled"`
 	MCPConfig
 }
 
@@ -81,15 +83,15 @@ func (s *Store) SaveMCPServer(m MCPServer) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO mcp_servers(name, description, enabled, config) VALUES (?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET description = excluded.description, enabled = excluded.enabled, config = excluded.config`,
-		m.Name, strings.TrimSpace(m.Description), m.Enabled, sealed)
+	_, err = s.db.Exec(`INSERT INTO mcp_servers(name, description, account, enabled, config) VALUES (?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET description = excluded.description, account = excluded.account, enabled = excluded.enabled, config = excluded.config`,
+		m.Name, strings.TrimSpace(m.Description), strings.TrimSpace(m.Account), m.Enabled, sealed)
 	return err
 }
 
 // MCPServers возвращает каталог с расшифрованными настройками.
 func (s *Store) MCPServers() ([]MCPServer, error) {
-	rows, err := s.db.Query(`SELECT id, name, description, enabled, config FROM mcp_servers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, description, account, enabled, config FROM mcp_servers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +100,7 @@ func (s *Store) MCPServers() ([]MCPServer, error) {
 	for rows.Next() {
 		var m MCPServer
 		var sealed []byte
-		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Enabled, &sealed); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Account, &m.Enabled, &sealed); err != nil {
 			return nil, err
 		}
 		plain, err := s.vault.Open(sealed)

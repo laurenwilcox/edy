@@ -66,6 +66,8 @@ var migrations = []string{
 	`ALTER TABLE providers ADD COLUMN command TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE providers ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE providers ADD COLUMN browser TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE providers ADD COLUMN caps TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE mcp_servers ADD COLUMN account TEXT NOT NULL DEFAULT ''`,
 }
 
 // Provider — источник ИИ, подключённый к OmniRoute.
@@ -83,6 +85,9 @@ type Provider struct {
 	Site string
 	// Browser — вид браузера для KindWeb: chromium (изолированный) или chrome (установленный).
 	Browser string
+	// Caps — возможности, заданные пользователем (картинки, звук, MCP…);
+	// nil — определяются автоматически по типу провайдера.
+	Caps []string
 }
 
 // Cost считает стоимость запроса в долларах.
@@ -161,6 +166,23 @@ func (s *Store) SetModels(name string, models []string) error {
 	return nil
 }
 
+// SetCaps задаёт возможности провайдера вручную; nil — вернуть автоопределение.
+func (s *Store) SetCaps(name string, caps []string) error {
+	raw := ""
+	if caps != nil {
+		b, _ := json.Marshal(caps)
+		raw = string(b)
+	}
+	res, err := s.db.Exec(`UPDATE providers SET caps = ? WHERE name = ?`, raw, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteProvider удаляет провайдера вместе с его ключами.
 func (s *Store) DeleteProvider(name string) error {
 	res, err := s.db.Exec(`DELETE FROM providers WHERE name = ?`, name)
@@ -174,7 +196,7 @@ func (s *Store) DeleteProvider(name string) error {
 }
 
 func (s *Store) Provider(name string) (Provider, error) {
-	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser FROM providers WHERE name = ?`, name)
+	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps FROM providers WHERE name = ?`, name)
 	p, err := scanProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Provider{}, ErrNotFound
@@ -183,7 +205,7 @@ func (s *Store) Provider(name string) (Provider, error) {
 }
 
 func (s *Store) Providers() ([]Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser FROM providers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps FROM providers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +223,13 @@ func (s *Store) Providers() ([]Provider, error) {
 
 func scanProvider(row interface{ Scan(...any) error }) (Provider, error) {
 	var p Provider
-	var models, command string
-	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command, &p.Site, &p.Browser); err != nil {
+	var models, command, caps string
+	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command, &p.Site, &p.Browser, &caps); err != nil {
 		return Provider{}, err
+	}
+	if caps != "" {
+		p.Caps = []string{}
+		json.Unmarshal([]byte(caps), &p.Caps)
 	}
 	if err := json.Unmarshal([]byte(command), &p.Command); err != nil {
 		return Provider{}, fmt.Errorf("store: повреждённая команда провайдера %q: %w", p.Name, err)

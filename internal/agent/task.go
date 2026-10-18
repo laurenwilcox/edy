@@ -66,8 +66,10 @@ type MCPBridge interface {
 	Bind(root string, ev MCPEvents) (url string, release func())
 }
 
-// MCPEvents — что делает исполнитель через MCP.
+// MCPEvents — что делает исполнитель через MCP, и что ему видно.
 type MCPEvents struct {
+	// Skills — скиллы, доступные через use_skill (выданные Оркестратором).
+	Skills   []string
 	OnCall   func(tool, note string, isErr bool)
 	OnChange func(step string)
 }
@@ -296,7 +298,12 @@ list_skills и use_skill — инструкции проекта. Встроен
 // запускает проверки. До MaxAttempts провалов подряд.
 func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step *int) (string, bool, error) {
 	var mu sync.Mutex
+	names := make([]string, len(t.Skills))
+	for i, sk := range t.Skills {
+		names[i] = sk.Name
+	}
 	url, release := t.MCP.Bind(t.Root, MCPEvents{
+		Skills: names,
 		OnCall: func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {
@@ -411,6 +418,10 @@ func CheckClean(ctx context.Context, root string) error {
 	}
 	if _, err := gitIn(ctx, root, "rev-parse", "HEAD"); err != nil {
 		return errors.New("в репозитории ещё нет коммитов — сделайте первый коммит")
+	}
+	// Служебная папка Edy (снимки, скиллы проекта) не считается изменением.
+	if err := excludeEdyDir(root); err != nil {
+		return err
 	}
 	status, err := gitIn(ctx, root, "status", "--porcelain")
 	if err != nil {

@@ -81,6 +81,8 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("POST /api/providers/{name}/keys", h.addKey)
 	m.HandleFunc("GET /api/providers/{name}/remote-models", h.remoteModels)
 	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
+	m.HandleFunc("PUT /api/providers/{name}/caps", h.setCaps)
+	m.HandleFunc("GET /api/caps", h.capsCatalog)
 	m.HandleFunc("DELETE /api/keys/{id}", h.deleteKey)
 	m.HandleFunc("POST /api/install", h.install)
 	m.HandleFunc("POST /api/web/login", h.webLogin)
@@ -249,6 +251,41 @@ type providerJSON struct {
 	Keys     []store.KeyInfo `json:"keys"`
 	// MCP — исполнитель задач получает MCP-сервер Edy напрямую (Claude Code).
 	MCP bool `json:"mcp"`
+	// Caps — действующие возможности; CapsAuto — определены автоматически.
+	Caps     []string `json:"caps"`
+	CapsAuto bool     `json:"caps_auto"`
+	// CanMCP — утилита технически умеет подключать MCP (тег можно включить).
+	CanMCP bool `json:"can_mcp"`
+}
+
+func (h *Handler) capsCatalog(w http.ResponseWriter, r *http.Request) {
+	reply(w, omniroute.CapCatalog)
+}
+
+// setCaps задаёт теги возможностей провайдера; {"caps": null} — вернуть автоопределение.
+func (h *Handler) setCaps(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Caps []string `json:"caps"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	for _, c := range req.Caps {
+		if omniroute.CapTitle(c) == c {
+			fail(w, http.StatusBadRequest, "неизвестная возможность "+c)
+			return
+		}
+	}
+	if err := h.Store.SetCaps(r.PathValue("name"), req.Caps); errors.Is(err, store.ErrNotFound) {
+		fail(w, http.StatusNotFound, "провайдер не найден")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	p, _ := h.Store.Provider(r.PathValue("name"))
+	reply(w, map[string]any{"caps": omniroute.Caps(p), "caps_auto": p.Caps == nil})
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +307,8 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, providerJSON{Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: models,
 			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, Keys: keys,
-			MCP: p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)})
+			MCP: omniroute.HasCap(p, omniroute.CapMCP), Caps: omniroute.Caps(p), CapsAuto: p.Caps == nil,
+			CanMCP: p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)})
 	}
 	reply(w, out)
 }

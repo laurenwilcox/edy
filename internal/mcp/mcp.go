@@ -32,6 +32,8 @@ type Server struct {
 	Home string
 	// Version — версия Edy для serverInfo.
 	Version string
+	// Skills — какие скиллы видны клиенту; nil — все скиллы проекта и общие.
+	Skills []string
 	// Busy сообщает, что над проектом сейчас работает задача Edy: тогда
 	// правки через MCP запрещены, чтобы не мешать агенту (блокировка файлов).
 	Busy func() bool
@@ -176,7 +178,21 @@ func (s *Server) version() string {
 }
 
 func (s *Server) skills() ([]skills.Skill, error) {
-	return skills.Load(skills.Dirs(s.Home, s.Root))
+	list, err := skills.Load(skills.Dirs(s.Home, s.Root))
+	if err != nil || s.Skills == nil {
+		return list, err
+	}
+	allowed := map[string]bool{}
+	for _, n := range s.Skills {
+		allowed[n] = true
+	}
+	out := []skills.Skill{}
+	for _, sk := range list {
+		if allowed[sk.Name] {
+			out = append(out, sk)
+		}
+	}
+	return out, nil
 }
 
 type tool struct {
@@ -221,6 +237,9 @@ func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (s
 			return "Ошибка: " + err.Error(), true
 		}
 		if len(list) == 0 {
+			if s.Skills != nil {
+				return "Для этой задачи скиллы не выданы.", false
+			}
 			return "Скиллов нет. Их можно добавить в Edy (раздел «Проект» → «Скиллы») или в папку " + skills.ProjectDir + "/<имя>/SKILL.md.", false
 		}
 		return skills.Catalog(list), false

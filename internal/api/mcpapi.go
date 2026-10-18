@@ -144,6 +144,10 @@ func (h *Handler) mcpServer(project, agentID string, bind *mcpBinding) *mcp.Serv
 	case bind != nil:
 		// Исполнитель задачи: задача сама держит проект, её правки разрешены.
 		s.OnCall, s.OnChange = bind.ev.OnCall, bind.ev.OnChange
+		s.Skills = bind.ev.Skills
+		if s.Skills == nil {
+			s.Skills = []string{}
+		}
 		return s
 	case agentID != "":
 		s.OnCall = func(tool, note string, isErr bool) {
@@ -213,7 +217,8 @@ func (b mcpBridge) Supports(model string) bool {
 		return false
 	}
 	p, err := b.h.Store.Provider(name)
-	return err == nil && p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)
+	// Пользователь может выключить MCP у провайдера тегом.
+	return err == nil && p.Kind == store.KindCLI && omniroute.HasCap(p, omniroute.CapMCP)
 }
 
 func (b mcpBridge) Bind(root string, ev agent.MCPEvents) (string, func()) {

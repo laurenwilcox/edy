@@ -47,6 +47,7 @@ var mcpPresets = []mcpPreset{
 type mcpServerJSON struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
+	Account     string   `json:"account,omitempty"`
 	Enabled     bool     `json:"enabled"`
 	Type        string   `json:"type"`
 	URL         string   `json:"url,omitempty"`
@@ -79,7 +80,7 @@ func (h *Handler) listMCPServers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []mcpServerJSON{}
 	for _, m := range list {
-		out = append(out, mcpServerJSON{Name: m.Name, Description: m.Description, Enabled: m.Enabled, Type: m.Type,
+		out = append(out, mcpServerJSON{Name: m.Name, Description: m.Description, Account: m.Account, Enabled: m.Enabled, Type: m.Type,
 			URL: m.URL, Command: m.Command, Args: m.Args, Headers: keysOf(m.Headers), Env: keysOf(m.Env)})
 	}
 	reply(w, map[string]any{"servers": out, "presets": mcpPresets})
@@ -89,6 +90,7 @@ func (h *Handler) saveMCPServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Account     string `json:"account"`
 		Type        string `json:"type"`
 		URL         string `json:"url"`
 		Command     string `json:"command"`
@@ -100,7 +102,7 @@ func (h *Handler) saveMCPServer(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
 		return
 	}
-	m := store.MCPServer{Name: strings.TrimSpace(req.Name), Description: req.Description, Enabled: true,
+	m := store.MCPServer{Name: strings.TrimSpace(req.Name), Description: req.Description, Account: req.Account, Enabled: true,
 		MCPConfig: store.MCPConfig{Type: req.Type, URL: strings.TrimSpace(req.URL), Command: strings.TrimSpace(req.Command)}}
 	for _, line := range strings.Split(req.Args, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
