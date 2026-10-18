@@ -167,8 +167,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := newResponder(w, req.Stream, req.Model, s.now())
 	call := Call{Provider: provider, Model: modelName, Request: req, Workdir: r.Header.Get(WorkdirHeader)}
+	if mcpURL := r.Header.Get(MCPHeader); mcpURL != "" {
+		if err := checkMCPURL(mcpURL); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		if provider.Kind != store.KindCLI || !SupportsMCP(provider.Command) {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("провайдер %s не умеет подключать MCP Edy", provider.Name))
+			return
+		}
+		call.MCP = &MCPAttach{URL: mcpURL, Token: s.token}
+	}
+	out := newResponder(w, req.Stream, req.Model, s.now())
 	usage, err := s.callWithRotation(r.Context(), adapter, call, out.emit)
 
 	if usage.PromptTokens+usage.CompletionTokens > 0 {

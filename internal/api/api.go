@@ -67,6 +67,7 @@ type Handler struct {
 	mux  *http.ServeMux
 	mcpM sync.Mutex
 	mcpS map[string]*mcpSession
+	mcpB map[string]*mcpBinding
 }
 
 func New(st *store.Store, token, addr string) *Handler {
@@ -245,6 +246,8 @@ type providerJSON struct {
 	Site     string          `json:"site"`
 	Browser  string          `json:"browser"`
 	Keys     []store.KeyInfo `json:"keys"`
+	// MCP — исполнитель задач получает MCP-сервер Edy напрямую (Claude Code).
+	MCP bool `json:"mcp"`
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +268,8 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 			models = []string{}
 		}
 		out = append(out, providerJSON{Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: models,
-			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, Keys: keys})
+			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, Keys: keys,
+			MCP: p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)})
 	}
 	reply(w, out)
 }

@@ -24,6 +24,8 @@ type Call struct {
 	Model    string // имя модели без префикса провайдера
 	Request  *ChatRequest
 	Workdir  string // рабочая папка для CLI-провайдеров
+	// MCP — MCP-сервер Edy, который нужно подключить к CLI-утилите (nil — не нужно).
+	MCP *MCPAttach
 }
 
 // Adapter превращает OpenAI-запрос в обращение к конкретному типу источника ИИ.

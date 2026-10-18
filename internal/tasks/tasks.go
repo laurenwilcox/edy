@@ -83,6 +83,8 @@ type Manager struct {
 	Finalize FinalizeFunc // nil — новая ветка edy/… без push
 	// SkillsHome — папка данных Edy: общие скиллы лежат в её skills/.
 	SkillsHome string
+	// MCP подключает MCP-сервер Edy к исполнителям, которые это умеют.
+	MCP agent.MCPBridge
 	// Now подменяется в тестах.
 	Now func() time.Time
 
@@ -135,6 +137,7 @@ func (m *Manager) work(ctx context.Context, r *run) {
 		Models: r.view.Models,
 		LLM:    m.LLM,
 		Skills: r.skills,
+		MCP:    m.MCP,
 		OnEvent: func(e agent.Event) {
 			m.mu.Lock()
 			r.view.Events = append(r.view.Events, e)

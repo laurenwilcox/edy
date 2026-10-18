@@ -41,6 +41,25 @@ type ToolDef struct {
 	} `json:"function"`
 }
 
+// CallOptions — параметры вызова для CLI-провайдеров: рабочая папка и
+// MCP-сервер Edy, который нужно подключить к утилите.
+type CallOptions struct {
+	Workdir string
+	MCP     string
+}
+
+type callOptionsKey struct{}
+
+// WithCallOptions прикладывает параметры к вызовам модели в этом контексте.
+func WithCallOptions(ctx context.Context, o CallOptions) context.Context {
+	return context.WithValue(ctx, callOptionsKey{}, o)
+}
+
+func callOptions(ctx context.Context) CallOptions {
+	o, _ := ctx.Value(callOptionsKey{}).(CallOptions)
+	return o
+}
+
 // LLM — модель, к которой агент обращается за следующим шагом.
 type LLM interface {
 	Chat(ctx context.Context, model string, msgs []Msg, tools []ToolDef) (Msg, error)
@@ -56,7 +75,11 @@ type OmniRoute struct {
 }
 
 func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []ToolDef) (Msg, error) {
-	body, err := json.Marshal(map[string]any{"model": model, "messages": msgs, "tools": tools})
+	payload := map[string]any{"model": model, "messages": msgs}
+	if len(tools) > 0 {
+		payload["tools"] = tools
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return Msg{}, err
 	}
@@ -68,6 +91,14 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 	req.Header.Set("Authorization", "Bearer "+o.Token)
 	if o.Client != "" {
 		req.Header.Set("X-Edy-Client", o.Client)
+	}
+	if opt := callOptions(ctx); opt.Workdir != "" || opt.MCP != "" {
+		if opt.Workdir != "" {
+			req.Header.Set("X-Edy-Workdir", opt.Workdir)
+		}
+		if opt.MCP != "" {
+			req.Header.Set("X-Edy-MCP", opt.MCP)
+		}
 	}
 	client := o.HTTP
 	if client == nil {

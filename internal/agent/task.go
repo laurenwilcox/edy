@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/laurenwilcox/name/internal/skills"
@@ -46,6 +47,26 @@ type Task struct {
 	OnAttemptEnd func(model string, ok bool, note string)
 	// Skills — скиллы проекта и общие; агент видит их список и грузит через use_skill.
 	Skills []skills.Skill
+	// MCP подключает MCP-сервер Edy к исполнителям, которые это умеют
+	// (Claude Code): они правят проект инструментами Edy сами, без пошаговой
+	// эмуляции. nil — все модели работают через инструменты в промпте.
+	MCP MCPBridge
+}
+
+// MCPBridge выдаёт исполнителю адрес MCP-сервера Edy, привязанный к задаче.
+type MCPBridge interface {
+	// Supports сообщает, умеет ли модель «провайдер/модель» подключать MCP.
+	Supports(model string) bool
+	// Bind возвращает адрес /mcp для проекта root: правки через него не
+	// блокируются задачей, а вызовы и снимки уходят в ev. release — когда
+	// исполнитель закончил.
+	Bind(root string, ev MCPEvents) (url string, release func())
+}
+
+// MCPEvents — что делает исполнитель через MCP.
+type MCPEvents struct {
+	OnCall   func(tool, note string, isErr bool)
+	OnChange func(step string)
 }
 
 // Result — итог работы.
@@ -121,6 +142,8 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 	}
 	t.emit("checkpoint", "Снимок №0 — исходное состояние")
 
+	// CLI-утилиты запускаются в папке проекта.
+	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root})
 	ws := Workspace{Root: t.Root, Skills: t.Skills}
 	if len(t.Skills) > 0 {
 		t.emit("info", "Скиллов доступно агенту: %d", len(t.Skills))
@@ -134,7 +157,13 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 		if t.OnAttempt != nil {
 			t.OnAttempt(model)
 		}
-		summary, ok, err := t.attempt(ctx, model, ws, shadow, hooks, &step)
+		var summary string
+		var ok bool
+		if t.MCP != nil && t.MCP.Supports(model) {
+			summary, ok, err = t.attemptMCP(ctx, model, hooks, &step)
+		} else {
+			summary, ok, err = t.attempt(ctx, model, ws, shadow, hooks, &step)
+		}
 		if t.OnAttemptEnd != nil {
 			note := summary
 			switch {
@@ -242,6 +271,79 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 			return "", false, nil
 		}
 		msgs = append(msgs, Msg{Role: "user", Content: fmt.Sprintf("Проверки не прошли (попытка %d из %d). Исправляй:\n\n%s", failures, t.MaxAttempts, report)})
+	}
+}
+
+const mcpPrompt = `Ты — агент-разработчик в Edy. Работай с проектом через инструменты MCP-сервера edy:
+project_skeleton и search_code — чтобы разобраться в коде, read_file — прочитать файл,
+replace_in_file и write_file — править, delete_file — удалять, run_checks — запустить линтеры и тесты,
+list_skills и use_skill — инструкции проекта. Встроенные инструменты правки файлов и терминал отключены.
+
+Как работать:
+1. Посмотри скелет проекта, найди нужный код.
+2. Внеси изменения. Не трогай файлы, не связанные с задачей. Пиши код в стиле проекта.
+3. Вызови run_checks и исправь ошибки, пока проверки не пройдут.
+4. В конце ответь кратким итогом: что сделано, 1–3 предложения. Отвечай по-русски.`
+
+// attemptMCP — работа исполнителя, подключённого к MCP Edy: утилита сама
+// ведёт цикл и правит проект инструментами Edy, а Edy после её ответа
+// запускает проверки. До MaxAttempts провалов подряд.
+func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step *int) (string, bool, error) {
+	var mu sync.Mutex
+	url, release := t.MCP.Bind(t.Root, MCPEvents{
+		OnCall: func(tool, note string, isErr bool) {
+			kind := "tool"
+			if isErr {
+				kind = "error"
+			}
+			t.emit(kind, "%s %s", tool, note)
+		},
+		OnChange: func(s string) {
+			mu.Lock()
+			*step++
+			n := *step
+			mu.Unlock()
+			t.emit("checkpoint", "Снимок №%d — %s", n, strings.TrimPrefix(s, "MCP: "))
+		},
+	})
+	defer release()
+	t.emit("info", "%s получает MCP Edy: правит проект инструментами Edy, каждая правка — снимок", model)
+	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root, MCP: url})
+
+	base := strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)) + "\n\nЗадача:\n" + t.Goal
+	prompt := base
+	failures := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
+		reply, err := t.LLM.Chat(ctx, model, []Msg{{Role: "user", Content: prompt}}, nil)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", false, ctx.Err()
+			}
+			t.emit("error", "%v", err)
+			failures++
+			if failures >= t.MaxAttempts {
+				return "", false, nil
+			}
+			continue
+		}
+		summary := lastRunes(strings.TrimSpace(reply.Content), 600)
+		if summary != "" {
+			t.emit("model", "%s: %s", model, summary)
+		}
+		ok, report := RunHooks(ctx, t.Root, hooks)
+		t.emit("hooks", "%s", strings.TrimSpace(report))
+		if ok {
+			return summary, true, nil
+		}
+		failures++
+		if failures >= t.MaxAttempts {
+			t.emit("breaker", "%s провалила проверки %d раза подряд", model, failures)
+			return "", false, nil
+		}
+		prompt = base + fmt.Sprintf("\n\nПредыдущая попытка уже внесла правки в проект, но проверки не прошли (попытка %d из %d). Исправь:\n\n%s", failures, t.MaxAttempts, report)
 	}
 }
 

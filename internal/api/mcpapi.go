@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/mcp"
+	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 )
@@ -25,9 +28,17 @@ const maxMCPSessions = 64
 // «Агенты» отдельной записью с журналом вызовов.
 type mcpSession struct {
 	srv     *mcp.Server
-	agentID string
+	id      string
+	agentID string // запись в окне «Агенты»; пусто — сессия задачи, журнал ведёт задача
 	project string
 	used    time.Time
+}
+
+// mcpBinding — адрес MCP, выданный исполнителю задачи: правки через него
+// не блокируются этой же задачей, а события уходят в её ленту.
+type mcpBinding struct {
+	project string
+	ev      agent.MCPEvents
 }
 
 // MCP — обработчик /mcp (Streamable HTTP). Проект задаётся параметром
@@ -48,7 +59,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		h.mcpM.Lock()
 		if s := h.mcpS[r.Header.Get("Mcp-Session-Id")]; s != nil {
 			delete(h.mcpS, r.Header.Get("Mcp-Session-Id"))
-			h.Store.FinishAgent(s.agentID, store.AgentDone, "Клиент отключился", "")
+			h.finishMCP(s, "Клиент отключился")
 		}
 		h.mcpM.Unlock()
 		w.WriteHeader(http.StatusNoContent)
@@ -85,10 +96,21 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(body, &head)
 
+	var bind *mcpBinding
+	if key := r.URL.Query().Get("bind"); key != "" {
+		h.mcpM.Lock()
+		bind = h.mcpB[key]
+		h.mcpM.Unlock()
+		if bind == nil || bind.project != project {
+			fail(w, http.StatusForbidden, "привязка MCP к задаче устарела")
+			return
+		}
+	}
+
 	var sess *mcpSession
 	if head.Method == "initialize" {
-		sess = h.newMCPSession(project, strings.TrimSpace(head.Params.ClientInfo.Name+" "+head.Params.ClientInfo.Version))
-		w.Header().Set("Mcp-Session-Id", sess.agentID)
+		sess = h.newMCPSession(project, strings.TrimSpace(head.Params.ClientInfo.Name+" "+head.Params.ClientInfo.Version), bind)
+		w.Header().Set("Mcp-Session-Id", sess.id)
 	} else if id := r.Header.Get("Mcp-Session-Id"); id != "" {
 		h.mcpM.Lock()
 		sess = h.mcpS[id]
@@ -104,7 +126,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Клиент без сессий: обслуживаем без журнала.
-		sess = &mcpSession{srv: h.mcpServer(project, ""), project: project}
+		sess = &mcpSession{srv: h.mcpServer(project, "", bind), project: project}
 	}
 
 	resp := sess.srv.Handle(r.Context(), body)
@@ -116,12 +138,14 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-func (h *Handler) mcpServer(project, agentID string) *mcp.Server {
+func (h *Handler) mcpServer(project, agentID string, bind *mcpBinding) *mcp.Server {
 	s := &mcp.Server{Root: project, Home: h.Home}
-	if h.Tasks != nil {
-		s.Busy = func() bool { return h.Tasks.Running(project) }
-	}
-	if agentID != "" {
+	switch {
+	case bind != nil:
+		// Исполнитель задачи: задача сама держит проект, её правки разрешены.
+		s.OnCall, s.OnChange = bind.ev.OnCall, bind.ev.OnChange
+		return s
+	case agentID != "":
 		s.OnCall = func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {
@@ -133,17 +157,24 @@ func (h *Handler) mcpServer(project, agentID string) *mcp.Server {
 			h.Store.AddAgentEvent(agentID, "checkpoint", "Снимок — "+step, time.Now())
 		}
 	}
+	if h.Tasks != nil {
+		s.Busy = func() bool { return h.Tasks.Running(project) }
+	}
 	return s
 }
 
-func (h *Handler) newMCPSession(project, client string) *mcpSession {
+func (h *Handler) newMCPSession(project, client string, bind *mcpBinding) *mcpSession {
 	if client == "" {
 		client = "MCP-клиент"
 	}
 	id := "mcp-" + randomHex(8)
-	sess := &mcpSession{srv: h.mcpServer(project, id), agentID: id, project: project, used: time.Now()}
-	h.Store.CreateAgent(store.Agent{ID: id, Role: store.RoleMCP, Model: client, Project: project,
-		Goal: "Внешний агент работает с проектом через MCP"})
+	sess := &mcpSession{id: id, project: project, used: time.Now()}
+	if bind == nil {
+		sess.agentID = id
+		h.Store.CreateAgent(store.Agent{ID: id, Role: store.RoleMCP, Model: client, Project: project,
+			Goal: "Внешний агент работает с проектом через MCP"})
+	}
+	sess.srv = h.mcpServer(project, sess.agentID, bind)
 
 	h.mcpM.Lock()
 	defer h.mcpM.Unlock()
@@ -157,20 +188,62 @@ func (h *Handler) newMCPSession(project, client string) *mcpSession {
 		}
 		sort.Slice(old, func(i, j int) bool { return old[i].used.Before(old[j].used) })
 		for _, s := range old[:len(old)-maxMCPSessions+1] {
-			delete(h.mcpS, s.agentID)
-			h.Store.FinishAgent(s.agentID, store.AgentDone, "Сессия закрыта", "")
+			delete(h.mcpS, s.id)
+			h.finishMCP(s, "Сессия закрыта")
 		}
 	}
 	h.mcpS[id] = sess
 	return sess
 }
 
+func (h *Handler) finishMCP(s *mcpSession, why string) {
+	if s.agentID != "" {
+		h.Store.FinishAgent(s.agentID, store.AgentDone, why, "")
+	}
+}
+
+// MCPBridge подключает MCP-сервер Edy к исполнителям задач.
+func (h *Handler) MCPBridge() agent.MCPBridge { return mcpBridge{h} }
+
+type mcpBridge struct{ h *Handler }
+
+func (b mcpBridge) Supports(model string) bool {
+	name, _, ok := splitModelName(model)
+	if !ok {
+		return false
+	}
+	p, err := b.h.Store.Provider(name)
+	return err == nil && p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)
+}
+
+func (b mcpBridge) Bind(root string, ev agent.MCPEvents) (string, func()) {
+	h := b.h
+	key := randomHex(16)
+	h.mcpM.Lock()
+	if h.mcpB == nil {
+		h.mcpB = map[string]*mcpBinding{}
+	}
+	h.mcpB[key] = &mcpBinding{project: root, ev: ev}
+	h.mcpM.Unlock()
+	u := "http://" + h.Addr + "/mcp?project=" + url.QueryEscape(root) + "&bind=" + key
+	return u, func() {
+		h.mcpM.Lock()
+		delete(h.mcpB, key)
+		for id, s := range h.mcpS {
+			if s.project == root && s.agentID == "" {
+				delete(h.mcpS, id)
+			}
+		}
+		h.mcpM.Unlock()
+	}
+}
+
 // CloseMCP отмечает подключённых MCP-клиентов завершёнными (при выходе из Edy).
 func (h *Handler) CloseMCP() {
 	h.mcpM.Lock()
 	defer h.mcpM.Unlock()
-	for id := range h.mcpS {
-		h.Store.FinishAgent(id, store.AgentDone, "Edy закрыт", "")
+	for id, s := range h.mcpS {
+		h.finishMCP(s, "Edy закрыт")
 		delete(h.mcpS, id)
 	}
 }

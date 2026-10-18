@@ -106,12 +106,13 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 
 	router := omniroute.NewServer(st, tok, log)
 	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
-	h := api.New(st, tok, addr)
+	h := api.New(st, tok, ln.Addr().String())
 	h.Web = web
 	h.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
 	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
+	h.Tasks.MCP = h.MCPBridge()
 	h.Tasks.Finalize = api.Finalizer(st)
 	h.ReposDir = filepath.Join(home, "repos")
 	h.Home = home

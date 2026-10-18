@@ -73,6 +73,18 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	if err != nil {
 		return Usage{}, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%v: установите её или добавьте провайдера заново через edy provider add", err)}
 	}
+	if call.MCP != nil {
+		attach, ok := mcpCapable[filepath.Base(args[0])]
+		if !ok {
+			return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: fmt.Sprintf("%s не умеет подключать MCP Edy", args[0])}
+		}
+		extra, cleanup, err := attach(*call.MCP)
+		if err != nil {
+			return Usage{}, &UpstreamError{Status: http.StatusInternalServerError, Message: "конфиг MCP: " + err.Error()}
+		}
+		defer cleanup()
+		args = append(append([]string{args[0]}, extra...), args[1:]...)
+	}
 	cmd := exec.CommandContext(ctx, bin, args[1:]...)
 	cmd.Dir = call.Workdir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1", "CLICOLOR=0")

@@ -1136,16 +1136,18 @@ let abort = null;
 
 function fillModels() {
   const all = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
-  const fill = (sel, key, empty) => {
+  const mcp = new Set(providers.filter((p) => p.mcp).flatMap((p) => p.models.map((m) => p.name + "/" + m)));
+  const fill = (sel, key, empty, markMCP) => {
     const current = sel.value || store.get(key);
-    const opts = all.map((m) => el("option", { value: m }, m));
+    // Исполнитель с MCP правит проект инструментами Edy напрямую.
+    const opts = all.map((m) => el("option", { value: m }, markMCP && mcp.has(m) ? m + " · MCP" : m));
     if (empty) opts.unshift(el("option", { value: "" }, empty));
     sel.replaceChildren(...(opts.length ? opts : [el("option", { value: "" }, "нет моделей")]));
     if (all.includes(current) || (empty && current === "")) sel.value = current;
   };
   fill($("#model"), "edy-model");
-  fill($("#worker"), "edy-worker");
-  fill($("#fallback"), "edy-fallback", "— нет");
+  fill($("#worker"), "edy-worker", "", true);
+  fill($("#fallback"), "edy-fallback", "— нет", true);
 }
 $("#worker").addEventListener("change", (e) => store.set("edy-worker", e.target.value));
 $("#fallback").addEventListener("change", (e) => store.set("edy-fallback", e.target.value));
