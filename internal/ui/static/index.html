@@ -442,10 +442,29 @@ h3.sub:first-child { margin-top: 0; }
   .messages { padding: 16px 12px 8px; }
   .msg { max-width: 94%; }
 }
+/* ИИ-помощник интерфейса: плавающая кнопка и окно чата. */
+.asst-fab { position: fixed; right: 22px; bottom: 22px; z-index: 800; width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; font-size: 22px; color: var(--on-grad); background: var(--grad); box-shadow: var(--shadow); transition: transform .2s; }
+.asst-fab:hover { transform: scale(1.06); }
+.asst { position: fixed; right: 22px; bottom: 86px; z-index: 800; width: min(400px, calc(100vw - 32px)); height: min(560px, calc(100vh - 120px)); display: flex; flex-direction: column; border-radius: 18px; background: var(--glass-strong); border: 1px solid var(--glass-border); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: rise .25s; }
+.asst[hidden] { display: none; }
+.asst-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.asst-head b { flex: 1; }
+.asst-head small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+.asst-log { flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.asst-msg { max-width: 88%; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+.asst-msg.user { align-self: flex-end; color: var(--on-grad); background: var(--grad); }
+.asst-msg.bot { align-self: flex-start; background: var(--field); border: 1px solid var(--line); }
+.asst-msg.error { align-self: flex-start; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.asst-acts { align-self: flex-start; font-size: 11.5px; color: var(--muted); font-family: ui-monospace, monospace; }
+.asst-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+.asst-form textarea { flex: 1; resize: none; min-height: 38px; max-height: 120px; }
+@media (max-width: 760px) { .asst-fab { right: 14px; bottom: 14px; } .asst { right: 16px; bottom: 76px; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 </style>
+<!-- Свой CSS пользователя (правит ИИ-помощник); идёт последним, чтобы перекрывать тему. -->
+<style id="user-css"></style>
 </head>
 <body>
 <div class="aurora"><i></i><i></i><i></i></div>
@@ -805,7 +824,7 @@ h3.sub:first-child { margin-top: 0; }
             <label><span>Размер шрифта: <b id="look-fs">14</b> px</span><input name="font_size" type="range" min="12" max="18" step="1"></label>
             <label>Меню <select name="sidebar"><option value="left">Слева</option><option value="right">Справа</option></select></label>
             <label>Анимации <select name="animations"><option value="on">Включены</option><option value="off">Выключены</option></select></label>
-            <div class="row" style="margin-top:14px"><button class="btn ghost" type="button" id="look-reset">По умолчанию</button></div>
+            <div class="row" style="margin-top:14px"><button class="btn ghost" type="button" id="look-reset">По умолчанию</button><button class="btn ghost" type="button" id="look-css-reset" title="Убрать стили, которые добавил ИИ-помощник">Сбросить мой CSS</button></div>
           </form>
         </section>
 
@@ -916,6 +935,19 @@ h3.sub:first-child { margin-top: 0; }
 
 <div id="auth" class="toast error" hidden>Нет токена доступа. Откройте интерфейс командой edy ui.</div>
 
+<button class="asst-fab" id="asst-fab" type="button" title="ИИ-помощник: настроит и поменяет Edy по вашей просьбе">✦</button>
+<div class="asst" id="asst" hidden>
+  <div class="asst-head">
+    <b>ИИ-помощник<small id="asst-screen">Чат</small></b>
+    <button class="tool-btn" type="button" id="asst-new" title="Новый разговор">↺</button>
+    <button class="tool-btn" type="button" id="asst-close" title="Свернуть">✕</button>
+  </div>
+  <div class="asst-log" id="asst-log"><div class="asst-msg bot">Я знаю все разделы Edy и могу их менять: подключить провайдера, завести проект, поменять оформление или добавить свои стили. Опасные действия спрошу заранее.</div></div>
+  <form class="asst-form" id="asst-form">
+    <textarea name="text" rows="1" placeholder="Что сделать?"></textarea>
+    <button class="btn" type="submit">➤</button>
+  </form>
+</div>
 <script>
 "use strict";
 // Токен приходит в #-части адреса (она не уходит на сервер и в логи)
@@ -3282,6 +3314,92 @@ $("#look-bot").addEventListener("submit", async (e) => {
   } catch (err) { toast(err.message, true); }
   finally { btn.disabled = false; }
 });
+$("#look-css-reset").onclick = async () => {
+  if (!(await askConfirm("Убрать все стили, которые добавил ИИ-помощник?", "Сбросить"))) return;
+  try { await api("DELETE", "/api/ui/css"); await loadUserCSS(); toast("Свой CSS сброшен"); } catch (e) { toast(e.message, true); }
+};
+// loadUserCSS подгружает свой CSS пользователя. textContent, а не innerHTML:
+// стили не могут закрыть тег и вставить разметку.
+async function loadUserCSS() {
+  try { $("#user-css").textContent = (await api("GET", "/api/ui/css")).css || ""; } catch {}
+}
+
+// ============ ИИ-помощник ============
+// Сессия живёт в памяти страницы: перезагрузка начинает новый разговор.
+let asstSession = "";
+const asstLog = $("#asst-log");
+
+function asstScreen() {
+  const id = $("#drawer").classList.contains("open") ? store.get("edy-panel") : "";
+  return id && titles[id] ? { id, title: titles[id] } : { id: "", title: "Чат" };
+}
+function asstAdd(cls, text) {
+  const n = el("div", { class: "asst-msg " + cls }, text);
+  asstLog.append(n);
+  asstLog.scrollTop = asstLog.scrollHeight;
+  return n;
+}
+// asstShow выводит ответ помощника и обновляет то, что он поменял.
+async function asstShow(r) {
+  asstSession = r.session || asstSession;
+  if (r.actions?.length) {
+    const t = r.actions.map((a) => `${a.method} ${a.path} → ${a.status}`).join("\n");
+    asstLog.append(el("div", { class: "asst-acts" }, t));
+  }
+  if (r.reply) asstAdd("bot", r.reply);
+  if (r.css_changed) {
+    loadUserCSS();
+    api("GET", "/api/ui/prefs").then((p) => { applyPrefs(p); if (!$("#p-look").hidden) fillLook(p); }).catch(() => {});
+  }
+  if (r.actions?.some((a) => a.method !== "GET")) {
+    const s = asstScreen();
+    if (s.id) Promise.resolve(loaders[s.id]()).catch(() => {});
+    refreshProviders().catch(() => {});
+  }
+  if (r.pending) {
+    const p = r.pending;
+    const ok = await askDialog(`${p.summary || "Помощник хочет выполнить действие"}\n\n${p.method} ${p.path}`, { ok: "Выполнить", danger: true });
+    return asstSend("/api/assistant/confirm", { session: asstSession, approve: !!ok });
+  }
+}
+async function asstSend(path, body) {
+  const s = asstScreen();
+  $("#asst-screen").textContent = s.title;
+  const wait = asstAdd("bot", "…");
+  const btn = $("#asst-form button");
+  btn.disabled = true;
+  try {
+    const r = await api("POST", path, { ...body, screen: s.title + (s.id ? ` (${s.id})` : "") });
+    wait.remove();
+    await asstShow(r);
+  } catch (e) {
+    wait.remove();
+    asstAdd("error", e.message);
+    if (e.status === 404) asstSession = "";
+  } finally { btn.disabled = false; }
+}
+$("#asst-fab").onclick = () => {
+  const box = $("#asst");
+  box.hidden = !box.hidden;
+  if (!box.hidden) { $("#asst-screen").textContent = asstScreen().title; $("#asst-form").elements.text.focus(); }
+};
+$("#asst-close").onclick = () => { $("#asst").hidden = true; };
+$("#asst-new").onclick = () => {
+  if (asstSession) api("DELETE", "/api/assistant/" + asstSession).catch(() => {});
+  asstSession = "";
+  asstLog.replaceChildren(asstLog.firstElementChild);
+};
+$("#asst-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target, text = f.elements.text.value.trim();
+  if (!text || f.querySelector("button").disabled) return;
+  asstAdd("user", text);
+  f.reset();
+  asstSend("/api/assistant", { session: asstSession, message: text });
+});
+$("#asst-form").elements.text.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#asst-form").requestSubmit(); }
+});
 // Сохранённое оформление применяем сразу, до ответа сервера, чтобы не мигало.
 try { const p = JSON.parse(store.get("edy-prefs") || "null"); if (p) applyPrefs(p); } catch {}
 
@@ -3290,6 +3408,7 @@ try { const p = JSON.parse(store.get("edy-prefs") || "null"); if (p) applyPrefs(
   showWelcome();
   if (!token) { $("#auth").hidden = false; return; }
   api("GET", "/api/ui/prefs").then(applyPrefs).catch(() => {});
+  loadUserCSS();
   try {
     presets = await api("GET", "/api/presets");
     fillPresetSelects();

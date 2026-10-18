@@ -10,7 +10,7 @@ import (
 	"github.com/laurenwilcox/name/internal/semantic"
 )
 
-func (h *Handler) semanticRoutes(m *http.ServeMux) {
+func (h *Handler) semanticRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/semantic", h.semanticStatus)
 	m.HandleFunc("PUT /api/semantic", h.setSemantic)
 	m.HandleFunc("POST /api/semantic/index", h.semanticIndex)

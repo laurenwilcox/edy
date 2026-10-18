@@ -1009,6 +1009,27 @@ git) или `push` (`gitops.Push` текущей ветки в `origin`, отв�
 `POST /api/ui/bot` тело `{"text": string}` → микро-агент выбирает изменения → ответ `{"prefs", "changed": string[], "comment"}`.
 Без модели — 503.
 
+### 15.7. ИИ-помощник: `/api/assistant`, `GET|PUT|DELETE /api/ui/css`
+
+`assistant.go`. Помощник управляет приложением теми же HTTP-вызовами, что и интерфейс: у модели один
+инструмент `api_call {method, path, body, why}`, вызов идёт внутрь через `h.mux.ServeHTTP` (без
+Bearer-проверки). В системном промпте — каталог маршрутов и текущий раздел (`screen`).
+
+- `POST /api/assistant` `{session?, message, screen?, model?}` → `{session, reply, actions[{method,path,status}], pending?, css_changed}`.
+  До 12 вызовов инструмента за ход.
+- Опасные вызовы не выполняются сразу: любой `DELETE`, `/api/install`, пути с `/keys`,
+  `/api/git/accounts*`, `…/restore`, `/revert-file`, `/push`, `/approve`. Ответ содержит
+  `pending {method, path, body, summary}`; UI спрашивает пользователя и шлёт
+  `POST /api/assistant/confirm` `{session, approve}`. 409 — подтверждать нечего, 404 — нет сессии.
+- Запрещено всегда: `/api/assistant*`, `/api/info`, пути вне `/api/` и с `..` — модель получает отказ.
+- `DELETE /api/assistant/{session}` — забыть диалог. Сессии живут в памяти процесса.
+- Модель: явно заданная → настройка `assistant.model` → модель микро-агентов → иначе 503.
+- `css_changed=true`, если успешно менялись `/api/ui/css` или `/api/ui/prefs` — UI перечитывает стили.
+
+`/api/ui/css` — пользовательский CSS (настройка `ui.css`), вставляется в `<style id="user-css">`
+через `textContent`. `PUT {css}`: не больше 64 КБ, без `</style` (иначе 400). `DELETE` — откат,
+кнопка «Сбросить мой CSS» в «Оформлении».
+
 ---
 
 ## 16. MCP по HTTP: `/mcp`

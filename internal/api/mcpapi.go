@@ -275,7 +275,7 @@ type skillsJSON struct {
 	ProjectDir string         `json:"project_dir,omitempty"`
 }
 
-func (h *Handler) registerSkillRoutes(m *http.ServeMux) {
+func (h *Handler) registerSkillRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/skills", h.listSkills)
 	m.HandleFunc("POST /api/skills", h.saveSkill)
 	m.HandleFunc("DELETE /api/skills", h.deleteSkill)

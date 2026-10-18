@@ -26,7 +26,7 @@ import (
 
 const settingProjects = "projects"
 
-func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
+func (h *Handler) registerProjectRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/projects", h.listProjects)
 	m.HandleFunc("POST /api/projects", h.addProject)
 	m.HandleFunc("DELETE /api/projects", h.removeProject)

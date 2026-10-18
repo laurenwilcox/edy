@@ -57,7 +57,7 @@ type mcpServerJSON struct {
 	Env         []string `json:"env,omitempty"`
 }
 
-func (h *Handler) registerMCPCatalogRoutes(m *http.ServeMux) {
+func (h *Handler) registerMCPCatalogRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/mcp-servers", h.listMCPServers)
 	m.HandleFunc("POST /api/mcp-servers", h.saveMCPServer)
 	m.HandleFunc("PUT /api/mcp-servers/{name}/enabled", h.toggleMCPServer)

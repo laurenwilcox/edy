@@ -61,6 +61,8 @@ type Handler struct {
 	// LLM — доступ к моделям через OmniRoute для Оркестратора; Tasks — фоновые задачи агента.
 	LLM   agent.LLM
 	Tasks *tasks.Manager
+	// asst — разговоры ИИ-помощника интерфейса.
+	asst asstSessions
 	// ReposDir — куда клонировать репозитории с GitHub, GitLab и Gitea.
 	ReposDir string
 	// Home — папка данных Edy (общие скиллы в Home/skills).
@@ -70,7 +72,7 @@ type Handler struct {
 	// Semantic — поиск по смыслу (эмбеддинги); nil — только поиск по словам.
 	Semantic *semantic.Engine
 
-	mux  *http.ServeMux
+	mux  *routeMux
 	mcpM sync.Mutex
 	mcpS map[string]*mcpSession
 	mcpB map[string]*mcpBinding
@@ -78,7 +80,7 @@ type Handler struct {
 
 func New(st *store.Store, token, addr string) *Handler {
 	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels, OpenURL: openInBrowser, Notify: notify.System}
-	m := http.NewServeMux()
+	m := &routeMux{ServeMux: http.NewServeMux()}
 	m.HandleFunc("GET /api/info", h.info)
 	h.semanticRoutes(m)
 	m.HandleFunc("GET /api/presets", h.presets)
@@ -109,6 +111,12 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("GET /api/ui/prefs", h.uiPrefsHandler)
 	m.HandleFunc("PUT /api/ui/prefs", h.uiPrefsHandler)
 	m.HandleFunc("POST /api/ui/bot", h.uiBot)
+	m.HandleFunc("GET /api/ui/css", h.uiCSS)
+	m.HandleFunc("PUT /api/ui/css", h.uiCSS)
+	m.HandleFunc("DELETE /api/ui/css", h.uiCSS)
+	m.HandleFunc("POST /api/assistant", h.assistant)
+	m.HandleFunc("POST /api/assistant/confirm", h.assistantConfirm)
+	m.HandleFunc("DELETE /api/assistant/{session}", h.assistantReset)
 	h.registerProjectRoutes(m)
 	h.registerGitRoutes(m)
 	h.registerSkillRoutes(m)

@@ -13,7 +13,7 @@ import (
 
 // Память проекта в интерфейсе: посмотреть, найти, дописать, закрепить, удалить.
 
-func (h *Handler) registerMemoryRoutes(m *http.ServeMux) {
+func (h *Handler) registerMemoryRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/memory", h.listMemory)
 	m.HandleFunc("POST /api/memory", h.addMemory)
 	m.HandleFunc("PUT /api/memory/{id}", h.pinMemory)

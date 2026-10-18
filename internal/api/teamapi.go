@@ -23,7 +23,7 @@ type teamAgentJSON struct {
 	Notes  int `json:"notes"`  // заметок в личной памяти
 }
 
-func (h *Handler) registerTeamRoutes(m *http.ServeMux) {
+func (h *Handler) registerTeamRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/team", h.listTeam)
 	m.HandleFunc("POST /api/team", h.saveTeamAgent)
 	m.HandleFunc("DELETE /api/team/{id}", h.deleteTeamAgent)

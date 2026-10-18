@@ -19,7 +19,7 @@ import (
 	"github.com/laurenwilcox/name/internal/tasks"
 )
 
-func (h *Handler) registerGitRoutes(m *http.ServeMux) {
+func (h *Handler) registerGitRoutes(m *routeMux) {
 	m.HandleFunc("GET /api/git/accounts", h.gitAccounts)
 	m.HandleFunc("POST /api/git/accounts", h.addGitAccount)
 	m.HandleFunc("DELETE /api/git/accounts/{id}", h.deleteGitAccount)
