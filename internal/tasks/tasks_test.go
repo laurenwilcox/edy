@@ -434,3 +434,71 @@ func TestMemoryLearnsFromTasks(t *testing.T) {
 		t.Fatalf("урок: %+v", notes)
 	}
 }
+
+// seeing проверяет, что скриншоты задачи дошли до модели.
+type seeing struct {
+	fixer
+	got []string
+}
+
+func (f *seeing) Chat(ctx context.Context, model string, msgs []agent.Msg, tools []agent.ToolDef) (agent.Msg, error) {
+	if len(msgs) == 2 {
+		f.mu.Lock()
+		f.got = msgs[1].Images
+		f.mu.Unlock()
+	}
+	return f.fixer.Chat(ctx, model, msgs, tools)
+}
+
+func TestAttachmentsReachVisionModel(t *testing.T) {
+	dir := project(t)
+	llm := &seeing{}
+	m, _ := newMgr(t, llm)
+	m.AttachDir = t.TempDir()
+	m.CanSee = func(model string) bool { return model == "eyes/m" }
+	p, _ := m.Create(Draft{Project: dir, Request: "Почини Add, см. скриншот"})
+	png := "data:image/png;base64,iVBORw0KGgo="
+	if _, err := m.Attach(p.ID, "../../etc/скрин экрана.png", png); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Attach(p.ID, "x.svg", "data:image/svg+xml;base64,PHN2Zz4="); err == nil {
+		t.Fatal("svg не принимается")
+	}
+	v := m.Get(p.ID, 0)
+	if len(v.Attachments) != 1 || v.Attachments[0] != "1-скрин-экрана.png" {
+		t.Fatalf("вложения: %v", v.Attachments)
+	}
+	if path, err := m.AttachmentPath(p.ID, "1-скрин-экрана.png"); err != nil || filepath.Dir(path) != filepath.Join(m.AttachDir, p.ID) {
+		t.Fatalf("путь: %s %v", path, err)
+	}
+	if _, err := m.AttachmentPath(p.ID, "../../edy.db"); err == nil {
+		t.Fatal("чужой файл")
+	}
+
+	v, _ = m.Enqueue(p.ID, Draft{}, Plan{Goal: "Почини Add", Models: []string{"eyes/m"}})
+	wait(t, m, v.ID)
+	llm.mu.Lock()
+	got := llm.got
+	llm.mu.Unlock()
+	if len(got) != 1 || got[0] != png {
+		t.Fatalf("модель с тегом «Картинки» получает скриншот: %v", got)
+	}
+	m.Reject(v.ID)
+
+	// Модель без зрения: работает по тексту, в истории — предупреждение.
+	m.Enqueue(p.ID, Draft{}, Plan{Goal: "Почини Add", Models: []string{"blind/m"}})
+	v = wait(t, m, p.ID)
+	found := false
+	for _, e := range v.Events {
+		found = found || strings.Contains(e.Text, "не видит картинки")
+	}
+	if !found {
+		t.Fatal("нет предупреждения для модели без зрения")
+	}
+	m.Reject(v.ID)
+	m.Wait()
+	m.Delete(p.ID)
+	if _, err := os.Stat(filepath.Join(m.AttachDir, p.ID)); !os.IsNotExist(err) {
+		t.Fatal("вложения удаляются вместе с задачей")
+	}
+}

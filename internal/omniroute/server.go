@@ -155,6 +155,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", fmt.Sprintf("нет адаптера для типа %q", provider.Kind))
 		return
 	}
+	// Картинки и звук уходят только моделям с нужным тегом: иначе провайдер
+	// молча проигнорирует вложение или ответит непонятной ошибкой.
+	if images, audio := mediaIn(req.Messages); images || audio {
+		if images && !HasCap(provider, CapVision) {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("модель %s не видит картинки — включите ей тег «Картинки» или выберите другую", req.Model))
+			return
+		}
+		if audio && !HasCap(provider, CapAudio) {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("модель %s не принимает звук — включите ей тег «Звук» или выберите другую", req.Model))
+			return
+		}
+	}
 	// Текстовые провайдеры получают tools через эмуляцию в промпте.
 	if len(req.Tools) > 0 && (provider.Kind == store.KindCLI || provider.Kind == store.KindWeb) {
 		adapter = &toolEmuAdapter{inner: adapter}
@@ -433,4 +445,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, kind, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"type": kind, "message": msg}})
+}
+
+// mediaIn сообщает, есть ли в сообщениях картинки и звук.
+func mediaIn(msgs []Message) (images, audio bool) {
+	for _, m := range msgs {
+		parts, err := m.Parts()
+		if err != nil {
+			continue
+		}
+		for _, p := range parts {
+			switch p.Type {
+			case "image_url":
+				images = true
+			case "input_audio":
+				audio = true
+			}
+		}
+	}
+	return
 }

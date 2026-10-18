@@ -60,7 +60,12 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	if len(call.Request.Tools) > 0 {
 		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: "CLI-провайдеры не поддерживают tools"}
 	}
-	prompt, err := renderPrompt(call.Request.Messages)
+	msgs, imgDir, cleanupImages, err := materializeImages(call.Request.Messages)
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: err.Error()}
+	}
+	defer cleanupImages()
+	prompt, err := renderPrompt(msgs)
 	if err != nil {
 		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: err.Error()}
 	}
@@ -72,6 +77,10 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	bin, err := FindExecutable(args[0])
 	if err != nil {
 		return Usage{}, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%v: установите её или добавьте провайдера заново через edy provider add", err)}
+	}
+	if flag, ok := addDirFlag[filepath.Base(args[0])]; ok && imgDir != "" {
+		// Картинки лежат вне рабочей папки — утилите нужно разрешить их читать.
+		args = append([]string{args[0], flag, imgDir}, args[1:]...)
 	}
 	if call.MCP != nil {
 		attach, ok := mcpCapable[filepath.Base(args[0])]

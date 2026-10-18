@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +45,9 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/tasks/{id}", h.deleteTask)
 	m.HandleFunc("GET /api/tasks/{id}/patch", h.taskPatch)
 	m.HandleFunc("POST /api/tasks/{id}/revert-file", h.revertFile)
+	m.HandleFunc("POST /api/tasks/{id}/attachments", h.addAttachment)
+	m.HandleFunc("GET /api/tasks/{id}/attachments/{file}", h.getAttachment)
+	m.HandleFunc("DELETE /api/tasks/{id}/attachments/{file}", h.deleteAttachment)
 	m.HandleFunc("GET /api/projects/files", h.projectFiles)
 	m.HandleFunc("GET /api/stats/models", h.modelStats)
 	m.HandleFunc("GET /api/projects/file", h.projectFile)
@@ -748,6 +752,54 @@ func (h *Handler) taskAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	reply(w, v)
+}
+
+func (h *Handler) addAttachment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+		Data string `json:"data"` // data:image/png;base64,…
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON или картинка больше 5 МБ")
+		return
+	}
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	v, err := h.Tasks.Attach(r.PathValue("id"), req.Name, req.Data)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	replyStatus(w, http.StatusCreated, v)
+}
+
+func (h *Handler) getAttachment(w http.ResponseWriter, r *http.Request) {
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	path, err := h.Tasks.AttachmentPath(r.PathValue("id"), r.PathValue("file"))
+	if err != nil {
+		fail(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeFile(w, r, path)
+}
+
+func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request) {
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	v, err := h.Tasks.RemoveAttachment(r.PathValue("id"), r.PathValue("file"))
+	if err != nil {
+		fail(w, http.StatusNotFound, err.Error())
 		return
 	}
 	reply(w, v)

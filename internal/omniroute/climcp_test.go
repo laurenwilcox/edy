@@ -1,7 +1,9 @@
 package omniroute
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,5 +39,34 @@ func TestMCPAttachRules(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("конфиг не удалён")
+	}
+}
+
+func TestMaterializeImages(t *testing.T) {
+	png := "data:image/png;base64,iVBORw0KGgo="
+	content, _ := json.Marshal([]ContentPart{{Type: "text", Text: "Что на скриншоте?"}, {Type: "image_url", ImageURL: &ImageURL{URL: png}}, {Type: "image_url", ImageURL: &ImageURL{URL: "https://x/y.png"}}})
+	msgs, dir, cleanup, err := materializeImages([]Message{{Role: "user", Content: content}})
+	if err != nil || dir == "" {
+		t.Fatalf("err=%v dir=%q", err, dir)
+	}
+	text, _ := msgs[0].Text()
+	if !strings.Contains(text, "Что на скриншоте?") || !strings.Contains(text, "[Изображение: "+dir) || !strings.Contains(text, "[Изображение по ссылке: https://x/y.png]") {
+		t.Fatalf("текст: %s", text)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "image-1.png"))
+	if err != nil || len(data) != 8 {
+		t.Fatalf("файл: %v %d", err, len(data))
+	}
+	cleanup()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("папка с картинками должна удаляться")
+	}
+	audio, _ := json.Marshal([]ContentPart{{Type: "input_audio", InputAudio: &InputAudio{Data: "x", Format: "wav"}}})
+	if _, _, _, err := materializeImages([]Message{{Role: "user", Content: audio}}); err == nil {
+		t.Fatal("звук CLI не принимает")
+	}
+	plain, _ := json.Marshal("просто текст")
+	if _, dir, _, _ := materializeImages([]Message{{Role: "user", Content: plain}}); dir != "" {
+		t.Fatal("без картинок папка не создаётся")
 	}
 }

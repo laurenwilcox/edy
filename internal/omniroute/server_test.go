@@ -384,3 +384,20 @@ func TestAnthropicRotationOn429(t *testing.T) {
 		t.Fatalf("keys = %v", keys)
 	}
 }
+
+func TestMediaNeedsCaps(t *testing.T) {
+	srv, st, _ := setupOpenAI(t, "sk-test")
+	img := `{"model":"oa/gpt-x","messages":[{"role":"user","content":[{"type":"text","text":"что тут?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]}`
+	rec := do(t, srv, "POST", "/v1/chat/completions", img)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "не видит картинки") {
+		t.Fatalf("без тега «Картинки»: %d %s", rec.Code, rec.Body)
+	}
+	st.SetCaps("oa", []string{CapTools, CapVision})
+	if rec := do(t, srv, "POST", "/v1/chat/completions", img); rec.Code != http.StatusOK {
+		t.Fatalf("с тегом: %d %s", rec.Code, rec.Body)
+	}
+	audio := `{"model":"oa/gpt-x","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"UklGRg==","format":"wav"}}]}]}`
+	if rec := do(t, srv, "POST", "/v1/chat/completions", audio); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "не принимает звук") {
+		t.Fatalf("звук без тега: %d %s", rec.Code, rec.Body)
+	}
+}

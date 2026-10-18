@@ -244,6 +244,8 @@ func userBlocks(m Message) ([]anthropic.ContentBlockParamUnion, error) {
 				return nil, err
 			}
 			blocks = append(blocks, b)
+		case "input_audio":
+			return nil, errors.New("Anthropic API не принимает звук — выберите модель с тегом «Звук»")
 		default:
 			return nil, fmt.Errorf("тип части сообщения %q не поддерживается", p.Type)
 		}

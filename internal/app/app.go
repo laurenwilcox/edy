@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
@@ -114,6 +115,12 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
 	h.Tasks.Notes = st
+	h.Tasks.AttachDir = filepath.Join(home, "attachments")
+	h.Tasks.CanSee = func(model string) bool {
+		name, _, _ := strings.Cut(model, "/")
+		p, err := st.Provider(name)
+		return err == nil && omniroute.HasCap(p, omniroute.CapVision)
+	}
 	h.Tasks.MCP = h.MCPBridge()
 	h.Tasks.Review = review.New(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "reviewer", HTTP: agent.InProcess(router)}, st,
 		func(v tasks.View) string {

@@ -20,6 +20,24 @@ type Msg struct {
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Images — картинки (data:-URL) к сообщению: уходят частями image_url.
+	Images []string `json:"-"`
+}
+
+// MarshalJSON пишет сообщение с картинками в формате частей OpenAI.
+func (m Msg) MarshalJSON() ([]byte, error) {
+	type plain Msg
+	if len(m.Images) == 0 {
+		return json.Marshal(plain(m))
+	}
+	parts := []map[string]any{{"type": "text", "text": m.Content}}
+	for _, img := range m.Images {
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": img}})
+	}
+	return json.Marshal(struct {
+		Role    string           `json:"role"`
+		Content []map[string]any `json:"content"`
+	}{m.Role, parts})
 }
 
 type ToolCall struct {

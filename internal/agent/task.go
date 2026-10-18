@@ -55,6 +55,10 @@ type Task struct {
 	// исполнитель видит сразу (остальное ищет сам через project_memory).
 	Memory      Memory
 	MemoryBrief string
+	// Images — скриншоты к задаче (data:-URL); их получает модель, для
+	// которой CanSee вернёт true, остальные — предупреждение в ленте.
+	Images []string
+	CanSee func(model string) bool
 	// Extra — внешние MCP-серверы из каталога Edy, которые Оркестратор выдал
 	// исполнителю вместе с MCP Edy (только исполнителям с поддержкой MCP).
 	Extra []string
@@ -215,7 +219,7 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow Shadow, hooks []Hook, step *int) (string, bool, error) {
 	msgs := []Msg{
 		{Role: "system", Content: strings.TrimSpace(systemPrompt + "\n\n" + skills.Catalog(t.Skills) + t.memoryNote())},
-		{Role: "user", Content: "Задача:\n" + t.Goal},
+		{Role: "user", Content: "Задача:\n" + t.Goal, Images: t.imagesFor(model)},
 	}
 	tools := ws.Tools()
 	failures := 0
@@ -288,6 +292,19 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 	}
 }
 
+// imagesFor — скриншоты задачи, если модель их видит.
+func (t *Task) imagesFor(model string) []string {
+	if len(t.Images) == 0 {
+		return nil
+	}
+	if t.CanSee == nil || !t.CanSee(model) {
+		t.emit("info", "К задаче приложено скриншотов: %d, но %s не видит картинки — работает только по тексту", len(t.Images), model)
+		return nil
+	}
+	t.emit("info", "%s получает скриншоты задачи: %d", model, len(t.Images))
+	return t.Images
+}
+
 // memoryNote — раздел системного промпта о памяти проекта.
 func (t *Task) memoryNote() string {
 	if t.Memory == nil {
@@ -358,7 +375,7 @@ func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step 
 		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
-		reply, err := t.LLM.Chat(ctx, model, []Msg{{Role: "user", Content: prompt}}, nil)
+		reply, err := t.LLM.Chat(ctx, model, []Msg{{Role: "user", Content: prompt, Images: t.imagesFor(model)}}, nil)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", false, ctx.Err()

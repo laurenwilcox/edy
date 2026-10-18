@@ -50,6 +50,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Edy записывает голосовые сообщения и диктовку для чата с моделями.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Edy превращает речь в текст в поле ввода.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <!-- Окно открывает интерфейс Edy с http://127.0.0.1 -->

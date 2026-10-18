@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -85,27 +86,29 @@ type View struct {
 	IssueURL string `json:"issue_url,omitempty"` // задача импортирована из issue
 	// IssueRef — как сослаться на issue в коммите, чтобы хостинг его закрыл
 	// (owner/repo#12 или #12).
-	IssueRef string             `json:"issue_ref,omitempty"`
-	Plan     string             `json:"plan,omitempty"` // утверждённый план Оркестратора
-	Goal     string             `json:"goal"`           // что получает исполнитель
-	Models   []string           `json:"models"`
-	MCP      []string           `json:"mcp,omitempty"`    // внешние MCP-серверы, выданные Оркестратором
-	Skills   []string           `json:"skills,omitempty"` // скиллы, выданные исполнителю
-	State    string             `json:"state"`
-	Error    string             `json:"error,omitempty"`
-	Summary  string             `json:"summary,omitempty"`
-	Model    string             `json:"model,omitempty"`
-	Diff     string             `json:"diff,omitempty"`
-	Review   *Review            `json:"review,omitempty"`
-	Branch   string             `json:"branch,omitempty"`
-	PRURL    string             `json:"pr_url,omitempty"`
-	Note     string             `json:"note,omitempty"`
-	Agents   []string           `json:"agents"` // id агентов в журнале
-	Position int64              `json:"position"`
-	Created  time.Time          `json:"created"`
-	Updated  time.Time          `json:"updated"`
-	Events   []store.BoardEvent `json:"events"`
-	NextFrom int64              `json:"next_from"` // id события, после которого запрашивать новые
+	IssueRef string   `json:"issue_ref,omitempty"`
+	Plan     string   `json:"plan,omitempty"` // утверждённый план Оркестратора
+	Goal     string   `json:"goal"`           // что получает исполнитель
+	Models   []string `json:"models"`
+	MCP      []string `json:"mcp,omitempty"`    // внешние MCP-серверы, выданные Оркестратором
+	Skills   []string `json:"skills,omitempty"` // скиллы, выданные исполнителю
+	State    string   `json:"state"`
+	Error    string   `json:"error,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	Model    string   `json:"model,omitempty"`
+	Diff     string   `json:"diff,omitempty"`
+	Review   *Review  `json:"review,omitempty"`
+	Branch   string   `json:"branch,omitempty"`
+	PRURL    string   `json:"pr_url,omitempty"`
+	Note     string   `json:"note,omitempty"`
+	Agents   []string `json:"agents"` // id агентов в журнале
+	// Attachments — скриншоты к задаче (имена файлов).
+	Attachments []string           `json:"attachments,omitempty"`
+	Position    int64              `json:"position"`
+	Created     time.Time          `json:"created"`
+	Updated     time.Time          `json:"updated"`
+	Events      []store.BoardEvent `json:"events"`
+	NextFrom    int64              `json:"next_from"` // id события, после которого запрашивать новые
 }
 
 // record — то, что хранится в базе: карточка и служебные поля.
@@ -148,6 +151,10 @@ type Manager struct {
 	Notes memory.Store
 	// MCP подключает MCP-сервер Edy к исполнителям, которые это умеют.
 	MCP agent.MCPBridge
+	// AttachDir — где хранить скриншоты задач; CanSee — видит ли модель
+	// картинки (тег «Картинки»).
+	AttachDir string
+	CanSee    func(model string) bool
 	// Now подменяется в тестах.
 	Now func() time.Time
 	// maxAttempts — провалов проверок до передачи задачи (0 — по умолчанию).
@@ -452,6 +459,8 @@ func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Sk
 	var agentsMu sync.Mutex
 	mem, brief := m.memoryFor(r)
 	task := &agent.Task{
+		Images:      m.images(r),
+		CanSee:      m.CanSee,
 		MaxAttempts: m.maxAttempts,
 		Memory:      mem,
 		MemoryBrief: brief,
@@ -867,6 +876,9 @@ func (m *Manager) Delete(id string) error {
 	}
 	if r.State == StateRunning || r.State == StateDone {
 		return errors.New("сначала остановите задачу или примите решение по ней")
+	}
+	if dir, err := m.attachDir(id); err == nil {
+		os.RemoveAll(dir)
 	}
 	return m.Board.DeleteBoardTask(id)
 }

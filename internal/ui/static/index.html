@@ -205,6 +205,24 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .orch-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--a1) 4%, transparent); }
 .orch-bar label { font-size: 11.5px; }
 .orch-bar select { width: auto; max-width: 240px; padding: 6px 9px; }
+.tool-btn { width: 36px; height: 36px; border-radius: 11px; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 17px; flex: none; transition: background .15s, color .15s; }
+.tool-btn:hover { background: color-mix(in srgb, var(--a1) 10%, transparent); color: var(--text); }
+.tool-btn.on { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+.attach-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.attach { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--field); display: flex; align-items: center; }
+.attach img { display: block; height: 64px; max-width: 120px; object-fit: cover; }
+.attach .audio { padding: 8px 12px; font-size: 13px; }
+.attach button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; font-size: 11px; line-height: 20px; padding: 0; }
+.msg .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg .thumbs img { height: 90px; border-radius: 8px; cursor: zoom-in; }
+.composer.drop .composer-box { border-color: var(--a1); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 18%, transparent); }
+.gallery { display: flex; flex-wrap: wrap; gap: 8px; }
+.gallery .shot { position: relative; }
+.gallery img { height: 110px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
+.gallery .shot button { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; font-size: 12px; padding: 0; }
+.lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.8); display: flex; align-items: center; justify-content: center; padding: 30px; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 10px; }
 /* ---- Код: подсветка, diff, просмотр файлов ---- */
 .code { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 10px; overflow: auto; }
 .code table { border-collapse: collapse; width: 100%; }
@@ -780,11 +798,16 @@ h3.sub:first-child { margin-top: 0; }
       <div class="board-cols" id="board-cols"></div>
     </div>
     <div class="composer" id="composer-wrap">
+      <div class="attach-row" id="attach-row" hidden></div>
       <form class="composer-box" id="composer">
+        <button class="tool-btn" id="attach-btn" type="button" title="Прикрепить картинку (или вставьте скриншот ⌘V, или перетащите файл)">📎</button>
+        <input type="file" id="attach-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
         <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
+        <button class="tool-btn" id="dictate-btn" type="button" title="Диктовка: речь превращается в текст в поле (без ИИ и токенов)">🎤</button>
+        <button class="tool-btn" id="voice-btn" type="button" title="Голосовое сообщение модели — для моделей с тегом «Звук»">🎙</button>
         <button class="send" id="send" type="submit" title="Отправить">➤</button>
       </form>
-      <div class="hint">Enter — отправить, Shift+Enter — новая строка</div>
+      <div class="hint">Enter — отправить, Shift+Enter — новая строка · 📎 скриншот можно вставить ⌘V</div>
     </div>
   </main>
 
@@ -1502,11 +1525,13 @@ async function send() {
   if (abort) { abort.abort(); return; }
   const text = input.value.trim();
   const model = $("#model").value;
-  if (!text) return;
+  if (!text && !pending.images.length && !pending.audio) return;
   if (!model) { toast("Сначала добавьте провайдера с моделями", true); openPanel("p-add"); return; }
   input.value = ""; autosize();
-  addMessage("user", text);
-  history_.push({ role: "user", content: text });
+  const sent = addMessage("user", text || (pending.audio ? "🎙 голосовое сообщение" : ""));
+  if (pending.images.length) sent.m.append(el("div", { class: "thumbs" }, ...pending.images.map((i) => el("img", { src: i.data, alt: i.name, onclick: () => showImage(i.data) }))));
+  history_.push({ role: "user", content: messageContent(text) });
+  pending.images = []; pending.audio = null; renderPending();
 
   const { m, body } = addMessage("bot", "", model);
   body.append(el("span", { class: "typing" }, el("span"), el("span"), el("span")));
@@ -1579,6 +1604,202 @@ $("#new-chat").addEventListener("click", () => {
   input.focus();
 });
 
+// ============ Вложения, диктовка и звук ============
+// Картинки уходят моделям с тегом «Картинки», звук — с тегом «Звук»; OmniRoute
+// проверяет это сам и объясняет, если модель не подходит.
+const pending = { images: [], audio: null };
+const MAX_IMAGE = 5 << 20;
+
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function addImages(files) {
+  for (const f of files) {
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(f.type)) { toast("Можно прикрепить PNG, JPEG, GIF или WebP", true); continue; }
+    if (f.size > MAX_IMAGE) { toast("Картинка больше 5 МБ", true); continue; }
+    if (pending.images.length >= 4) { toast("Не больше 4 картинок за сообщение", true); break; }
+    pending.images.push({ name: f.name || "screenshot.png", data: await readAsDataURL(f) });
+  }
+  renderPending();
+}
+
+function renderPending() {
+  const row = $("#attach-row");
+  row.hidden = !pending.images.length && !pending.audio;
+  row.replaceChildren(
+    ...pending.images.map((img, i) => el("div", { class: "attach", title: img.name },
+      el("img", { src: img.data, alt: img.name }),
+      el("button", { type: "button", title: "Убрать", onclick: () => { pending.images.splice(i, 1); renderPending(); } }, "✕"))),
+    pending.audio ? el("div", { class: "attach" }, el("span", { class: "audio" }, `🎙 голосовое · ${pending.audio.seconds} с`),
+      el("button", { type: "button", title: "Убрать", onclick: () => { pending.audio = null; renderPending(); } }, "✕")) : "");
+}
+
+function showImage(src) {
+  const box = el("div", { class: "lightbox", onclick: () => box.remove() }, el("img", { src }));
+  document.body.append(box);
+}
+
+// messageContent собирает содержимое сообщения: строку или части OpenAI.
+function messageContent(text) {
+  if (!pending.images.length && !pending.audio) return text;
+  const parts = [{ type: "text", text: text || (pending.audio ? "(голосовое сообщение)" : "Что на изображении?") }];
+  for (const img of pending.images) parts.push({ type: "image_url", image_url: { url: img.data } });
+  if (pending.audio) parts.push({ type: "input_audio", input_audio: { data: pending.audio.data, format: "wav" } });
+  return parts;
+}
+
+$("#attach-btn").addEventListener("click", () => $("#attach-file").click());
+$("#attach-file").addEventListener("change", (e) => { addImages([...e.target.files]); e.target.value = ""; });
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (files.length) { e.preventDefault(); addImages(files); }
+});
+const composerWrap = $("#composer-wrap");
+composerWrap.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); composerWrap.classList.add("drop"); } });
+composerWrap.addEventListener("dragleave", () => composerWrap.classList.remove("drop"));
+composerWrap.addEventListener("drop", (e) => { e.preventDefault(); composerWrap.classList.remove("drop"); addImages([...e.dataTransfer.files]); });
+
+// ---- Диктовка: речь → текст в поле ввода ----
+// Распознаёт сам браузер или macOS (Web Speech API), без запросов к моделям
+// и без расхода токенов. Там, где его нет, работает системная диктовка macOS.
+let recognition = null;
+$("#dictate-btn").addEventListener("click", () => {
+  const btn = $("#dictate-btn");
+  if (recognition) { recognition.stop(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    toast("Здесь нет встроенного распознавания речи. В macOS работает системная диктовка: дважды нажмите Fn (или 🎤) — текст появится в поле ввода, без ИИ и токенов", true);
+    input.focus();
+    return;
+  }
+  recognition = new SR();
+  recognition.lang = "ru-RU";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  const base = input.value ? input.value.replace(/\s*$/, " ") : "";
+  let final = "";
+  recognition.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    input.value = base + final + interim;
+    autosize();
+  };
+  recognition.onerror = (e) => { if (e.error !== "no-speech" && e.error !== "aborted") toast("Диктовка: " + (e.error === "not-allowed" ? "нет доступа к микрофону" : e.error), true); };
+  recognition.onend = () => { recognition = null; btn.classList.remove("on"); input.focus(); };
+  recognition.start();
+  btn.classList.add("on");
+});
+
+// ---- Голосовое сообщение модели (тег «Звук») ----
+// Запись в WAV 16 бит прямо в браузере: модели со звуком принимают wav.
+let recorder = null;
+$("#voice-btn").addEventListener("click", async () => {
+  const btn = $("#voice-btn");
+  if (recorder) { recorder.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia) return toast("Запись звука здесь недоступна — откройте Edy в браузере (edy ui)", true);
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { return toast("Нет доступа к микрофону — разрешите его в настройках", true); }
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(proc); proc.connect(ctx.destination);
+  const started = Date.now();
+  const limit = setTimeout(() => recorder?.stop(), 120000);
+  btn.classList.add("on");
+  toast("Запись… нажмите 🎙 ещё раз, чтобы закончить");
+  recorder = {
+    stop: () => {
+      clearTimeout(limit);
+      proc.disconnect(); src.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      const rate = ctx.sampleRate;
+      ctx.close();
+      recorder = null;
+      btn.classList.remove("on");
+      const wav = encodeWAV(chunks, rate);
+      pending.audio = { data: wav, seconds: Math.round((Date.now() - started) / 1000) };
+      renderPending();
+      toast("Голосовое готово — отправьте его модели с тегом «Звук»");
+    },
+  };
+});
+
+// encodeWAV — PCM 16 бит, моно, 16 кГц (понижение частоты — простым прореживанием).
+function encodeWAV(chunks, rate) {
+  const target = 16000;
+  const step = rate / target;
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const n = Math.floor(total / step);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, target, true); v.setUint32(28, target * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, n * 2, true);
+  const flat = new Float32Array(total);
+  let o = 0;
+  for (const c of chunks) { flat.set(c, o); o += c.length; }
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, flat[Math.floor(i * step)]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  let bin = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+// ---- Скриншоты к задаче (карточка на доске) ----
+async function attachmentGallery(t) {
+  const box = el("div", { class: "gallery" });
+  for (const f of t.attachments || []) {
+    const shot = el("div", { class: "shot" });
+    box.append(shot);
+    try {
+      const res = await fetch(`/api/tasks/${t.id}/attachments/${encodeURIComponent(f)}`, { headers: { "Authorization": "Bearer " + token } });
+      const url = URL.createObjectURL(await res.blob());
+      shot.append(el("img", { src: url, alt: f, title: f, onclick: () => showImage(url) }),
+        el("button", { type: "button", title: "Удалить", onclick: async () => {
+          try { await api("DELETE", `/api/tasks/${t.id}/attachments/${encodeURIComponent(f)}`); openTask(t.id); } catch (e) { toast(e.message, true); }
+        } }, "✕"));
+    } catch { shot.append(el("span", { class: "small muted" }, f)); }
+  }
+  const pick = el("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", multiple: "" });
+  pick.hidden = true;
+  const upload = async (files) => {
+    for (const f of files) {
+      if (f.size > MAX_IMAGE) { toast("Картинка больше 5 МБ", true); continue; }
+      try { await api("POST", `/api/tasks/${t.id}/attachments`, { name: f.name || "screenshot.png", data: await readAsDataURL(f) }); }
+      catch (e) { toast(e.message, true); }
+    }
+    openTask(t.id);
+  };
+  pick.addEventListener("change", () => upload([...pick.files]));
+  const wrap = el("div", {}, box, el("div", { class: "row", style: "margin-top:8px" },
+    el("button", { class: "btn ghost", type: "button", onclick: () => pick.click() }, "📎 Прикрепить скриншот"),
+    el("span", { class: "small muted" }, "или вставьте из буфера (⌘V), пока открыта карточка. Получит исполнитель с тегом «Картинки»")), pick);
+  wrap.upload = upload;
+  return wrap;
+}
+$("#task-modal").addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  const gallery = $("#task-modal-box .attachments");
+  if (files.length && gallery?.upload) { e.preventDefault(); gallery.upload(files); }
+});
+
 // ============ Режимы чата ============
 let chatMode = "chat";
 function setChatMode(mode) {
@@ -1609,6 +1830,10 @@ let orchTaskID = ""; // задача из пула, которую обсужд�
 const newConversation = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 async function sendOrch() {
+  if (pending.images.length || pending.audio) {
+    toast("Оркестратору вложения не передаются: прикрепите скриншот к карточке задачи на доске — его получит исполнитель", true);
+    return;
+  }
   if (orchBusy) return;
   const text = input.value.trim();
   const project = $("#project").value;
@@ -2234,6 +2459,11 @@ async function openTask(id) {
     el("div", { class: "row", style: "margin-top:12px" }, ...actions),
     t.issue_url ? el("div", { class: "small", style: "margin-top:8px" }, "🔗 ", el("a", { href: t.issue_url, target: "_blank", rel: "noopener" }, t.issue_url), el("span", { class: "muted" }, " · после Approve коммит закроет issue (" + t.issue_ref + ")")) : "",
     t.request ? sec("Задача", el("div", { class: "small", style: "white-space:pre-wrap" }, t.request)) : "",
+    (() => {
+      const holder = el("div", { class: "attachments" }, el("div", { class: "small muted" }, "…"));
+      attachmentGallery(t).then((g) => { g.classList.add("attachments"); holder.replaceWith(g); });
+      return sec("Скриншоты (" + (t.attachments?.length || 0) + ")", holder);
+    })(),
     t.plan ? sec("План Оркестратора", el("div", { class: "plan", style: "margin-top:0" }, t.plan)) : "",
     (t.models?.length || t.mcp?.length || t.skills?.length) ? sec("Исполнитель",
       el("div", { class: "row small" }, ...(t.models || []).map((m, i) => el("span", { class: "badge" + (i ? " cli" : "") }, (i ? "резерв: " : "") + m)),
