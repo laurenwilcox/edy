@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 )
 
@@ -72,6 +73,7 @@ type run struct {
 	cancel   context.CancelFunc
 	agentID  string        // текущий агент-исполнитель
 	pending  []agent.Event // события до появления первого агента
+	skills   []skills.Skill
 }
 
 // Manager держит задачи в памяти процесса.
@@ -79,6 +81,8 @@ type Manager struct {
 	LLM      agent.LLM
 	Journal  Journal
 	Finalize FinalizeFunc // nil — новая ветка edy/… без push
+	// SkillsHome — папка данных Edy: общие скиллы лежат в её skills/.
+	SkillsHome string
 	// Now подменяется в тестах.
 	Now func() time.Time
 
@@ -106,8 +110,13 @@ func (m *Manager) Start(project, goal string, models []string) (View, error) {
 		m.mu.Unlock()
 		return m.Get(id, 0), ErrBusy
 	}
+	list, err := skills.Load(skills.Dirs(m.SkillsHome, project))
+	if err != nil {
+		m.mu.Unlock()
+		return View{}, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, State: StateRunning, Created: m.Now(), Events: []agent.Event{}, Agents: []string{}}}
+	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, State: StateRunning, Created: m.Now(), Events: []agent.Event{}, Agents: []string{}}, skills: list}
 	m.runs[r.view.ID] = r
 	m.byProj[project] = r.view.ID
 	m.mu.Unlock()
@@ -125,6 +134,7 @@ func (m *Manager) work(ctx context.Context, r *run) {
 		Goal:   r.view.Goal,
 		Models: r.view.Models,
 		LLM:    m.LLM,
+		Skills: r.skills,
 		OnEvent: func(e agent.Event) {
 			m.mu.Lock()
 			r.view.Events = append(r.view.Events, e)

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/laurenwilcox/name/internal/skills"
 )
 
 // Итог задачи.
@@ -42,6 +44,8 @@ type Task struct {
 	// OnAttemptEnd — когда она закончила: ok=true — проверки прошли.
 	OnAttempt    func(model string)
 	OnAttemptEnd func(model string, ok bool, note string)
+	// Skills — скиллы проекта и общие; агент видит их список и грузит через use_skill.
+	Skills []skills.Skill
 }
 
 // Result — итог работы.
@@ -117,7 +121,10 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 	}
 	t.emit("checkpoint", "Снимок №0 — исходное состояние")
 
-	ws := Workspace{Root: t.Root}
+	ws := Workspace{Root: t.Root, Skills: t.Skills}
+	if len(t.Skills) > 0 {
+		t.emit("info", "Скиллов доступно агенту: %d", len(t.Skills))
+	}
 	res := Result{Baseline: baseline}
 	step := 0
 	for mi, model := range t.Models {
@@ -164,7 +171,7 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 // attempt — работа одной модели: до MaxAttempts провалов проверок подряд.
 func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow Shadow, hooks []Hook, step *int) (string, bool, error) {
 	msgs := []Msg{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: strings.TrimSpace(systemPrompt + "\n\n" + skills.Catalog(t.Skills))},
 		{Role: "user", Content: "Задача:\n" + t.Goal},
 	}
 	tools := ws.Tools()

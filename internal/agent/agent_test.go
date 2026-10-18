@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/laurenwilcox/name/internal/skills"
 )
 
 // Проект с ошибкой: Add вычитает вместо сложения, тест это ловит.
@@ -355,5 +357,28 @@ func TestContextTools(t *testing.T) {
 	}
 	if _, _, err := ws.Call("search_code", `{"query":" "}`); err == nil {
 		t.Fatal("пустой запрос должен отклоняться")
+	}
+}
+
+func TestWorkspaceSkills(t *testing.T) {
+	ws := Workspace{Root: t.TempDir()}
+	for _, d := range ws.Tools() {
+		if d.Function.Name == "use_skill" {
+			t.Fatal("без скиллов use_skill не нужен")
+		}
+	}
+	ws.Skills = []skills.Skill{{Name: "review", Description: "Ревью", Body: "Проверь ошибки."}}
+	found := false
+	for _, d := range ws.Tools() {
+		found = found || d.Function.Name == "use_skill"
+	}
+	if !found {
+		t.Fatal("нет use_skill")
+	}
+	if out, _, err := ws.Call("use_skill", `{"name":"review"}`); err != nil || !strings.Contains(out, "Проверь ошибки.") {
+		t.Fatalf("use_skill: %q %v", out, err)
+	}
+	if _, _, err := ws.Call("use_skill", `{"name":"nope"}`); err == nil {
+		t.Fatal("несуществующий скилл должен давать ошибку")
 	}
 }

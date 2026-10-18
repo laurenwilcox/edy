@@ -25,6 +25,7 @@ import (
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/app"
 	"github.com/laurenwilcox/name/internal/omniroute"
+	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/webchat"
 )
@@ -45,6 +46,8 @@ const usage = `Edy — ядро ИИ-IDE.
   edy task -model M[,M2] [-project DIR] "задача"
                                            агент выполняет задачу в проекте (Go/Python, git):
                                            хуки, снимки, Circuit Breaker, Approve в ветку edy/…
+  edy mcp [-project DIR]                   MCP-сервер Edy на stdio для Claude Code, Gemini CLI, Cursor…
+                                           (инструменты проекта, проверки, скиллы, снимки каждой правки)
   edy budget set <USD>                     дневной лимит расходов (0 — без лимита)
   edy spend                                расходы за сегодня
 
@@ -98,6 +101,8 @@ func run(args []string) error {
 		return err
 	case cmd == "web login" && len(args) == 3:
 		return webLogin(st, home, args[2])
+	case args[0] == "mcp":
+		return runMCP(home, args[1:], os.Stdin, os.Stdout)
 	case args[0] == "task":
 		return runTask(st, home, args[1:])
 	case cmd == "budget set" && len(args) == 3:
@@ -325,12 +330,17 @@ func runTask(st *store.Store, home string, args []string) error {
 			chain = append(chain, m)
 		}
 	}
+	list, err := skills.Load(skills.Dirs(home, root))
+	if err != nil {
+		return err
+	}
 	icons := map[string]string{"model": "🤖", "tool": "🔧", "checkpoint": "📸", "hooks": "🧪", "breaker": "⚡", "info": "ℹ️ ", "error": "⚠️ "}
 	task := &agent.Task{
 		Root:   root,
 		Goal:   goal,
 		Models: chain,
 		LLM:    &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)},
+		Skills: list,
 		OnEvent: func(e agent.Event) {
 			fmt.Printf("%s %s\n", icons[e.Kind], e.Text)
 		},

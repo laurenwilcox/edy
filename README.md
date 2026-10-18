@@ -61,6 +61,16 @@ curl http://127.0.0.1:11435/v1/chat/completions \
 base URL `http://127.0.0.1:11435/v1`, ключ — токен из `edy token`
 (он также лежит в `~/Library/Application Support/Edy/router.token`).
 
+## MCP: инструменты Edy для Claude Code, Gemini CLI, Cursor
+
+```sh
+# Claude Code в папке проекта
+claude mcp add edy -- edy mcp -project "$PWD"
+```
+
+Агент получает карту проекта, поиск по коду, правку файлов внутри проекта, проверки и скиллы. Каждая правка —
+снимок в Shadow Git. Готовые команды и JSON для других клиентов — в интерфейсе, экран «Подключение».
+
 ## Тесты
 
 ```sh

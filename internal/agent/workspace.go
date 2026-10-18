@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/laurenwilcox/name/internal/codeindex"
+	"github.com/laurenwilcox/name/internal/skills"
 )
 
 const (
@@ -27,6 +28,8 @@ var skipDirs = map[string]bool{".git": true, ".edy": true, "node_modules": true,
 // без .git и служебной папки .edy.
 type Workspace struct {
 	Root string
+	// Skills — скиллы, доступные агенту через use_skill.
+	Skills []skills.Skill
 }
 
 // resolve превращает путь от агента в абсолютный и не даёт выйти за пределы проекта.
@@ -79,7 +82,7 @@ func (w Workspace) Tools() []ToolDef {
 		return t
 	}
 	path := `{"type":"object","properties":{"path":{"type":"string","description":"путь от корня проекта"}},"required":["path"]}`
-	return []ToolDef{
+	tools := []ToolDef{
 		def("project_skeleton", "Скелет проекта: файлы, типы, функции и классы с номерами строк, без тел. Начинайте с него.", `{"type":"object","properties":{}}`),
 		def("search_code", "Найти код по словам (имена функций, понятия). Возвращает подходящие функции и классы с номерами строк.", `{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"сколько результатов, по умолчанию 5"}},"required":["query"]}`),
 		def("list_files", "Список файлов проекта (рекурсивно) в папке path.", `{"type":"object","properties":{"path":{"type":"string","description":"папка от корня проекта, по умолчанию корень"}}}`),
@@ -89,6 +92,10 @@ func (w Workspace) Tools() []ToolDef {
 		def("delete_file", "Удалить файл.", path),
 		def("finish", "Работа закончена. После этого Edy запустит линтеры и тесты.", `{"type":"object","properties":{"summary":{"type":"string","description":"что сделано, 1-3 предложения"}},"required":["summary"]}`),
 	}
+	if len(w.Skills) > 0 {
+		tools = append(tools, def("use_skill", "Загрузить скилл — инструкцию проекта по имени из списка скиллов.", `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`))
+	}
+	return tools
 }
 
 // Call выполняет инструмент. changed — менялись ли файлы (нужен снимок).
@@ -99,6 +106,7 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 		Old     string `json:"old"`
 		New     string `json:"new"`
 		Query   string `json:"query"`
+		Name    string `json:"name"`
 		Limit   int    `json:"limit"`
 	}
 	if args != "" && json.Unmarshal([]byte(args), &a) != nil {
@@ -120,6 +128,12 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 			a.Limit = 5
 		}
 		return codeindex.FormatHits(idx.Search(a.Query, a.Limit), 80), false, nil
+	case "use_skill":
+		sk, ok := skills.Find(w.Skills, a.Name)
+		if !ok {
+			return "", false, fmt.Errorf("скилл %q не найден", a.Name)
+		}
+		return "# Скилл " + sk.Name + "\n\n" + sk.Body, false, nil
 	case "list_files":
 		r, err := w.list(a.Path)
 		return r, false, err

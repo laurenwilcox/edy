@@ -113,3 +113,15 @@ func (s Shadow) Diff(ctx context.Context, from string) (string, error) {
 	}
 	return s.git(ctx, "diff", "--cached", "--stat", from)
 }
+
+// OpenShadow готовит теневой репозиторий проекта для правок вне задачи
+// (например, через MCP): прячет .edy от основного git и создаёт shadow.git.
+func OpenShadow(ctx context.Context, root string) (Shadow, error) {
+	if isRepo(ctx, root) {
+		if err := excludeEdyDir(root); err != nil {
+			return Shadow{}, err
+		}
+	}
+	s := Shadow{Root: root}
+	return s, s.Init(ctx)
+}

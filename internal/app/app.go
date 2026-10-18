@@ -77,6 +77,7 @@ type Server struct {
 	Token string
 	srv   *http.Server
 	web   *webchat.Manager
+	api   *api.Handler
 	done  chan error
 }
 
@@ -110,8 +111,10 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
 	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
 	h.Tasks.Journal = st
+	h.Tasks.SkillsHome = home
 	h.Tasks.Finalize = api.Finalizer(st)
 	h.ReposDir = filepath.Join(home, "repos")
+	h.Home = home
 	if n, err := st.InterruptRunningAgents(); err == nil && n > 0 {
 		log.Info("агенты прошлого запуска помечены как прерванные", "count", n)
 	}
@@ -120,9 +123,10 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	mux.Handle("/v1/", router)
 	mux.Handle("/healthz", router)
 	mux.Handle("/api/", h)
+	mux.Handle("/mcp", h.MCP())
 	mux.Handle("/", ui.Handler())
 
-	s := &Server{Addr: ln.Addr().String(), Token: tok, web: web, done: make(chan error, 1),
+	s := &Server{Addr: ln.Addr().String(), Token: tok, web: web, api: h, done: make(chan error, 1),
 		srv: &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}}
 	go func() {
 		err := s.srv.Serve(ln)
@@ -141,6 +145,7 @@ func (s *Server) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.srv.Shutdown(ctx)
+	s.api.CloseMCP()
 	s.web.Close()
 }
 

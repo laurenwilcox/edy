@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
@@ -58,8 +61,12 @@ type Handler struct {
 	Tasks *tasks.Manager
 	// ReposDir — куда клонировать репозитории с GitHub, GitLab и Gitea.
 	ReposDir string
+	// Home — папка данных Edy (общие скиллы в Home/skills).
+	Home string
 
-	mux *http.ServeMux
+	mux  *http.ServeMux
+	mcpM sync.Mutex
+	mcpS map[string]*mcpSession
 }
 
 func New(st *store.Store, token, addr string) *Handler {
@@ -84,6 +91,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("PUT /api/budget", h.setBudget)
 	h.registerProjectRoutes(m)
 	h.registerGitRoutes(m)
+	h.registerSkillRoutes(m)
 	h.mux = m
 	return h
 }
@@ -98,7 +106,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) info(w http.ResponseWriter, r *http.Request) {
-	reply(w, map[string]string{"base_url": "http://" + h.Addr + "/v1", "token": h.Token})
+	reply(w, map[string]string{"base_url": "http://" + h.Addr + "/v1", "token": h.Token,
+		"mcp_url": "http://" + h.Addr + "/mcp", "edy_path": edyPath()})
+}
+
+// edyPath — путь к консольной команде edy для настройки MCP по stdio. В
+// Edy.app окно — Contents/MacOS/Edy, а команда лежит в Contents/Resources/bin.
+func edyPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "edy"
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	if dir := filepath.Dir(exe); filepath.Base(dir) == "MacOS" {
+		cli := filepath.Join(dir, "..", "Resources", "bin", "edy")
+		if _, err := os.Stat(cli); err == nil {
+			return filepath.Clean(cli)
+		}
+	}
+	return exe
 }
 
 type cliPresetJSON struct {

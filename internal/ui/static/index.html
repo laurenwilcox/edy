@@ -259,6 +259,16 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .card.current { border-color: var(--a1); }
 h3.sub { font-size: 14px; margin: 18px 0 10px; }
 h3.sub:first-child { margin-top: 0; }
+.card textarea { width: 100%; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 11px; padding: 9px 11px; resize: vertical; }
+.card textarea:focus { outline: none; border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 14%, transparent); }
+.skill-add summary { cursor: pointer; color: var(--a1); font-weight: 600; font-size: 13px; margin-top: 10px; }
+.skill { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.skill:last-child { border-bottom: 0; }
+.skill .grow { flex: 1; min-width: 0; }
+.snippet { margin-bottom: 12px; }
+.snippet:last-child { margin-bottom: 0; }
+.snippet-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 12.5px; font-weight: 600; }
+.snippet pre { margin: 0; white-space: pre-wrap; word-break: break-all; background: var(--code); padding: 9px 11px; border-radius: 10px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; font-size: 13px; }
 .kv > span:nth-child(odd) { color: var(--muted); }
 .list-lines { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code); border-radius: 10px; padding: 8px 10px; max-height: 160px; overflow: auto; white-space: pre; }
@@ -424,6 +434,27 @@ h3.sub:first-child { margin-top: 0; }
           <div id="project-list"></div>
           <h3 class="sub">Снимки текущего проекта (Shadow Git)</h3>
           <div class="card" id="checkpoints"><div class="muted small">Выберите проект.</div></div>
+          <h3 class="sub">Скиллы — инструкции для агентов</h3>
+          <div class="card">
+            <div id="skills-list"><div class="muted small">Выберите проект.</div></div>
+            <details class="skill-add">
+              <summary>Добавить скилл</summary>
+              <form id="skill-form" class="form-grid" style="margin-top:10px">
+                <label>Где хранить
+                  <select name="scope">
+                    <option value="project">В проекте (.edy/skills)</option>
+                    <option value="global">Общий для всех проектов</option>
+                  </select>
+                </label>
+                <label>Имя <input name="name" placeholder="go-tests" autocomplete="off" required></label>
+                <label class="wide">Когда применять <input name="description" placeholder="Как писать тесты в этом проекте" autocomplete="off"></label>
+                <label class="wide">Инструкция
+                  <textarea name="body" rows="7" placeholder="Пиши табличные тесты, проверяй ошибки через errors.Is…" required></textarea>
+                </label>
+                <div class="row wide"><button class="btn" type="submit">Сохранить</button><span class="small muted">Формат совместим со скиллами Claude Code: папка &lt;имя&gt;/SKILL.md.</span></div>
+              </form>
+            </details>
+          </div>
           <h3 class="sub">Карта проекта — что видят агенты</h3>
           <div class="card">
             <form class="row" id="ctx-form" style="flex-wrap:nowrap">
@@ -539,6 +570,11 @@ h3.sub:first-child { margin-top: 0; }
                 <span class="value">провайдер/модель, например agy/claude-sonnet-4-6</span>
               </div>
             </div>
+          </div>
+          <h3 class="sub">MCP — инструменты Edy для внешних агентов</h3>
+          <div class="card" id="mcp-card">
+            <p class="small" style="margin-top:0">Claude Code, Gemini CLI, Cursor и другие MCP-клиенты получают инструменты Edy для текущего проекта: карту проекта и поиск по коду, чтение и правку файлов (только внутри проекта), проверки (тесты и линтеры) и скиллы. Каждая правка сохраняется снимком — её можно откатить в разделе «Проект». Подключения видны в окне «Агенты».</p>
+            <div id="mcp-snippets"><div class="muted small">Выберите проект в разделе «Проект».</div></div>
           </div>
         </section>
       </div>
@@ -1049,7 +1085,33 @@ let info = null;
 async function loadConnect() {
   try { info = await api("GET", "/api/info"); } catch (e) { return toast(e.message, true); }
   $("#base-url").textContent = info.base_url;
+  renderMCP();
 }
+function shq(v) { return "'" + String(v).replace(/'/g, "'\\''") + "'"; }
+
+function renderMCP() {
+  const box = $("#mcp-snippets");
+  const project = $("#project").value;
+  if (!info || !project) { box.replaceChildren(el("div", { class: "muted small" }, "Выберите проект в разделе «Проект» — команды появятся здесь.")); return; }
+  const url = info.mcp_url + "?project=" + encodeURIComponent(project);
+  const hidden = "<токен>";
+  const snippet = (title, note, shown, real) => el("div", { class: "snippet" },
+    el("div", { class: "snippet-head" }, el("span", {}, title),
+      el("button", { class: "btn ghost icon", onclick: async () => {
+        try { await navigator.clipboard.writeText(real); toast("Скопировано"); } catch { toast("Не удалось скопировать", true); }
+      } }, "Копировать")),
+    note ? el("div", { class: "small muted", style: "margin-bottom:5px" }, note) : "",
+    el("pre", {}, shown));
+  const http = (t) => `claude mcp add --transport http edy ${shq(url)} --header ${shq("Authorization: Bearer " + t)}`;
+  const stdio = `claude mcp add edy -- ${shq(info.edy_path)} mcp -project ${shq(project)}`;
+  const json = JSON.stringify({ mcpServers: { edy: { command: info.edy_path, args: ["mcp", "-project", project] } } }, null, 2);
+  box.replaceChildren(
+    el("div", { class: "small", style: "margin-bottom:10px" }, "Проект: ", el("span", { class: "mono" }, project)),
+    snippet("Claude Code — через запущенный Edy (HTTP)", "Вставьте в терминал в папке проекта. Токен подставится при копировании.", http(hidden), http(info.token)),
+    snippet("Claude Code — через команду edy (stdio)", "Работает и без открытого окна Edy; если Edy запущен, вызовы попадут в окно «Агенты».", stdio, stdio),
+    snippet("Gemini CLI, Cursor и другие (JSON)", "Gemini CLI: ~/.gemini/settings.json · Cursor: .cursor/mcp.json · Claude Desktop: claude_desktop_config.json", json, json));
+}
+
 $("#show-token").addEventListener("click", () => {
   if (!info) return;
   const v = $("#token-view");
@@ -1394,6 +1456,7 @@ $("#project").addEventListener("change", (e) => {
   store.set("edy-project", e.target.value);
   refreshProjectState();
   if ($("#drawer").classList.contains("open") && !$("#p-git").hidden) loadGit();
+  renderMCP();
 });
 
 async function loadProjects() {
@@ -1415,8 +1478,45 @@ function renderProjects() {
     el("div", { class: "small", style: "margin-top:6px" }, el("span", { class: "mono muted" }, p.path)),
     p.problem && !p.pending && !p.running ? el("div", { class: "small", style: "margin-top:6px;color:var(--danger)" }, p.problem) : "")));
   loadCheckpoints(current);
+  loadSkills(current);
   loadContext(current, "");
 }
+
+async function loadSkills(path) {
+  const box = $("#skills-list");
+  let r;
+  try { r = await api("GET", "/api/skills" + (path ? "?project=" + encodeURIComponent(path) : "")); }
+  catch (e) { box.replaceChildren(el("div", { class: "muted small" }, e.message)); return; }
+  if (!r.skills.length) {
+    box.replaceChildren(el("div", { class: "muted small" }, "Скиллов пока нет. Скилл — инструкция, которую агент загружает, когда она подходит к задаче: «как у нас пишут тесты», «как оформлять миграции». Их видят агенты Edy и внешние агенты по MCP."));
+    return;
+  }
+  box.replaceChildren(...r.skills.map((sk) => el("div", { class: "skill" },
+    el("div", { class: "grow" },
+      el("div", { class: "row" }, el("strong", {}, sk.name), el("span", { class: "badge" + (sk.scope === "global" ? " cli" : "") }, sk.scope === "global" ? "общий" : "проект")),
+      el("div", { class: "small muted" }, sk.description || ""),
+      el("details", {}, el("summary", { class: "small" }, "текст"), el("pre", { class: "log" }, sk.body))),
+    el("button", { class: "btn danger icon", onclick: async () => {
+      if (!confirm(`Удалить скилл «${sk.name}»?`)) return;
+      try {
+        await api("DELETE", `/api/skills?scope=${sk.scope}&name=${encodeURIComponent(sk.name)}` + (sk.scope === "project" ? "&project=" + encodeURIComponent(path) : ""));
+        toast("Скилл удалён"); loadSkills(path);
+      } catch (e) { toast(e.message, true); }
+    } }, "Удалить"))));
+}
+
+$("#skill-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, project = $("#project").value;
+  if (f.scope.value === "project" && !project) return toast("Сначала выберите проект", true);
+  try {
+    await api("POST", "/api/skills", { scope: f.scope.value, project, name: f.name.value.trim(), description: f.description.value.trim(), body: f.body.value });
+    toast("Скилл сохранён");
+    f.name.value = ""; f.description.value = ""; f.body.value = "";
+    f.closest("details").open = false;
+    loadSkills(project);
+  } catch (err) { toast(err.message, true); }
+});
 
 async function loadContext(path, q) {
   const out = $("#ctx-out");
@@ -1590,8 +1690,8 @@ $("#git-account-form").addEventListener("submit", async (e) => {
 });
 
 // ============ Агенты ============
-const roleIcon = { orchestrator: "🧭", executor: "🛠" };
-const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель" };
+const roleIcon = { orchestrator: "🧭", executor: "🛠", mcp: "🔌" };
+const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель", mcp: "Внешний агент (MCP)" };
 const agentState = { running: "работает", done: "закончил", failed: "не справился", cancelled: "остановлен", interrupted: "прерван" };
 let agentsTimer = null;
 let openAgent = null;
