@@ -37,6 +37,9 @@ type Conn struct {
 	Profile string // имя провайдера в Edy
 	Site    string // chatgpt, claude, gemini…
 	Browser string // BrowserChromium или BrowserChrome
+	// Visible — показывать окно управляемого браузера. По умолчанию он
+	// работает скрыто (headless); окно входа видно всегда.
+	Visible bool
 }
 
 // Состояния подключения для интерфейса.
@@ -64,7 +67,7 @@ type Status struct {
 // управление включается только после того, как пользователь закрыл это окно.
 type Manager struct {
 	DataDir string
-	// Headless и ExtraFlags нужны для тестов; в работе окно видимое.
+	// Headless и ExtraFlags нужны для тестов: Headless прячет и окно входа.
 	Headless   bool
 	ExtraFlags []string
 	// Log получает сообщения о скачивании и перезапусках.
@@ -86,6 +89,7 @@ type browser struct {
 	done    chan struct{} // закрывается, когда процесс браузера завершился
 	cancel  context.CancelFunc
 	browser context.Context // единственная рабочая вкладка браузера
+	visible bool            // запущен с видимым окном
 }
 
 type profileLimit struct {
@@ -294,10 +298,14 @@ func (m *Manager) ensure(ctx context.Context, c Conn) (*browser, error) {
 		return nil, ErrLoginOpen
 	}
 	if b := m.browsers[c.Profile]; b != nil {
-		if b.alive() {
+		switch {
+		case b.visible != c.Visible:
+			fmt.Fprintf(m.Log, "Режим окна подключения %s изменился — перезапускаю браузер\n", c.Profile)
+		case b.alive():
 			return b, nil
+		default:
+			fmt.Fprintf(m.Log, "Браузер подключения %s не отвечает — перезапускаю\n", c.Profile)
 		}
-		fmt.Fprintf(m.Log, "Браузер подключения %s не отвечает — перезапускаю\n", c.Profile)
 		b.stop()
 		delete(m.browsers, c.Profile)
 	}
@@ -311,7 +319,7 @@ func (m *Manager) ensure(ctx context.Context, c Conn) (*browser, error) {
 	if _, ok := m.logins[c.Profile]; ok {
 		return nil, ErrLoginOpen
 	}
-	b, err := m.launch(bin, c.Profile)
+	b, err := m.launch(bin, c.Profile, c.Visible)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +327,23 @@ func (m *Manager) ensure(ctx context.Context, c Conn) (*browser, error) {
 	return b, nil
 }
 
-func (m *Manager) launch(bin, profile string) (*browser, error) {
+// launchArgs — аргументы запуска рабочего браузера.
+func (m *Manager) launchArgs(profile string, visible bool) []string {
+	args := append(m.baseArgs(profile),
+		"--remote-debugging-port=0",
+		// Ответ должен продолжать генерироваться, даже если окно свёрнуто.
+		"--disable-background-timer-throttling",
+		"--disable-backgrounding-occluded-windows",
+		"--disable-renderer-backgrounding",
+	)
+	if !visible && !m.Headless {
+		// Скрытый режим: тот же браузер и профиль, но без окна и значка в Dock.
+		args = append(args, "--headless=new", "--window-size=1280,900")
+	}
+	return append(args, "about:blank")
+}
+
+func (m *Manager) launch(bin, profile string, visible bool) (*browser, error) {
 	dir := m.profileDir(profile)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -327,15 +351,7 @@ func (m *Manager) launch(bin, profile string) (*browser, error) {
 	portFile := filepath.Join(dir, "DevToolsActivePort")
 	os.Remove(portFile)
 
-	args := append(m.baseArgs(profile),
-		"--remote-debugging-port=0",
-		// Ответ должен продолжать генерироваться, даже если окно свёрнуто.
-		"--disable-background-timer-throttling",
-		"--disable-backgrounding-occluded-windows",
-		"--disable-renderer-backgrounding",
-		"about:blank",
-	)
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(bin, m.launchArgs(profile, visible)...)
 	// Своя группа процессов: при остановке закрываем и все процессы вкладок.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -364,7 +380,7 @@ func (m *Manager) launch(bin, profile string) (*browser, error) {
 		killGroup(cmd)
 		return nil, fmt.Errorf("не удалось подключиться к браузеру: %w", err)
 	}
-	return &browser{cmd: cmd, done: done, browser: browserCtx, cancel: func() { browserCancel(); allocCancel() }}, nil
+	return &browser{cmd: cmd, done: done, browser: browserCtx, cancel: func() { browserCancel(); allocCancel() }, visible: visible}, nil
 }
 
 // singlePage оставляет в браузере одну вкладку и возвращает её id. Лишние

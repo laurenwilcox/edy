@@ -151,3 +151,26 @@ func TestProviderCaps(t *testing.T) {
 		t.Fatalf("свои теги: %+v", list[0])
 	}
 }
+
+func TestProviderShowWindow(t *testing.T) {
+	h, _ := setup(t)
+	h.Web = &fakeWeb{}
+	if rec := call(h, "POST", "/api/providers", `{"name":"gpt","kind":"web","site":"chatgpt","browser":"chromium","show_window":true}`); rec.Code >= 300 {
+		t.Fatalf("создание: %d %s", rec.Code, rec.Body)
+	}
+	var list []providerJSON
+	json.Unmarshal(call(h, "GET", "/api/providers", "").Body.Bytes(), &list)
+	if len(list) != 1 || !list[0].ShowWindow {
+		t.Fatalf("show_window: %+v", list)
+	}
+	if rec := call(h, "PUT", "/api/providers/gpt/window", `{"show":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("переключение: %d", rec.Code)
+	}
+	json.Unmarshal(call(h, "GET", "/api/providers", "").Body.Bytes(), &list)
+	if list[0].ShowWindow {
+		t.Fatal("show_window не сбросился")
+	}
+	if rec := call(h, "PUT", "/api/providers/nope/window", `{"show":true}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("неизвестный провайдер: %d", rec.Code)
+	}
+}

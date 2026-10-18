@@ -69,6 +69,7 @@ var migrations = []string{
 	`ALTER TABLE providers ADD COLUMN caps TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE mcp_servers ADD COLUMN account TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE project_memory ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE providers ADD COLUMN show_window INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Provider — источник ИИ, подключённый к OmniRoute.
@@ -86,6 +87,9 @@ type Provider struct {
 	Site string
 	// Browser — вид браузера для KindWeb: chromium (изолированный) или chrome (установленный).
 	Browser string
+	// ShowWindow — для KindWeb: показывать окно браузера во время работы.
+	// По умолчанию браузер работает скрыто (headless).
+	ShowWindow bool
 	// Caps — возможности, заданные пользователем (картинки, звук, MCP…);
 	// nil — определяются автоматически по типу провайдера.
 	Caps []string
@@ -144,8 +148,8 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command, site, browser) VALUES (?,?,?,?,?,?,?,?,?)`,
-		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command, p.Site, p.Browser)
+	res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, models, price_in, price_out, command, site, browser, show_window) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		p.Name, p.Kind, p.BaseURL, strings.Join(p.Models, ","), p.PriceIn, p.PriceOut, command, p.Site, p.Browser, p.ShowWindow)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return 0, ErrExists
@@ -158,6 +162,18 @@ func (s *Store) AddProvider(p Provider) (int64, error) {
 // SetModels заменяет список моделей провайдера.
 func (s *Store) SetModels(name string, models []string) error {
 	res, err := s.db.Exec(`UPDATE providers SET models = ? WHERE name = ?`, strings.Join(models, ","), name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetShowWindow включает или выключает видимое окно браузера веб-провайдера.
+func (s *Store) SetShowWindow(name string, show bool) error {
+	res, err := s.db.Exec(`UPDATE providers SET show_window = ? WHERE name = ?`, show, name)
 	if err != nil {
 		return err
 	}
@@ -197,7 +213,7 @@ func (s *Store) DeleteProvider(name string) error {
 }
 
 func (s *Store) Provider(name string) (Provider, error) {
-	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps FROM providers WHERE name = ?`, name)
+	row := s.db.QueryRow(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps, show_window FROM providers WHERE name = ?`, name)
 	p, err := scanProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Provider{}, ErrNotFound
@@ -206,7 +222,7 @@ func (s *Store) Provider(name string) (Provider, error) {
 }
 
 func (s *Store) Providers() ([]Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps FROM providers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, kind, base_url, models, price_in, price_out, command, site, browser, caps, show_window FROM providers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +241,7 @@ func (s *Store) Providers() ([]Provider, error) {
 func scanProvider(row interface{ Scan(...any) error }) (Provider, error) {
 	var p Provider
 	var models, command, caps string
-	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command, &p.Site, &p.Browser, &caps); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &models, &p.PriceIn, &p.PriceOut, &command, &p.Site, &p.Browser, &caps, &p.ShowWindow); err != nil {
 		return Provider{}, err
 	}
 	if caps != "" {

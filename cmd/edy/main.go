@@ -278,7 +278,7 @@ func webLogin(st *store.Store, home, provider string) error {
 	web := webchat.NewManager(home)
 	web.Log = os.Stdout
 	defer web.Close()
-	if err := web.Login(context.Background(), webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser}); err != nil {
+	if err := web.Login(context.Background(), webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser, Visible: p.ShowWindow}); err != nil {
 		return err
 	}
 	fmt.Println("Войдите в аккаунт в открывшемся окне браузера, затем закройте это окно.")

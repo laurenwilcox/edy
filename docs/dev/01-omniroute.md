@@ -880,8 +880,11 @@ claude --mcp-config /tmp/edy-mcp-123.json --strict-mcp-config --allowedTools mcp
   браузер дополнительно (`launch`, `manager.go:328-335`): `--remote-debugging-port=0` (порт
   выбирает браузер и пишет в `DevToolsActivePort`), `--disable-background-timer-throttling`,
   `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding` (чтобы ответ
-  генерировался в свёрнутом окне), стартовая страница `about:blank`. Окно **видимое**
-  (`Headless` только для тестов).
+  генерировался в свёрнутом окне), стартовая страница `about:blank` (аргументы собирает `launchArgs`). По умолчанию браузер
+  **скрытый**: `--headless=new --window-size=1280,900`, тот же профиль, без окна и значка в Dock.
+  Если у провайдера включено «Показывать окно» (`Conn.Visible` ← `Provider.ShowWindow`), окно
+  видимое. При смене режима `ensure` перезапускает браузер. Окно входа (`Login`) всегда видимое.
+  User-agent не подменяется: если сайт не пускает headless-браузер, включите «Показывать окно».
 - **Подключение CDP** (`launch`): ждёт `DevToolsActivePort` до 30 с (`waitDevToolsURL`); если
   процесс сразу завершился — «возможно, этот профиль уже открыт в другом окне»; оставляет ровно
   одну вкладку (`singlePage` через `/json/list` и `/json/close/<id>`, закрывая восстановленные) и

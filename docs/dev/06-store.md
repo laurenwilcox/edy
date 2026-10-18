@@ -126,6 +126,7 @@ for _, m := range migrations {
 | 4 | `ALTER TABLE providers ADD COLUMN caps TEXT NOT NULL DEFAULT ''` | теги возможностей |
 | 5 | `ALTER TABLE mcp_servers ADD COLUMN account TEXT NOT NULL DEFAULT ''` | привязка сервера к аккаунту |
 | 6 | `ALTER TABLE project_memory ADD COLUMN agent TEXT NOT NULL DEFAULT ''` | личная память агентов команды |
+| 7 | `ALTER TABLE providers ADD COLUMN show_window INTEGER NOT NULL DEFAULT 0` | веб-чат работает в видимом окне |
 
 Обратите внимание: в `CREATE TABLE` этих таблиц новых колонок **нет** — на свежей базе они тоже
 появляются только через миграции. Поэтому полная схема таблицы = `CREATE` + её миграции.
@@ -161,10 +162,11 @@ for _, m := range migrations {
 | `site` | TEXT '' | веб-чат (`chatgpt`, `claude`, `gemini`…) |
 | `browser` | TEXT '' | `chromium` / `chrome` |
 | `caps` | TEXT '' | JSON-массив тегов, заданных вручную; `''` = автоопределение (`Provider.Caps == nil`), `'[]'` = вручную «ничего» |
+| `show_window` | INTEGER 0 | 1 — рабочий браузер веб-чата с окном; 0 — скрытый (`--headless=new`) |
 
 Индексы: только `UNIQUE(name)`.
 
-Методы: `AddProvider` (не пишет `caps`), `SetModels`, `SetCaps`, `DeleteProvider`, `Provider`, `Providers`
+Методы: `AddProvider` (не пишет `caps`), `SetModels`, `SetCaps`, `SetShowWindow`, `DeleteProvider`, `Provider`, `Providers`
 (`ORDER BY name`), внутренний `scanProvider` (`store.go:225`; ошибка, если `command` — не JSON).
 
 Пишут: API `POST/DELETE /api/providers`, `PUT …/models`, `PUT …/caps` (`internal/api/api.go:464, 484, 244, 329`);

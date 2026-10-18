@@ -225,3 +225,20 @@ func TestModelStats(t *testing.T) {
 		t.Fatalf("smart: %+v", s)
 	}
 }
+
+func TestShowWindow(t *testing.T) {
+	s := openTest(t)
+	s.AddProvider(Provider{Name: "gpt", Kind: KindWeb, Site: "chatgpt", ShowWindow: true})
+	if p, _ := s.Provider("gpt"); !p.ShowWindow {
+		t.Fatal("show_window не сохранился при создании")
+	}
+	if err := s.SetShowWindow("gpt", false); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.Provider("gpt"); p.ShowWindow {
+		t.Fatal("show_window не сбросился")
+	}
+	if err := s.SetShowWindow("nope", true); err != ErrNotFound {
+		t.Fatalf("err = %v", err)
+	}
+}

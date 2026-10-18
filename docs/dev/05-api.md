@@ -180,6 +180,7 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline';
 | `GET /api/providers/{name}/remote-models` | `remoteModels` api.go:202 | 4 |
 | `PUT /api/providers/{name}/models` | `setModels` api.go:230 | 4 |
 | `PUT /api/providers/{name}/caps` | `setCaps` api.go:315 | 4 |
+| `PUT /api/providers/{name}/window` | `setShowWindow` api.go:319; тело `{"show":bool}` | 4 |
 | `GET /api/caps` | `capsCatalog` api.go:310 | 4 |
 | `DELETE /api/keys/{id}` | `deleteKey` api.go:523 | 4 |
 | `POST /api/install` | `install` api.go:540 | 5 |

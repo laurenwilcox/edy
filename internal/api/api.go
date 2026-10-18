@@ -89,6 +89,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("GET /api/providers/{name}/remote-models", h.remoteModels)
 	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
 	m.HandleFunc("PUT /api/providers/{name}/caps", h.setCaps)
+	m.HandleFunc("PUT /api/providers/{name}/window", h.setShowWindow)
 	m.HandleFunc("GET /api/caps", h.capsCatalog)
 	m.HandleFunc("GET /api/prefs", h.prefs)
 	m.HandleFunc("PUT /api/prefs", h.setPrefs)
@@ -251,16 +252,18 @@ func (h *Handler) setModels(w http.ResponseWriter, r *http.Request) {
 }
 
 type providerJSON struct {
-	Name     string          `json:"name"`
-	Kind     string          `json:"kind"`
-	BaseURL  string          `json:"base_url"`
-	Models   []string        `json:"models"`
-	PriceIn  float64         `json:"price_in"`
-	PriceOut float64         `json:"price_out"`
-	Command  []string        `json:"command"`
-	Site     string          `json:"site"`
-	Browser  string          `json:"browser"`
-	Keys     []store.KeyInfo `json:"keys"`
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"`
+	BaseURL  string   `json:"base_url"`
+	Models   []string `json:"models"`
+	PriceIn  float64  `json:"price_in"`
+	PriceOut float64  `json:"price_out"`
+	Command  []string `json:"command"`
+	Site     string   `json:"site"`
+	Browser  string   `json:"browser"`
+	// ShowWindow — веб-провайдер работает в видимом окне браузера.
+	ShowWindow bool            `json:"show_window"`
+	Keys       []store.KeyInfo `json:"keys"`
 	// MCP — исполнитель задач получает MCP-сервер Edy напрямую (Claude Code).
 	MCP bool `json:"mcp"`
 	// Caps — действующие возможности; CapsAuto — определены автоматически.
@@ -311,6 +314,26 @@ func (h *Handler) capsCatalog(w http.ResponseWriter, r *http.Request) {
 	reply(w, omniroute.CapCatalog)
 }
 
+// setShowWindow переключает видимость окна браузера веб-провайдера.
+// Браузер перезапустится в новом режиме при следующем запросе.
+func (h *Handler) setShowWindow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Show bool `json:"show"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "неверный JSON")
+		return
+	}
+	if err := h.Store.SetShowWindow(r.PathValue("name"), req.Show); errors.Is(err, store.ErrNotFound) {
+		fail(w, http.StatusNotFound, "провайдер не найден")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	reply(w, map[string]any{"show_window": req.Show})
+}
+
 // setCaps задаёт теги возможностей провайдера; {"caps": null} — вернуть автоопределение.
 func (h *Handler) setCaps(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -355,7 +378,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 			models = []string{}
 		}
 		out = append(out, providerJSON{Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: models,
-			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, Keys: keys,
+			PriceIn: p.PriceIn, PriceOut: p.PriceOut, Command: p.Command, Site: p.Site, Browser: p.Browser, ShowWindow: p.ShowWindow, Keys: keys,
 			MCP: omniroute.HasCap(p, omniroute.CapMCP), Caps: omniroute.Caps(p), CapsAuto: p.Caps == nil,
 			CanMCP: p.Kind == store.KindCLI && omniroute.SupportsMCP(p.Command)})
 	}
@@ -373,6 +396,8 @@ type addProviderReq struct {
 	Command  []string `json:"command"`
 	Site     string   `json:"site"`
 	Browser  string   `json:"browser"`
+	// ShowWindow — показывать окно браузера (по умолчанию скрыто).
+	ShowWindow bool `json:"show_window"`
 }
 
 // needInstall — ответ 409, когда утилиту профиля надо сначала установить.
@@ -454,6 +479,7 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "браузер должен быть chromium или chrome")
 			return
 		}
+		p.ShowWindow = req.ShowWindow
 		if len(p.Models) == 0 {
 			p.Models = []string{"chat"} // модель выбирается на самом сайте
 		}
@@ -583,7 +609,7 @@ func (h *Handler) webConn(w http.ResponseWriter, r *http.Request) (webchat.Conn,
 		fail(w, http.StatusNotFound, "веб-провайдер не найден")
 		return webchat.Conn{}, false
 	}
-	return webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser}, true
+	return webchat.Conn{Profile: p.Name, Site: p.Site, Browser: p.Browser, Visible: p.ShowWindow}, true
 }
 
 // webLogin открывает сайт в обычном окне браузера подключения (без управления),

@@ -486,6 +486,7 @@ h3.sub:first-child { margin-top: 0; }
                 <label class="choice"><input type="radio" name="browser" value="chrome">
                   <span><b>Мой Google Chrome</b><small id="chrome-note">Ваш установленный Chrome, но с отдельным профилем Edy: ваши вкладки и аккаунты не затрагиваются.</small></span></label>
               </div>
+              <label class="switch-label wide" data-for="web" title="По умолчанию браузер работает скрыто; окно входа показывается всегда"><input type="checkbox" name="show_window"> Показывать окно браузера во время работы</label>
               <label class="wide" data-for="api">Сервис
                 <select name="service"></select>
               </label>
@@ -1068,7 +1069,17 @@ function providerCard(p) {
   );
   card.append(capsBlock(p));
   if (p.kind === "openai" || p.kind === "anthropic") card.append(keysBlock(p));
-  if (p.kind === "web") card.append(el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "status", "data-status": p.name }, "…")));
+  if (p.kind === "web") {
+    const box = el("input", { type: "checkbox" });
+    box.checked = !!p.show_window;
+    box.onchange = async () => {
+      try { await api("PUT", `/api/providers/${encodeURIComponent(p.name)}/window`, { show: box.checked }); p.show_window = box.checked; }
+      catch (e) { box.checked = !box.checked; toast(e.message, true); }
+    };
+    card.append(el("div", { class: "row", style: "margin-top:10px" },
+      el("span", { class: "status", "data-status": p.name }, "…"),
+      el("label", { class: "switch-label small", title: "Без галочки браузер работает скрыто; окно входа показывается всегда" }, box, " показывать окно браузера")));
+  }
   return card;
 }
 
@@ -1273,6 +1284,7 @@ form.addEventListener("submit", async (e) => {
     body.kind = "web";
     body.site = form.site.value;
     body.browser = form.querySelector("input[name=browser]:checked").value;
+    body.show_window = form.show_window.checked;
   } else if (addMode === "cli") {
     body.kind = "cli";
     if (pr) body.preset = pr.name;

@@ -510,3 +510,22 @@ document.getElementById("send").onclick = () => {
 		t.Fatalf("картинка не вставлена: %q", got)
 	}
 }
+
+// Рабочий браузер по умолчанию запускается скрыто, с ShowWindow — с окном.
+func TestLaunchArgsHeadless(t *testing.T) {
+	m := NewManager(t.TempDir())
+	has := func(args []string) bool {
+		for _, a := range args {
+			if a == "--headless=new" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(m.launchArgs("p", false)) {
+		t.Fatal("скрытый режим без --headless=new")
+	}
+	if has(m.launchArgs("p", true)) {
+		t.Fatal("видимое окно не должно быть headless")
+	}
+}
