@@ -134,7 +134,7 @@ func serve(st *store.Store, home string, args []string, openBrowser bool) error 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := slog.New(slog.NewTextHandler(app.Logs, nil))
 	srv, err := app.Start(st, home, *addr, log)
 	if err != nil {
 		return err

@@ -175,6 +175,7 @@ func TestPresetsCatalog(t *testing.T) {
 type fakeWeb struct {
 	logged  webchat.Conn
 	removed string
+	opts    webchat.Options
 }
 
 func (f *fakeWeb) Sites() (map[string]webchat.Site, error) { return webchat.DefaultSites, nil }
@@ -263,4 +264,19 @@ func TestOpenURL(t *testing.T) {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
 	}
+}
+
+func (f *fakeWeb) Features(ctx context.Context, c webchat.Conn) (webchat.Features, error) {
+	return webchat.Features{Plan: "Pro", Models: []string{"Fast", "Pro"}}, nil
+}
+func (f *fakeWeb) CachedFeatures(profile string) (webchat.Features, bool) {
+	return webchat.Features{Plan: "Pro", Limit: "лимит"}, true
+}
+func (f *fakeWeb) Options(profile string) webchat.Options { return f.opts }
+func (f *fakeWeb) SaveOptions(profile, site string, o webchat.Options) error {
+	f.opts = o
+	return nil
+}
+func (f *fakeWeb) Usage(profile, site string) webchat.Usage {
+	return webchat.Usage{Day: "2026-10-18", Used: 3, Limit: 50}
 }

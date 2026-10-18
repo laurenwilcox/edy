@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/logbuf"
 	"github.com/laurenwilcox/name/internal/notify"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/semantic"
@@ -37,6 +38,11 @@ type WebManager interface {
 	Status(profile string) webchat.Status
 	RemoveProfile(name string) error
 	BrowserInstalled(kind string) bool
+	Features(ctx context.Context, c webchat.Conn) (webchat.Features, error)
+	CachedFeatures(profile string) (webchat.Features, bool)
+	Options(profile string) webchat.Options
+	SaveOptions(profile, site string, o webchat.Options) error
+	Usage(profile, site string) webchat.Usage
 }
 
 const installTimeout = 10 * time.Minute
@@ -67,6 +73,8 @@ type Handler struct {
 	ReposDir string
 	// Home — папка данных Edy (общие скиллы в Home/skills).
 	Home string
+	// Logs — журнал работы для экрана «Логи»; nil — журнала нет.
+	Logs *logbuf.Buffer
 	// Notify показывает системное уведомление; подменяется в тестах.
 	Notify notify.Notifier
 	// Semantic — поиск по смыслу (эмбеддинги); nil — только поиск по словам.
@@ -116,7 +124,11 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("DELETE /api/ui/css", h.uiCSS)
 	m.HandleFunc("POST /api/assistant", h.assistant)
 	m.HandleFunc("POST /api/assistant/confirm", h.assistantConfirm)
+	m.HandleFunc("GET /api/assistant/settings", h.assistantSettings)
+	m.HandleFunc("PUT /api/assistant/settings", h.assistantSettings)
 	m.HandleFunc("DELETE /api/assistant/{session}", h.assistantReset)
+	m.HandleFunc("GET /api/logs", h.logs)
+	h.registerWebFeatureRoutes(m)
 	h.registerProjectRoutes(m)
 	h.registerGitRoutes(m)
 	h.registerSkillRoutes(m)

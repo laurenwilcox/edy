@@ -19,7 +19,7 @@ func TestUIPrefs(t *testing.T) {
 	}
 	rec = call(h, "PUT", "/api/ui/prefs", `{"theme":"dark","font_size":16}`)
 	json.Unmarshal(rec.Body.Bytes(), &p)
-	if rec.Code != http.StatusOK || p.Theme != "dark" || p.FontSize != 16 || p.Accent != "indigo" {
+	if rec.Code != http.StatusOK || p.Theme != "dark" || p.FontSize != 16 || p.Accent != "neon" {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
 	// Вне белого списка — отказ, сохранённое не меняется.
@@ -46,19 +46,19 @@ func TestUIBot(t *testing.T) {
 		t.Fatalf("без LLM: %d", rec.Code)
 	}
 	st.AddProvider(store.Provider{Name: "cheap", Models: []string{"mini"}, PriceIn: 0.1, PriceOut: 0.4})
-	llm := &cannedLLM{reply: `{"theme":"dark","accent":"green","comment":"Включил тёмную тему и зелёный акцент"}`}
+	llm := &cannedLLM{reply: `{"theme":"light","accent":"green","comment":"Включил светлую тему и зелёный акцент"}`}
 	h.LLM = llm
 	if rec := call(h, "POST", "/api/ui/bot", `{"text":"  "}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("пустая просьба: %d", rec.Code)
 	}
-	rec := call(h, "POST", "/api/ui/bot", `{"text":"сделай тёмную тему и зелёные кнопки"}`)
+	rec := call(h, "POST", "/api/ui/bot", `{"text":"сделай светлую тему и зелёные кнопки"}`)
 	var res struct {
 		Prefs   UIPrefs  `json:"prefs"`
 		Changed []string `json:"changed"`
 		Comment string   `json:"comment"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &res)
-	if rec.Code != http.StatusOK || res.Prefs.Theme != "dark" || res.Prefs.Accent != "green" ||
+	if rec.Code != http.StatusOK || res.Prefs.Theme != "light" || res.Prefs.Accent != "green" ||
 		strings.Join(res.Changed, ",") != "theme,accent" || res.Comment == "" {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
@@ -70,7 +70,7 @@ func TestUIBot(t *testing.T) {
 	if rec := call(h, "POST", "/api/ui/bot", `{"text":"спрячь всё"}`); rec.Code != http.StatusBadGateway {
 		t.Fatalf("лишнее поле: %d %s", rec.Code, rec.Body)
 	}
-	if p := h.uiPrefs(); p.Theme != "dark" {
+	if p := h.uiPrefs(); p.Theme != "light" {
 		t.Fatalf("настройки испорчены: %+v", p)
 	}
 	// Отказ без изменений.

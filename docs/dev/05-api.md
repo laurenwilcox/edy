@@ -1030,6 +1030,25 @@ Bearer-проверки). В системном промпте — катало�
 через `textContent`. `PUT {css}`: не больше 64 КБ, без `</style` (иначе 400). `DELETE` — откат,
 кнопка «Сбросить мой CSS» в «Оформлении».
 
+`GET|PUT /api/assistant/settings` — модель помощника (`assistant.model`): `{model}` → `{model, effective}`,
+как у микро-агентов. Оба поля выбираются во вкладке «Настройки → ИИ-боты / ИИ-помощник».
+
+### 15.8. Журнал работы: `GET|DELETE /api/logs`
+
+`GET /api/logs?since=N` → `{lines[], seq}` — строки slog (TextHandler, с `level=…`) после номера `N`.
+Если `seq` меньше прежнего — журнал очищен, UI перечитывает всё. `DELETE` → 204, очистить журнал.
+Панель «📜 Логи» опрашивает раз в 1,5 с, пока открыта.
+
+### 15.9. Подписка веб-чата Gemini: `/api/web/features|settings|limits`
+
+`webfeatures.go`.
+- `POST /api/web/features` `{provider}` — открыть сайт скрыто и прочитать план, модели, инструменты, чаты
+  (до 2 минут). Найденные модели становятся моделями провайдера (`["chat", ...models]`).
+- `GET /api/web/features?provider=` → `{found, features}` — последняя проверка без браузера.
+- `GET|PUT /api/web/settings` `{provider, model, tool, chat}` → `Options` — что выбрать на сайте перед
+  запросом; пустое поле — как на сайте / обычный чат / новый чат.
+- `GET /api/web/limits?provider=` → `{day, used, limit, notice, plan}`; `limit=0` — без лимита.
+
 ---
 
 ## 16. MCP по HTTP: `/mcp`

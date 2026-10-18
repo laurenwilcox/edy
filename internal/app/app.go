@@ -18,6 +18,7 @@ import (
 
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/api"
+	"github.com/laurenwilcox/name/internal/logbuf"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/review"
 	"github.com/laurenwilcox/name/internal/semantic"
@@ -90,6 +91,9 @@ func (s *Server) URL() string { return "http://" + s.Addr + "/#token=" + s.Token
 // Done закрывается с ошибкой, если сервер остановился сам.
 func (s *Server) Done() <-chan error { return s.done }
 
+// Logs — журнал работы для экрана «Логи»; дублируется в stderr.
+var Logs = logbuf.New(os.Stderr)
+
 // Start поднимает Edy на addr и сразу начинает принимать запросы.
 func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error) {
 	if log == nil {
@@ -105,12 +109,13 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	}
 
 	web := webchat.NewManager(home)
-	web.Log = os.Stderr
+	web.Log = Logs
 
 	router := omniroute.NewServer(st, tok, log)
 	router.RegisterAdapter(store.KindWeb, &omniroute.WebAdapter{Browser: web})
 	h := api.New(st, tok, ln.Addr().String())
 	h.Web = web
+	h.Logs = Logs
 	h.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
 	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)}, st)
 	h.Tasks.Journal = st

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark" data-accent="neon">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -20,9 +20,9 @@
 /* Тема: system — как в macOS; data-theme на <html> задаёт её явно (UI-бот, «Оформление») */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0c14; --bg-2: #10121d;
-    --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
-    --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
+    --bg: #15171c; --bg-2: #1b1e24;
+    --glass: rgba(32,35,43,.62); --glass-strong: rgba(36,39,48,.9); --glass-border: rgba(255,255,255,.07);
+    --text: #e8ecf3; --muted: #8d95a6; --line: rgba(255,255,255,.08);
     --a1: #818cf8; --a2: #38bdf8; --a3: #a78bfa;
     --field: rgba(255,255,255,.05); --code: rgba(255,255,255,.07);
     --danger: #fb7185; --ok: #34d399; --warn: #fbbf24;
@@ -31,16 +31,21 @@
   }
 }
 :root[data-theme="dark"] {
-    --bg: #0b0c14; --bg-2: #10121d;
-    --glass: rgba(24,26,40,.6); --glass-strong: rgba(28,30,46,.85); --glass-border: rgba(255,255,255,.08);
-    --text: #eceef6; --muted: #9298ad; --line: rgba(255,255,255,.08);
+    --bg: #15171c; --bg-2: #1b1e24;
+    --glass: rgba(32,35,43,.62); --glass-strong: rgba(36,39,48,.9); --glass-border: rgba(255,255,255,.07);
+    --text: #e8ecf3; --muted: #8d95a6; --line: rgba(255,255,255,.08);
     --a1: #818cf8; --a2: #38bdf8; --a3: #a78bfa;
     --field: rgba(255,255,255,.05); --code: rgba(255,255,255,.07);
     --danger: #fb7185; --ok: #34d399; --warn: #fbbf24;
     --shadow: 0 10px 40px -10px rgba(0,0,0,.6);
     --blob-opacity: .13;
 }
-/* Акцентный цвет (indigo — по умолчанию, без переопределения) */
+/* Акцентный цвет: neon — фирменный (как на логотипе), indigo — без переопределения */
+:root[data-accent="neon"] { --a1: #0891b2; --a2: #9333ea; --a3: #c084fc; --grad: linear-gradient(135deg, var(--a1), var(--a2)); --glow: 0 0 18px -6px color-mix(in srgb, var(--a1) 55%, transparent); }
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="neon"]:not([data-theme="light"]) { --a1: #22d3ee; --a2: #a855f7; --a3: #c084fc; --on-grad: #0d1014; --glow: 0 0 22px -4px color-mix(in srgb, var(--a1) 70%, transparent); }
+}
+:root[data-accent="neon"][data-theme="dark"] { --a1: #22d3ee; --a2: #a855f7; --a3: #c084fc; --on-grad: #0d1014; --glow: 0 0 22px -4px color-mix(in srgb, var(--a1) 70%, transparent); }
 :root[data-accent="blue"] { --a1: #3b82f6; --a2: #06b6d4; --a3: #60a5fa; }
 :root[data-accent="green"] { --a1: #10b981; --a2: #84cc16; --a3: #34d399; }
 :root[data-accent="orange"] { --a1: #f97316; --a2: #f59e0b; --a3: #fb923c; }
@@ -85,7 +90,8 @@ body {
 
 /* Меню */
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
-.logo { width: 34px; height: 34px; border-radius: 11px; background: var(--grad); display: grid; place-items: center; color: var(--on-grad); font-weight: 800; }
+.logo { width: 38px; height: 38px; border-radius: 12px; background: var(--grad); display: grid; place-items: center; color: var(--on-grad); font-weight: 800; overflow: hidden; box-shadow: var(--glow, none); flex: none; }
+.logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .brand b { font-size: 18px; letter-spacing: .3px; }
 .brand small { display: block; color: var(--muted); font-size: 11px; margin-top: -2px; }
 .menu-group > button, .menu-item { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text); font: inherit; padding: 9px 10px; border-radius: 12px; cursor: pointer; text-align: left; transition: background .2s, transform .2s; }
@@ -98,7 +104,7 @@ body {
 .submenu .menu-item { font-size: 13.5px; color: var(--muted); padding: 7px 10px; position: relative; }
 .submenu .menu-item::before { content: ""; position: absolute; left: -6px; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--line); transform: translateY(-50%); transition: background .2s, box-shadow .2s; }
 .submenu .menu-item.active { color: var(--text); background: var(--code); font-weight: 600; }
-.submenu .menu-item.active::before { background: var(--a1); }
+.submenu .menu-item.active::before { background: var(--a1); box-shadow: 0 0 10px var(--a1); }
 .menu-item[disabled] { opacity: .45; cursor: default; }
 .menu-item[disabled]:hover { background: none; }
 .soon { margin-left: auto; font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
@@ -138,7 +144,7 @@ body {
 .composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 18px; background: var(--field); border: 1px solid var(--line); transition: border-color .25s, box-shadow .25s; }
 .composer-box:focus-within { border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 15%, transparent); }
 .composer textarea { flex: 1; resize: none; border: 0; background: none; color: var(--text); font: inherit; max-height: 180px; padding: 6px 0; outline: none; }
-.send { width: 40px; height: 40px; border-radius: 13px; border: 0; background: var(--grad); color: var(--on-grad); cursor: pointer; font-size: 17px; flex: none; transition: transform .2s, opacity .2s; }
+.send { width: 40px; height: 40px; border-radius: 13px; border: 0; background: var(--grad); color: var(--on-grad); cursor: pointer; font-size: 17px; flex: none; transition: transform .2s, opacity .2s, box-shadow .2s; box-shadow: var(--glow, none); }
 .send:hover { opacity: .9; }
 .send.stop { background: var(--danger); box-shadow: none; }
 .hint { font-size: 11.5px; color: var(--muted); margin: 6px 4px 0; }
@@ -160,7 +166,7 @@ body {
 .badge.off { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--code); padding: 2px 7px; border-radius: 7px; word-break: break-all; }
 
-.btn { border: 0; border-radius: 11px; padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer; background: var(--grad); color: var(--on-grad); transition: transform .2s, opacity .2s; white-space: nowrap; }
+.btn { border: 0; border-radius: 11px; padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer; background: var(--grad); color: var(--on-grad); transition: transform .2s, opacity .2s, box-shadow .2s; white-space: nowrap; box-shadow: var(--glow, none); }
 .btn:hover { opacity: .9; }
 .btn.ghost { background: var(--field); color: var(--text); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
 .btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); box-shadow: none; font-weight: 500; }
@@ -175,6 +181,20 @@ label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
 .keys { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; }
 .key-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
 
+.set-tabs { display: flex; flex-wrap: wrap; margin-bottom: 14px; }
+.set-tabs button { flex: 1; white-space: nowrap; }
+.set-h { margin: 0 0 8px; font-size: 15px; }
+.set-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.set-switch input { width: auto; margin: 0; }
+.logs-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.logs-view { margin: 12px 0 0; padding: 12px; height: calc(100vh - 260px); min-height: 240px; overflow: auto; background: var(--code); border-radius: 14px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+.logs-view .log-warn { color: var(--warn); }
+.logs-view .log-error { color: var(--danger); font-weight: 600; }
+.web-box { margin-top: 12px; padding: 12px; border-radius: 14px; background: var(--code); }
+.web-box .row { align-items: center; }
+.web-box label { margin-top: 8px; }
+.web-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.web-tools .chip.on { border-color: var(--a1); color: var(--a1); box-shadow: 0 0 8px color-mix(in srgb, var(--a1) 40%, transparent); }
 .seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--code); gap: 2px; }
 .seg button { border: 0; background: none; color: var(--muted); font: inherit; padding: 6px 12px; border-radius: 9px; cursor: pointer; }
 .seg button.on { background: var(--glass-strong); color: var(--text); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
@@ -443,7 +463,7 @@ h3.sub:first-child { margin-top: 0; }
   .msg { max-width: 94%; }
 }
 /* ИИ-помощник интерфейса: плавающая кнопка и окно чата. */
-.asst-fab { position: fixed; right: 22px; bottom: 22px; z-index: 800; width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; font-size: 22px; color: var(--on-grad); background: var(--grad); box-shadow: var(--shadow); transition: transform .2s; }
+.asst-fab { position: fixed; right: 22px; bottom: 22px; z-index: 800; width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; font-size: 22px; color: var(--on-grad); background: var(--grad); box-shadow: var(--shadow), var(--glow, 0 0 0 transparent); transition: transform .2s; }
 .asst-fab:hover { transform: scale(1.06); }
 .asst { position: fixed; right: 22px; bottom: 86px; z-index: 800; width: min(400px, calc(100vw - 32px)); height: min(560px, calc(100vh - 120px)); display: flex; flex-direction: column; border-radius: 18px; background: var(--glass-strong); border: 1px solid var(--glass-border); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: rise .25s; }
 .asst[hidden] { display: none; }
@@ -472,7 +492,7 @@ h3.sub:first-child { margin-top: 0; }
 <div class="app">
   <!-- Слева: меню -->
   <nav class="side glass" id="side">
-    <div class="brand"><div class="logo">E</div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
+    <div class="brand"><div class="logo"><img src="logo.jpg" alt="Edy"></div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
     <button class="menu-item" id="go-chat"><span class="ico">💬</span>Чат</button>
     <div class="menu-group open" id="grp-providers">
       <button type="button"><span class="ico">🔌</span>Провайдеры<span class="chev">›</span></button>
@@ -488,7 +508,8 @@ h3.sub:first-child { margin-top: 0; }
     <button class="menu-item" data-open="p-team"><span class="ico">👥</span>Команда</button>
     <button class="menu-item" data-open="p-mcp"><span class="ico">🧩</span>MCP-серверы</button>
     <button class="menu-item" data-open="p-agents"><span class="ico">🤖</span>Агенты<span class="soon" id="agents-running" hidden></span></button>
-    <button class="menu-item" data-open="p-look"><span class="ico">🎨</span>Оформление</button>
+    <button class="menu-item" data-open="p-settings"><span class="ico">⚙️</span>Настройки</button>
+    <button class="menu-item" data-open="p-logs"><span class="ico">📜</span>Логи</button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
 
@@ -809,23 +830,82 @@ h3.sub:first-child { margin-top: 0; }
           <div id="agent-detail" hidden></div>
         </section>
 
-        <section id="p-look">
-          <div class="card">
+        <section id="p-settings">
+          <div class="seg set-tabs" id="set-tabs" role="tablist">
+            <button type="button" data-tab="general" class="on">🧭 Общие</button>
+            <button type="button" data-tab="bots">🤖 ИИ-боты</button>
+            <button type="button" data-tab="assistant">✨ ИИ-помощник</button>
+            <button type="button" data-tab="look">🎨 Оформление</button>
+          </div>
+          <div class="set-tab" data-tab="general">
+            <div class="card">
+              <h3 class="set-h">🔔 Уведомления</h3>
+              <label class="set-switch"><input type="checkbox" id="set-notify"> Сообщать, когда задача на доске готова или упала</label>
+              <div class="row" style="margin-top:10px"><button class="btn ghost" type="button" id="set-notify-test">Проверить уведомление</button></div>
+            </div>
+            <form class="card" id="set-budget">
+              <h3 class="set-h">💰 Дневной бюджет</h3>
+              <p class="small" style="margin-top:0">Когда расходы за день на API дойдут до лимита, Edy перестанет отправлять платные запросы. 0 — без лимита.</p>
+              <div class="row" style="flex-wrap:nowrap"><input name="usd" type="number" min="0" step="0.5" placeholder="например, 5" style="flex:1"><button class="btn" type="submit">Сохранить</button></div>
+              <p class="small" id="set-budget-text"></p>
+            </form>
+          </div>
+          <div class="set-tab" data-tab="bots" hidden>
+            <form class="card" id="set-micro">
+              <h3 class="set-h">⚡ Микро-агенты</h3>
+              <p class="small" style="margin-top:0">Маленькие помощники для разовых задач: названия, сводки, разбор ответов. Им хватает быстрой и дешёвой модели.</p>
+              <label>Модель <select name="model" class="model-pick"></select></label>
+              <p class="small">Сейчас работает: <code id="set-micro-eff">—</code></p>
+            </form>
+            <div class="card">
+              <h3 class="set-h">🎨 UI-бот</h3>
             <p class="small" style="margin-top:0">Опишите словами, что поменять, — UI-бот подберёт тему, акцент, шрифт и раскладку. Бот меняет только эти настройки: сломать интерфейс он не может.</p>
             <form id="look-bot" class="row" style="flex-wrap:nowrap">
               <input name="text" placeholder="например: тёмная тема, зелёный акцент, шрифт покрупнее" style="flex:1" required>
               <button class="btn" type="submit">Применить</button>
             </form>
+            </div>
           </div>
+          <div class="set-tab" data-tab="assistant" hidden>
+            <form class="card" id="set-asst">
+              <h3 class="set-h">✨ ИИ-помощник</h3>
+              <p class="small" style="margin-top:0">Помощник знает весь интерфейс Edy и может менять настройки, провайдеров и стили по вашей просьбе. Откройте его кнопкой в правом нижнем углу.</p>
+              <label>Модель <select name="model" class="model-pick"></select></label>
+              <p class="small">Сейчас работает: <code id="set-asst-eff">—</code></p>
+            </form>
+            <div class="card">
+              <h3 class="set-h">🧹 Свои стили</h3>
+              <p class="small" style="margin-top:0">Помощник может добавлять собственный CSS. Если что-то стало выглядеть странно — сбросьте его.</p>
+              <button class="btn ghost" type="button" id="look-css-reset">Сбросить мой CSS</button>
+            </div>
+          </div>
+          <div class="set-tab" data-tab="look" hidden>
           <form class="card" id="look-form">
             <label>Тема <select name="theme"><option value="system">Как в системе</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
-            <label>Акцент <select name="accent"><option value="indigo">Индиго</option><option value="blue">Синий</option><option value="green">Зелёный</option><option value="orange">Оранжевый</option><option value="pink">Розовый</option><option value="red">Красный</option></select></label>
+            <label>Акцент <select name="accent"><option value="neon">Неон (фирменный)</option><option value="indigo">Индиго</option><option value="blue">Синий</option><option value="green">Зелёный</option><option value="orange">Оранжевый</option><option value="pink">Розовый</option><option value="red">Красный</option></select></label>
             <label>Шрифт <select name="font"><option value="system">Системный</option><option value="serif">С засечками</option><option value="mono">Моноширинный</option></select></label>
             <label><span>Размер шрифта: <b id="look-fs">14</b> px</span><input name="font_size" type="range" min="12" max="18" step="1"></label>
             <label>Меню <select name="sidebar"><option value="left">Слева</option><option value="right">Справа</option></select></label>
             <label>Анимации <select name="animations"><option value="on">Включены</option><option value="off">Выключены</option></select></label>
-            <div class="row" style="margin-top:14px"><button class="btn ghost" type="button" id="look-reset">По умолчанию</button><button class="btn ghost" type="button" id="look-css-reset" title="Убрать стили, которые добавил ИИ-помощник">Сбросить мой CSS</button></div>
+            <div class="row" style="margin-top:14px"><button class="btn ghost" type="button" id="look-reset">По умолчанию</button></div>
           </form>
+          </div>
+        </section>
+
+        <section id="p-logs">
+          <div class="card logs-bar">
+            <div class="seg" id="logs-level">
+              <button type="button" data-level="" class="on">Все</button>
+              <button type="button" data-level="INFO">Инфо</button>
+              <button type="button" data-level="WARN">Предупр.</button>
+              <button type="button" data-level="ERROR">Ошибки</button>
+            </div>
+            <input id="logs-q" type="search" placeholder="Поиск по логам" style="flex:1;min-width:140px">
+            <label class="set-switch small"><input type="checkbox" id="logs-follow" checked> Прокрутка</label>
+            <button class="btn ghost" type="button" id="logs-copy">Копировать</button>
+            <button class="btn ghost" type="button" id="logs-clear">Очистить</button>
+          </div>
+          <pre class="logs-view" id="logs-view"></pre>
         </section>
 
         <section id="p-connect">
@@ -1050,8 +1130,8 @@ if (inApp) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-team": "Команда", "p-mcp": "MCP-серверы", "p-agents": "Агенты", "p-look": "Оформление" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-team": loadTeam, "p-mcp": loadMCPServers, "p-agents": loadAgents, "p-look": loadLook };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-team": "Команда", "p-mcp": "MCP-серверы", "p-agents": "Агенты", "p-settings": "Настройки", "p-logs": "Логи" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-team": loadTeam, "p-mcp": loadMCPServers, "p-agents": loadAgents, "p-settings": loadSettings, "p-logs": loadLogs };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -1060,10 +1140,12 @@ function openPanel(id) {
   $("#drawer").classList.add("open");
   $("#side").classList.remove("show");
   store.set("edy-panel", id);
+  if (id !== "p-logs") stopLogs();
   return loaders[id]();
 }
 function closePanel() {
   $("#drawer").classList.remove("open");
+  stopLogs();
   for (const b of document.querySelectorAll(".submenu .menu-item")) b.classList.remove("active");
   store.set("edy-panel", "");
 }
@@ -1193,8 +1275,87 @@ function providerCard(p) {
       el("span", { class: "status", "data-status": p.name }, "…"),
       el("span", { class: "small muted", "data-account": p.name, title: "Google-аккаунт в профиле браузера" }, ""),
       el("label", { class: "switch-label small", title: "Без галочки браузер работает скрыто; окно входа показывается всегда" }, box, " показывать окно браузера")));
+    if (p.site === "gemini") card.append(webBox(p));
   }
   return card;
+}
+
+// webToolLabel добавляет значок к надписи инструмента из меню сайта.
+function webToolLabel(t) {
+  const icons = [[/research|исследов/i, "🔎"], [/видео|video|veo/i, "🎬"], [/изображ|image|картин/i, "🖼"],
+    [/обуч|learn|guided/i, "🎓"], [/canvas|холст/i, "📝"], [/код|code/i, "💻"]];
+  const hit = icons.find(([re]) => re.test(t));
+  return (hit ? hit[1] + " " : "") + t;
+}
+
+// webBox — панель подписки Gemini: план, модель, инструмент, чат и лимиты.
+// Данные берутся из последней проверки; «Проверить подписку» открывает сайт заново.
+function webBox(p) {
+  const box = el("div", { class: "web-box" });
+  const q = "?provider=" + encodeURIComponent(p.name);
+  const render = async () => {
+    const [cached, opts, lim] = await Promise.all([
+      api("GET", "/api/web/features" + q).catch(() => null),
+      api("GET", "/api/web/settings" + q).catch(() => ({})),
+      api("GET", "/api/web/limits" + q).catch(() => null),
+    ]);
+    const f = cached && cached.found ? cached.features : null;
+    const check = el("button", { class: "btn ghost icon", type: "button" }, f ? "Обновить" : "Проверить подписку");
+    check.onclick = async () => {
+      check.disabled = true; check.textContent = "Открываю Gemini…";
+      try { await api("POST", "/api/web/features", { provider: p.name }); toast("Подписка проверена"); await refreshProviders().catch(() => {}); render(); }
+      catch (e) { toast(e.message, true); check.disabled = false; check.textContent = "Проверить подписку"; }
+    };
+    const head = el("div", { class: "row spread" },
+      el("div", { class: "row" }, el("strong", {}, "✨ Gemini"),
+        f ? el("span", { class: "badge" + (/бесплат|free/i.test(f.plan) ? " off" : "") }, f.plan || "план не определён") : el("span", { class: "small muted" }, "подписка ещё не проверялась")),
+      check);
+    const parts = [head];
+    if (f) parts.push(el("div", { class: "small muted", style: "margin-top:4px" }, "Проверено " + new Date(f.checked).toLocaleString("ru-RU")));
+    const save = async (patch) => {
+      try { Object.assign(opts, patch); await api("PUT", "/api/web/settings", { provider: p.name, ...opts }); toast("Сохранено"); }
+      catch (e) { toast(e.message, true); }
+    };
+    // Модель: из проверки или из моделей провайдера (кроме служебной «chat»).
+    const models = (f && f.models.length ? f.models : p.models.filter((m) => m !== "chat"));
+    if (models.length) {
+      const sel = el("select", { onchange: (e) => save({ model: e.target.value }) },
+        el("option", { value: "" }, "как на сайте" + (f && f.model ? ` (${f.model})` : "")),
+        ...models.map((m) => el("option", { value: m }, m)));
+      sel.value = opts.model || "";
+      parts.push(el("label", {}, "Модель", sel));
+    }
+    const tools = f ? f.tools : [];
+    if (tools.length) {
+      const wrap = el("div", { class: "web-tools" });
+      const mk = (t, title) => {
+        const b = el("button", { class: "chip" + ((opts.tool || "") === t ? " on" : ""), type: "button" }, title);
+        b.onclick = () => { for (const x of wrap.children) x.classList.remove("on"); b.classList.add("on"); save({ tool: t }); };
+        return b;
+      };
+      wrap.append(mk("", "💬 Обычный чат"), ...tools.map((t) => mk(t, webToolLabel(t))));
+      parts.push(el("div", { class: "small", style: "margin-top:10px" }, "Инструмент для запросов"), wrap);
+    }
+    const chats = f ? f.chats : [];
+    if (chats.length) {
+      const sel = el("select", { onchange: (e) => save({ chat: e.target.value }) },
+        el("option", { value: "" }, "Новый чат для каждой задачи"),
+        ...chats.map((c) => el("option", { value: c.url }, c.title || c.url)));
+      sel.value = opts.chat || "";
+      parts.push(el("label", {}, `Чат (${chats.length})`, sel));
+    }
+    if (lim) {
+      const pct = lim.limit > 0 ? Math.min(100, Math.round(lim.used / lim.limit * 100)) : 0;
+      parts.push(el("div", { class: "small", style: "margin-top:10px" },
+        lim.limit > 0 ? `Запросов сегодня: ${lim.used} из ${lim.limit}` : `Запросов сегодня: ${lim.used} (лимит не задан)`));
+      if (lim.limit > 0) parts.push(el("div", { class: "meter" }, el("div", { class: pct >= 100 ? "over" : pct >= 80 ? "warn" : "", style: `width:${pct}%` })));
+      if (lim.notice) parts.push(el("div", { class: "small", style: "margin-top:6px;color:var(--warn)" }, "⚠️ " + lim.notice));
+    }
+    box.replaceChildren(...parts);
+  };
+  box.append(el("div", { class: "small muted" }, "Загружаю данные Gemini…"));
+  render();
+  return box;
 }
 
 function keysBlock(p) {
@@ -3262,7 +3423,7 @@ async function showAgent(id) {
 }
 
 // ============ Оформление (UI-бот) ============
-const lookDefaults = { theme: "system", accent: "indigo", font_size: 14, font: "system", sidebar: "left", animations: "on" };
+const lookDefaults = { theme: "dark", accent: "neon", font_size: 14, font: "system", sidebar: "left", animations: "on" };
 
 // applyPrefs меняет только data-атрибуты и переменные: CSS интерфейса не трогается.
 function applyPrefs(p) {
@@ -3318,6 +3479,121 @@ $("#look-css-reset").onclick = async () => {
   if (!(await askConfirm("Убрать все стили, которые добавил ИИ-помощник?", "Сбросить"))) return;
   try { await api("DELETE", "/api/ui/css"); await loadUserCSS(); toast("Свой CSS сброшен"); } catch (e) { toast(e.message, true); }
 };
+// ============ Настройки ============
+for (const b of document.querySelectorAll("#set-tabs button")) {
+  b.addEventListener("click", () => showSetTab(b.dataset.tab));
+}
+function showSetTab(tab) {
+  for (const b of document.querySelectorAll("#set-tabs button")) b.classList.toggle("on", b.dataset.tab === tab);
+  for (const t of document.querySelectorAll("#p-settings .set-tab")) t.hidden = t.dataset.tab !== tab;
+  store.set("edy-set-tab", tab);
+}
+
+// fillModelPick заполняет список моделей: «Авто» и все модели провайдеров.
+function fillModelPick(sel, value) {
+  const opts = [el("option", { value: "" }, "Авто — самая дешёвая")];
+  for (const p of providers) {
+    const g = el("optgroup", { label: p.name + (p.kind === "web" ? " (веб-чат)" : "") });
+    for (const m of p.models) g.append(el("option", { value: p.name + "/" + m }, m));
+    if (p.models.length) opts.push(g);
+  }
+  sel.replaceChildren(...opts);
+  // Модель могли удалить вместе с провайдером — показываем её, чтобы не потерять выбор.
+  if (value && ![...sel.options].some((o) => o.value === value)) sel.append(el("option", { value }, value + " (нет у провайдеров)"));
+  sel.value = value || "";
+}
+
+async function loadSettings() {
+  showSetTab(store.get("edy-set-tab") || "general");
+  loadLook();
+  const [prefs, usage, micro, asst] = await Promise.all([
+    api("GET", "/api/prefs").catch(() => null),
+    api("GET", "/api/usage").catch(() => null),
+    api("GET", "/api/micro/settings").catch(() => null),
+    api("GET", "/api/assistant/settings").catch(() => null),
+  ]);
+  if (!providers.length) await refreshProviders().catch(() => {});
+  if (prefs) $("#set-notify").checked = !!prefs.notify;
+  if (usage) {
+    $("#set-budget").usd.value = usage.budget_usd || "";
+    $("#set-budget-text").textContent = `Сегодня потрачено ${money(usage.today_usd)}` + (usage.budget_usd > 0 ? ` из ${money(usage.budget_usd)}` : "");
+  }
+  if (micro) { fillModelPick($("#set-micro").model, micro.model); $("#set-micro-eff").textContent = micro.effective || "нет модели"; }
+  if (asst) { fillModelPick($("#set-asst").model, asst.model); $("#set-asst-eff").textContent = asst.effective || "нет модели"; }
+}
+
+$("#set-notify").addEventListener("change", async (e) => {
+  try { await api("PUT", "/api/prefs", { notify: e.target.checked }); toast(e.target.checked ? "Уведомления включены" : "Уведомления выключены"); }
+  catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+});
+$("#set-notify-test").addEventListener("click", () => $("#notify-test").click());
+$("#set-budget").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("PUT", "/api/budget", { usd: Number(e.target.usd.value) || 0 }); toast("Бюджет сохранён"); loadSettings(); }
+  catch (err) { toast(err.message, true); }
+});
+for (const [form, url, eff] of [["#set-micro", "/api/micro/settings", "#set-micro-eff"], ["#set-asst", "/api/assistant/settings", "#set-asst-eff"]]) {
+  $(form).addEventListener("change", async (e) => {
+    try {
+      const r = await api("PUT", url, { model: e.target.value });
+      $(eff).textContent = r.effective || "нет модели";
+      toast("Модель сохранена");
+    } catch (err) { toast(err.message, true); }
+  });
+  $(form).addEventListener("submit", (e) => e.preventDefault());
+}
+
+// ============ Логи ============
+let logLines = [], logSeq = 0, logTimer = null, logLevel = "";
+function logLevelOf(line) {
+  const m = /level=(\w+)/.exec(line);
+  if (m) return m[1].toUpperCase();
+  return /error|ошибк|panic|fail/i.test(line) ? "ERROR" : /warn|предупр/i.test(line) ? "WARN" : "INFO";
+}
+function renderLogs() {
+  const q = $("#logs-q").value.trim().toLowerCase();
+  const view = $("#logs-view");
+  const rows = logLines.filter((l) => (!logLevel || logLevelOf(l) === logLevel) && (!q || l.toLowerCase().includes(q)));
+  if (!rows.length) { view.replaceChildren(el("span", { class: "muted" }, logLines.length ? "Ничего не найдено" : "Логов пока нет")); return; }
+  view.replaceChildren(...rows.map((l) => el("div", { class: "log-" + logLevelOf(l).toLowerCase() }, l)));
+  if ($("#logs-follow").checked) view.scrollTop = view.scrollHeight;
+}
+async function pollLogs() {
+  try {
+    const r = await api("GET", "/api/logs?since=" + logSeq);
+    if (r.seq < logSeq) logLines = []; // журнал очистили
+    if (r.lines.length || r.seq !== logSeq) {
+      logLines = logLines.concat(r.lines).slice(-2000);
+      logSeq = r.seq;
+      renderLogs();
+    }
+  } catch {}
+  if (!$("#p-logs").hidden && $("#drawer").classList.contains("open")) logTimer = setTimeout(pollLogs, 1500);
+}
+function stopLogs() { clearTimeout(logTimer); logTimer = null; }
+function loadLogs() {
+  stopLogs();
+  logLines = []; logSeq = 0;
+  renderLogs();
+  return pollLogs();
+}
+for (const b of document.querySelectorAll("#logs-level button")) {
+  b.addEventListener("click", () => {
+    logLevel = b.dataset.level;
+    for (const x of document.querySelectorAll("#logs-level button")) x.classList.toggle("on", x === b);
+    renderLogs();
+  });
+}
+$("#logs-q").addEventListener("input", renderLogs);
+$("#logs-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#logs-view").innerText); toast("Логи скопированы"); }
+  catch { toast("Не удалось скопировать", true); }
+});
+$("#logs-clear").addEventListener("click", async () => {
+  if (!(await askConfirm("Очистить журнал работы?", "Очистить"))) return;
+  try { await api("DELETE", "/api/logs"); logLines = []; renderLogs(); toast("Журнал очищен"); } catch (e) { toast(e.message, true); }
+});
+
 // loadUserCSS подгружает свой CSS пользователя. textContent, а не innerHTML:
 // стили не могут закрыть тег и вставить разметку.
 async function loadUserCSS() {
@@ -3349,7 +3625,7 @@ async function asstShow(r) {
   if (r.reply) asstAdd("bot", r.reply);
   if (r.css_changed) {
     loadUserCSS();
-    api("GET", "/api/ui/prefs").then((p) => { applyPrefs(p); if (!$("#p-look").hidden) fillLook(p); }).catch(() => {});
+    api("GET", "/api/ui/prefs").then((p) => { applyPrefs(p); if (!$("#p-settings").hidden) fillLook(p); }).catch(() => {});
   }
   if (r.actions?.some((a) => a.method !== "GET")) {
     const s = asstScreen();

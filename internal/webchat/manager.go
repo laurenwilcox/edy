@@ -40,6 +40,11 @@ type Conn struct {
 	// Visible — показывать окно управляемого браузера. По умолчанию он
 	// работает скрыто (headless); окно входа видно всегда.
 	Visible bool
+	// Model, Tool и Chat — модель, инструмент и адрес чата на сайте; пустые
+	// берутся из сохранённых настроек подключения (Options).
+	Model string
+	Tool  string
+	Chat  string
 }
 
 // Состояния подключения для интерфейса.
@@ -839,13 +844,14 @@ func (m *Manager) Ask(ctx context.Context, c Conn, prompt string, images []strin
 	}
 	defer release()
 	err = m.withTab(ctx, c, func(tab context.Context, s Site, run runFunc) error {
-		return m.ask(ctx, tab, c.Profile, s, run, prompt, images, onText)
+		return m.ask(ctx, tab, m.resolve(c), s, run, prompt, images, onText)
 	})
 	m.record(c.Profile, err)
 	return err
 }
 
-func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, s Site, run runFunc, prompt string, images []string, onText func(string) error) error {
+func (m *Manager) ask(ctx context.Context, tab context.Context, c Conn, s Site, run runFunc, prompt string, images []string, onText func(string) error) error {
+	profile := c.Profile
 	eval := func(js string, out any) error { return run(10*time.Second, chromedp.Evaluate(js, out)) }
 	state := func() (pageState, error) {
 		var st pageState
@@ -866,22 +872,11 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 		}
 	}
 
-	if err := run(60*time.Second, chromedp.Navigate(s.URL)); err != nil {
-		return m.fail(tab, profile, fmt.Errorf("не удалось открыть %s: %w", s.URL, err))
+	if err := m.openChat(ctx, tab, profile, s, run, chatURL(c, s)); err != nil {
+		return err
 	}
-	// Ждём поле ввода: его нет — значит, не выполнен вход.
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		v, err := inputValue()
-		if err == nil && v != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			return m.fail(tab, profile, fmt.Errorf("%w в %s: на странице нет поля ввода. Нажмите «Войти» у провайдера в Edy", ErrLoginRequired, s.Title))
-		}
-		if err := sleep(500 * time.Millisecond); err != nil {
-			return err
-		}
+	if err := m.choose(tab, c, s, run); err != nil {
+		return err
 	}
 	before, err := state()
 	if err != nil {

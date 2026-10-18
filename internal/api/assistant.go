@@ -265,6 +265,30 @@ func (h *Handler) assistantConfirm(w http.ResponseWriter, r *http.Request) {
 	h.assistantLoop(w, r, ss, req.Screen, req.Model, out)
 }
 
+// assistantSettings — модель помощника: GET читает, PUT {model} меняет
+// (пусто — модель микро-агентов).
+func (h *Handler) assistantSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var req struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, http.StatusBadRequest, "некорректный JSON")
+			return
+		}
+		if err := h.Store.SetSetting(SettingAssistantModel, strings.TrimSpace(req.Model)); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	chosen, _ := h.Store.Setting(SettingAssistantModel)
+	effective := strings.TrimSpace(chosen)
+	if effective == "" {
+		effective = h.microModel("")
+	}
+	reply(w, map[string]string{"model": chosen, "effective": effective})
+}
+
 func (h *Handler) assistantReset(w http.ResponseWriter, r *http.Request) {
 	h.asst.drop(r.PathValue("session"))
 	reply(w, map[string]bool{"ok": true})

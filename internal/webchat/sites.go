@@ -31,6 +31,23 @@ type Site struct {
 	// крупные <img> внутри элементов ответа.
 	Images string `json:"images,omitempty"`
 
+	// Расширенные возможности (пока только Gemini). Пункты меню ищутся по
+	// тексту, поэтому селекторы нужны лишь для кнопок и списков.
+	// ModelButton — кнопка выбора модели.
+	ModelButton string `json:"model_button,omitempty"`
+	// ToolsButton — кнопка меню инструментов (картинки, видео, Deep Research).
+	ToolsButton string `json:"tools_button,omitempty"`
+	// MenuItem — пункты открытого меню.
+	MenuItem string `json:"menu_item,omitempty"`
+	// ChatLink — ссылки на чаты в боковой панели.
+	ChatLink string `json:"chat_link,omitempty"`
+	// Plan — элемент с названием подписки (например, «PRO» или «Ultra»).
+	Plan string `json:"plan,omitempty"`
+	// Models и Tools — запасные списки, если меню на странице не найдено.
+	// Вариант названия через «|»: «Deep Research|Глубокое исследование».
+	Models []string `json:"models,omitempty"`
+	Tools  []string `json:"tools,omitempty"`
+
 	// Вежливость: пауза между запросами и дневной лимит.
 	MinIntervalSec int `json:"min_interval_sec"`
 	DailyLimit     int `json:"daily_limit"`
@@ -74,6 +91,13 @@ var DefaultSites = map[string]Site{
 		Send:           "button.send-button, button[aria-label*='Send' i], button[aria-label*='Отправ' i]",
 		Response:       "message-content .markdown, model-response message-content, message-content",
 		Busy:           "button.send-button.stop, button[aria-label*='Stop' i], button[aria-label*='Остановить' i]",
+		ModelButton:    "bard-mode-switcher button, button[data-test-id='bard-mode-menu-button'], button.input-area-switch, button[aria-label*='mode' i], button[aria-label*='режим' i]",
+		ToolsButton:    "toolbox-drawer button, button[aria-label*='Tools' i], button[aria-label*='Инструмент' i]",
+		MenuItem:       "[role='menuitem'], [role='menuitemradio'], [role='option'], button.mat-mdc-menu-item, toolbox-drawer-item button",
+		ChatLink:       "conversations-list a[href*='/app/'], [data-test-id='conversation'], side-navigation a[href*='/app/']",
+		Plan:           "[data-test-id='pillbox'], .gds-pillbox, upsell-button, a[href*='one.google.com']",
+		Models:         []string{"Fast|Быстрая|Flash", "Thinking|Думающая|Рассуждение", "Pro", "Deep Think"},
+		Tools:          []string{"Images|Изображен|Create image", "Video|Видео|Veo", "Guided Learning|Обучение|Learning", "Deep Research|Глубокое исследование"},
 		MinIntervalSec: 15,
 		DailyLimit:     150,
 	},
@@ -126,6 +150,17 @@ func merge(base, o Site) Site {
 	set(&base.Busy, o.Busy)
 	set(&base.Upload, o.Upload)
 	set(&base.Images, o.Images)
+	set(&base.ModelButton, o.ModelButton)
+	set(&base.ToolsButton, o.ToolsButton)
+	set(&base.MenuItem, o.MenuItem)
+	set(&base.ChatLink, o.ChatLink)
+	set(&base.Plan, o.Plan)
+	if len(o.Models) > 0 {
+		base.Models = o.Models
+	}
+	if len(o.Tools) > 0 {
+		base.Tools = o.Tools
+	}
 	if o.MinIntervalSec > 0 {
 		base.MinIntervalSec = o.MinIntervalSec
 	}

@@ -25,14 +25,14 @@ type UIPrefs struct {
 }
 
 // DefaultUIPrefs — оформление по умолчанию.
-var DefaultUIPrefs = UIPrefs{Theme: "system", Accent: "indigo", FontSize: 14, Font: "system", Sidebar: "left", Animations: "on"}
+var DefaultUIPrefs = UIPrefs{Theme: "dark", Accent: "neon", FontSize: 14, Font: "system", Sidebar: "left", Animations: "on"}
 
 func num(x float64) *float64 { return &x }
 
 // uiPrefFields — белый список: схема и для проверки PUT, и для ответа UI-бота.
 var uiPrefFields = []micro.Field{
 	{Name: "theme", Type: micro.TypeString, Enum: []string{"system", "light", "dark"}, Description: "тема: system — как в macOS, light — светлая, dark — тёмная"},
-	{Name: "accent", Type: micro.TypeString, Enum: []string{"indigo", "blue", "green", "orange", "pink", "red"}, Description: "акцентный цвет кнопок и выделений"},
+	{Name: "accent", Type: micro.TypeString, Enum: []string{"neon", "indigo", "blue", "green", "orange", "pink", "red"}, Description: "акцентный цвет кнопок и выделений: neon — фирменный cyan и фиолетовый"},
 	{Name: "font_size", Type: micro.TypeInt, Min: num(12), Max: num(18), Description: "размер шрифта в пикселях"},
 	{Name: "font", Type: micro.TypeString, Enum: []string{"system", "serif", "mono"}, Description: "шрифт интерфейса: системный, с засечками, моноширинный"},
 	{Name: "sidebar", Type: micro.TypeString, Enum: []string{"left", "right"}, Description: "с какой стороны меню"},

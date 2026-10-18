@@ -25,7 +25,7 @@ import (
 )
 
 func main() {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := slog.New(slog.NewTextHandler(app.Logs, nil))
 	target, srv, startErr := start(log)
 
 	err := wails.Run(&options.App{
@@ -34,7 +34,7 @@ func main() {
 		Height:           900,
 		MinWidth:         900,
 		MinHeight:        600,
-		BackgroundColour: &options.RGBA{R: 238, G: 240, B: 247, A: 255},
+		BackgroundColour: &options.RGBA{R: 21, G: 23, B: 28, A: 255},
 		AssetServer:      &assetserver.Options{Handler: bootstrap(target, startErr)},
 		// Второй запуск приложения просто показывает уже открытое окно.
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "dev.edy.ide"},
@@ -82,11 +82,11 @@ func bootstrap(target string, startErr error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if startErr != nil {
-			fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><body style="font:15px -apple-system,sans-serif;padding:40px;background:#eef0f7;color:#171a24">
+			fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><body style="font:15px -apple-system,sans-serif;padding:40px;background:#15171c;color:#e6e8f0">
 <h2>Edy не запустился</h2><p>%s</p><p style="color:#646b7d">Закройте окно и попробуйте снова. Если ошибка повторяется — запустите <code>edy serve</code> в Терминале, чтобы увидеть подробности.</p>`,
 				html.EscapeString(startErr.Error()))
 			return
 		}
-		fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><body style="background:#eef0f7"><script>location.replace(%q)</script>`, target)
+		fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><body style="background:#15171c"><script>location.replace(%q)</script>`, target)
 	})
 }

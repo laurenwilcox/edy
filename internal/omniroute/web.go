@@ -45,7 +45,7 @@ func (a *WebAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	}
 	sent := ""
 	// Профиль браузера — имя провайдера: у каждого подключения своё окружение.
-	conn := webchat.Conn{Profile: call.Provider.Name, Site: call.Provider.Site, Browser: call.Provider.Browser, Visible: call.Provider.ShowWindow}
+	conn := webchat.Conn{Profile: call.Provider.Name, Site: call.Provider.Site, Browser: call.Provider.Browser, Visible: call.Provider.ShowWindow, Model: call.Model}
 	err = a.Browser.Ask(ctx, conn, prompt, images, func(full string) error {
 		// Отдаём только дописанный хвост. Если сайт переписал начало ответа
 		// (бывает при отрисовке разметки), уже отправленное не трогаем.
