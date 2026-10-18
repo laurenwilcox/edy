@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/memory"
 	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 )
@@ -138,10 +139,15 @@ type Manager struct {
 	Notify func(v View, message string)
 	// SkillsHome — папка данных Edy: общие скиллы лежат в её skills/.
 	SkillsHome string
+	// Notes — память проекта: исполнитель ищет и пишет в неё, а доска
+	// записывает итоги и уроки задач. nil — без памяти.
+	Notes memory.Store
 	// MCP подключает MCP-сервер Edy к исполнителям, которые это умеют.
 	MCP agent.MCPBridge
 	// Now подменяется в тестах.
 	Now func() time.Time
+	// maxAttempts — провалов проверок до передачи задачи (0 — по умолчанию).
+	maxAttempts int
 
 	mu      sync.Mutex
 	active  map[string]*run // проект → выполняющаяся задача
@@ -393,6 +399,42 @@ func (m *Manager) kick(project string) {
 	go m.work(ctx, ru, r, list2)
 }
 
+// memoryFor — доступ задачи к памяти проекта и закреплённые заметки.
+func (m *Manager) memoryFor(r record) (agent.Memory, string) {
+	if m.Notes == nil {
+		return nil, ""
+	}
+	notes, _ := m.Notes.Notes(r.Project)
+	return &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID}, memory.Pinned(notes, 1500)
+}
+
+// learn записывает в память проекта итог или урок задачи — без вызова ИИ.
+func (m *Manager) learn(r record, kind, text string) {
+	if m.Notes == nil {
+		return
+	}
+	if rs := []rune(text); len(rs) > memory.MaxNote {
+		text = string(rs[:memory.MaxNote-1]) + "…"
+	}
+	m.Notes.AddNote(store.Note{Project: r.Project, Kind: kind, Text: text, Source: "task:" + r.ID})
+}
+
+// lastFailure — первая строка последнего провала проверок или ошибки задачи.
+func (m *Manager) lastFailure(id string) string {
+	events, _ := m.Board.BoardEvents(id, 0)
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind == "hooks" && strings.Contains(e.Text, "✗") || e.Kind == "error" {
+			for _, line := range strings.Split(e.Text, "\n") {
+				if strings.Contains(line, "✗") || e.Kind == "error" {
+					return strings.TrimSpace(line)
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // ---- выполнение ----
 
 func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Skill) {
@@ -400,14 +442,18 @@ func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Sk
 	m.event(r.ID, "", "started", "Работа началась")
 	attempt := 0
 	var agentsMu sync.Mutex
+	mem, brief := m.memoryFor(r)
 	task := &agent.Task{
-		Root:   r.Project,
-		Goal:   r.Goal,
-		Models: r.Models,
-		LLM:    m.LLM,
-		Skills: given,
-		MCP:    m.MCP,
-		Extra:  r.MCP,
+		MaxAttempts: m.maxAttempts,
+		Memory:      mem,
+		MemoryBrief: brief,
+		Root:        r.Project,
+		Goal:        r.Goal,
+		Models:      r.Models,
+		LLM:         m.LLM,
+		Skills:      given,
+		MCP:         m.MCP,
+		Extra:       r.MCP,
 		OnEvent: func(e agent.Event) {
 			agentsMu.Lock()
 			id := ru.agentID
@@ -492,6 +538,9 @@ func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Sk
 		m.event(r.ID, agentID, "error", final.Error)
 		m.notify(final.View, "Ошибка: "+final.Error)
 	case StateNeedsHuman:
+		if fail := m.lastFailure(r.ID); fail != "" {
+			m.learn(final, store.NoteLesson, fmt.Sprintf("Задача «%s» не удалась (%s): %s", final.Title, strings.Join(final.Models, ", "), fail))
+		}
 		m.notify(final.View, "Нужна помощь: ни одна модель не справилась, проект откачен")
 	case StateDone:
 		final = m.afterDone(final, agentID)
@@ -651,6 +700,7 @@ func (m *Manager) approve(id string, auto bool) (View, error) {
 		return View{}, err
 	}
 	m.event(id, lastAgent(r), "approved", "Approve: "+out.Note)
+	m.learn(r, store.NoteTask, fmt.Sprintf("«%s»: %s (модель %s)", r.Title, firstNonEmpty(r.Summary, "сделано"), r.Model))
 	if !auto {
 		go m.kick(r.Project)
 	}

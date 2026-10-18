@@ -51,6 +51,10 @@ type Task struct {
 	// (Claude Code): они правят проект инструментами Edy сами, без пошаговой
 	// эмуляции. nil — все модели работают через инструменты в промпте.
 	MCP MCPBridge
+	// Memory — память проекта; MemoryBrief — закреплённые заметки, которые
+	// исполнитель видит сразу (остальное ищет сам через project_memory).
+	Memory      Memory
+	MemoryBrief string
 	// Extra — внешние MCP-серверы из каталога Edy, которые Оркестратор выдал
 	// исполнителю вместе с MCP Edy (только исполнителям с поддержкой MCP).
 	Extra []string
@@ -69,7 +73,9 @@ type MCPBridge interface {
 // MCPEvents — что делает исполнитель через MCP, и что ему видно.
 type MCPEvents struct {
 	// Skills — скиллы, доступные через use_skill (выданные Оркестратором).
-	Skills   []string
+	Skills []string
+	// Memory — память проекта для project_memory и remember.
+	Memory   Memory
 	OnCall   func(tool, note string, isErr bool)
 	OnChange func(step string)
 }
@@ -149,7 +155,7 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 
 	// CLI-утилиты запускаются в папке проекта.
 	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root})
-	ws := Workspace{Root: t.Root, Skills: t.Skills}
+	ws := Workspace{Root: t.Root, Skills: t.Skills, Memory: t.Memory}
 	if len(t.Skills) > 0 {
 		t.emit("info", "Скиллов доступно агенту: %d", len(t.Skills))
 	}
@@ -208,7 +214,7 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 // attempt — работа одной модели: до MaxAttempts провалов проверок подряд.
 func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow Shadow, hooks []Hook, step *int) (string, bool, error) {
 	msgs := []Msg{
-		{Role: "system", Content: strings.TrimSpace(systemPrompt + "\n\n" + skills.Catalog(t.Skills))},
+		{Role: "system", Content: strings.TrimSpace(systemPrompt + "\n\n" + skills.Catalog(t.Skills) + t.memoryNote())},
 		{Role: "user", Content: "Задача:\n" + t.Goal},
 	}
 	tools := ws.Tools()
@@ -282,6 +288,18 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 	}
 }
 
+// memoryNote — раздел системного промпта о памяти проекта.
+func (t *Task) memoryNote() string {
+	if t.Memory == nil {
+		return ""
+	}
+	note := "\n\nПамять проекта: ищи в ней через project_memory (как запускать, что хрупко, уроки прошлых задач); полезный неочевидный факт запиши через remember."
+	if strings.TrimSpace(t.MemoryBrief) != "" {
+		note += "\nЗакреплённое в памяти проекта:\n" + t.MemoryBrief
+	}
+	return note
+}
+
 const mcpPrompt = `Ты — агент-разработчик в Edy. Работай с проектом через инструменты MCP-сервера edy:
 project_skeleton и search_code — чтобы разобраться в коде, read_file — прочитать файл,
 replace_in_file и write_file — править, delete_file — удалять, run_checks — запустить линтеры и тесты,
@@ -304,6 +322,7 @@ func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step 
 	}
 	url, release := t.MCP.Bind(t.Root, MCPEvents{
 		Skills: names,
+		Memory: t.Memory,
 		OnCall: func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {
@@ -327,9 +346,9 @@ func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step 
 	}
 	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root, MCP: url, MCPServers: t.Extra})
 
-	base := strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)) + "\n\nЗадача:\n" + t.Goal
+	base := strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)+t.memoryNote()) + "\n\nЗадача:\n" + t.Goal
 	if len(t.Extra) > 0 {
-		base = strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)) +
+		base = strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)+t.memoryNote()) +
 			"\n\nДля этой задачи тебе также выданы MCP-серверы: " + strings.Join(t.Extra, ", ") +
 			". Пользуйся ими, когда они нужны (например, проверить результат), но правь файлы проекта только через edy.\n\nЗадача:\n" + t.Goal
 	}

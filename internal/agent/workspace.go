@@ -33,6 +33,14 @@ type Workspace struct {
 	Root string
 	// Skills — скиллы, доступные агенту через use_skill.
 	Skills []skills.Skill
+	// Memory — память проекта (project_memory, remember); nil — без памяти.
+	Memory Memory
+}
+
+// Memory — память проекта для агента.
+type Memory interface {
+	Search(query string) string
+	Remember(text string) error
 }
 
 // resolve превращает путь от агента в абсолютный и не даёт выйти за пределы проекта.
@@ -95,6 +103,11 @@ func (w Workspace) Tools() []ToolDef {
 		def("delete_file", "Удалить файл.", path),
 		def("finish", "Работа закончена. После этого Edy запустит линтеры и тесты.", `{"type":"object","properties":{"summary":{"type":"string","description":"что сделано, 1-3 предложения"}},"required":["summary"]}`),
 	}
+	if w.Memory != nil {
+		tools = append(tools,
+			def("project_memory", "Поиск в памяти проекта: факты (как собрать и запустить тесты), уроки прошлых задач, итоги. Ищите, прежде чем гадать.", `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			def("remember", "Записать в память проекта короткий полезный факт для следующих задач (до 400 символов): как запускать, что хрупко, неочевидные договорённости. Не записывайте итог задачи — Edy сделает это сам.", `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`))
+	}
 	if len(w.Skills) > 0 {
 		tools = append(tools, def("use_skill", "Загрузить скилл — инструкцию проекта по имени из списка скиллов.", `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`))
 	}
@@ -110,6 +123,7 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 		New     string `json:"new"`
 		Query   string `json:"query"`
 		Name    string `json:"name"`
+		Text    string `json:"text"`
 		Limit   int    `json:"limit"`
 	}
 	if args != "" && json.Unmarshal([]byte(args), &a) != nil {
@@ -131,6 +145,17 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 			a.Limit = 5
 		}
 		return codeindex.FormatHits(idx.Search(a.Query, a.Limit), 80), false, nil
+	case "project_memory", "remember":
+		if w.Memory == nil {
+			return "", false, errors.New("память проекта недоступна")
+		}
+		if name == "project_memory" {
+			return w.Memory.Search(a.Query), false, nil
+		}
+		if err := w.Memory.Remember(a.Text); err != nil {
+			return "", false, err
+		}
+		return "записано в память проекта", false, nil
 	case "use_skill":
 		sk, ok := skills.Find(w.Skills, a.Name)
 		if !ok {

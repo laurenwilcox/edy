@@ -15,6 +15,7 @@ import (
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/codeindex"
 	"github.com/laurenwilcox/name/internal/gitops"
+	"github.com/laurenwilcox/name/internal/memory"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/orchestrator"
 	"github.com/laurenwilcox/name/internal/skills"
@@ -250,7 +251,12 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	agentID := h.journalOrchestrator(req.Conversation, req.Model, req.Project, history)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, h.orchestratorContext(req.Project, req.Executors))
+	oc := h.orchestratorContext(req.Project, req.Executors)
+	if notes, err := h.Store.Notes(req.Project); err == nil && len(history) > 0 {
+		// Выжимка под последнюю просьбу: не вся память, а похожее (≈500 токенов).
+		oc.Memory = memory.Brief(notes, history[len(history)-1].Content, 2000)
+	}
+	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, oc)
 	if agentID != "" {
 		switch {
 		case err != nil:

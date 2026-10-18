@@ -531,6 +531,20 @@ h3.sub:first-child { margin-top: 0; }
           <div id="project-list"></div>
           <h3 class="sub">Снимки текущего проекта (Shadow Git)</h3>
           <div class="card" id="checkpoints"><div class="muted small">Выберите проект.</div></div>
+          <h3 class="sub">Память проекта</h3>
+          <div class="card">
+            <div class="small muted" style="margin-bottom:8px">Короткие факты и уроки для агентов. 📌 Закреплённое видят все агенты всегда; остальное Оркестратор получает выборочно — только похожее на задачу, а исполнитель ищет сам. Итоги и уроки задач записываются автоматически.</div>
+            <form class="row" id="mem-search" style="flex-wrap:nowrap">
+              <input name="q" placeholder="Поиск в памяти" autocomplete="off">
+              <button class="btn ghost" type="submit">Найти</button>
+            </form>
+            <div id="mem-list" style="margin-top:8px"></div>
+            <form class="row" id="mem-add" style="flex-wrap:nowrap;margin-top:8px">
+              <select name="kind" style="width:auto"><option value="fact">факт</option><option value="lesson">урок</option><option value="note">заметка</option></select>
+              <input name="text" placeholder="Например: тесты запускаются через make test" maxlength="400" autocomplete="off">
+              <button class="btn" type="submit">＋</button>
+            </form>
+          </div>
           <h3 class="sub">Скиллы — инструкции для агентов</h3>
           <div class="card">
             <div id="skills-list"><div class="muted small">Выберите проект.</div></div>
@@ -2239,8 +2253,38 @@ function renderProjects() {
     p.problem && !p.pending && !p.running ? el("div", { class: "small", style: "margin-top:6px;color:var(--danger)" }, p.problem) : "")));
   loadCheckpoints(current);
   loadSkills(current);
+  loadMemory(current, "");
   loadContext(current, "");
 }
+
+// ---- Память проекта ----
+const noteKind = { fact: "факт", lesson: "урок", task: "задача", note: "заметка" };
+async function loadMemory(path, q) {
+  const box = $("#mem-list");
+  if (!path) { box.replaceChildren(el("div", { class: "muted small" }, "Выберите проект.")); return; }
+  let r;
+  try { r = await api("GET", `/api/memory?project=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}`); } catch (e) { box.replaceChildren(el("div", { class: "small" }, e.message)); return; }
+  if (!r.notes.length) { box.replaceChildren(el("div", { class: "muted small" }, q ? "Ничего не нашлось." : "Память пуста — она наполнится после задач.")); return; }
+  box.replaceChildren(...r.notes.slice(0, 60).map((n) => el("div", { class: "skill" },
+    el("div", { class: "grow" },
+      el("div", { class: "row small" }, el("span", { class: "badge" + (n.kind === "lesson" ? " off" : n.kind === "task" ? " cli" : "") }, noteKind[n.kind] || n.kind),
+        el("span", { class: "muted" }, new Date(n.created).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) + (n.source && n.source !== "user" ? " · " + (n.source.startsWith("task:") ? "из задачи" : n.source.startsWith("mcp:") ? "внешний агент" : n.source) : ""))),
+      el("div", { class: "small", style: "margin-top:3px" }, n.text)),
+    el("button", { class: "btn ghost icon", title: n.pinned ? "Открепить" : "Закрепить: всегда видно агентам", onclick: async () => {
+      try { await api("PUT", "/api/memory/" + n.id, { project: path, pinned: !n.pinned }); loadMemory(path, q); } catch (e) { toast(e.message, true); }
+    } }, n.pinned ? "📌" : "📍"),
+    el("button", { class: "btn danger icon", onclick: async () => {
+      try { await api("DELETE", `/api/memory/${n.id}?project=${encodeURIComponent(path)}`); loadMemory(path, q); } catch (e) { toast(e.message, true); }
+    } }, "✕"))));
+}
+$("#mem-search").addEventListener("submit", (e) => { e.preventDefault(); loadMemory($("#project").value, e.target.q.value.trim()); });
+$("#mem-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, text = f.text.value.trim();
+  if (!text) return;
+  try { await api("POST", "/api/memory", { project: $("#project").value, text, kind: f.kind.value }); f.text.value = ""; loadMemory($("#project").value, ""); }
+  catch (err) { toast(err.message, true); }
+});
 
 async function loadSkills(path) {
   const box = $("#skills-list");

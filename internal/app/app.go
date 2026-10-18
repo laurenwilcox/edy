@@ -113,6 +113,7 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)}, st)
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
+	h.Tasks.Notes = st
 	h.Tasks.MCP = h.MCPBridge()
 	h.Tasks.Review = review.New(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "reviewer", HTTP: agent.InProcess(router)}, st,
 		func(v tasks.View) string {

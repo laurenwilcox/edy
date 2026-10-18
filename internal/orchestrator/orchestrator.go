@@ -74,6 +74,8 @@ type Context struct {
 	Others    []Executor // остальные модели — чтобы посоветовать замену
 	Skills    []Skill
 	Servers   []Server
+	// Memory — выжимка памяти проекта: закреплённое и похожее на просьбу.
+	Memory string
 }
 
 // Proposal — новый MCP-сервер, которого нет в каталоге. Его добавляет
@@ -108,6 +110,9 @@ func capsLine(e Executor) string {
 func instructions(c Context) string {
 	var b strings.Builder
 	mcpOK := false
+	if strings.TrimSpace(c.Memory) != "" {
+		b.WriteString("\n\nПамять проекта (закреплённое и похожее на эту задачу) — учитывай в плане:\n" + c.Memory)
+	}
 	b.WriteString("\n\nИсполнитель и его возможности.\n")
 	if len(c.Executors) == 0 {
 		b.WriteString("Исполнитель ещё не выбран: не выдавай MCP-серверы, скиллы выдавать можно.\n")

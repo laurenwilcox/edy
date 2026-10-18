@@ -179,3 +179,27 @@ func TestTaskSessionSeesOnlyGivenSkills(t *testing.T) {
 		t.Fatalf("без скиллов: %s", out)
 	}
 }
+
+type fakeMemory struct{ saved []string }
+
+func (f *fakeMemory) Search(q string) string     { return "нашлось: " + q }
+func (f *fakeMemory) Remember(text string) error { f.saved = append(f.saved, text); return nil }
+
+func TestMemoryTools(t *testing.T) {
+	mem := &fakeMemory{}
+	s := &Server{Root: project(t), Home: t.TempDir(), Memory: mem, Busy: func() bool { return true }}
+	names := map[string]bool{}
+	for _, tl := range rpc(t, s, "tools/list", map[string]any{}).Result.Tools {
+		names[tl.Name] = true
+	}
+	if !names["project_memory"] || !names["remember"] {
+		t.Fatalf("инструменты памяти: %v", names)
+	}
+	if out, _ := callTool(t, s, "project_memory", map[string]any{"query": "тесты"}); out != "нашлось: тесты" {
+		t.Fatal(out)
+	}
+	// remember не трогает файлы — работает и во время задачи.
+	if _, isErr := callTool(t, s, "remember", map[string]any{"text": "сборка через make"}); isErr || len(mem.saved) != 1 {
+		t.Fatalf("remember: %v", mem.saved)
+	}
+}

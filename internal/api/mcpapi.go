@@ -16,6 +16,7 @@ import (
 
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/mcp"
+	"github.com/laurenwilcox/name/internal/memory"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
@@ -144,12 +145,13 @@ func (h *Handler) mcpServer(project, agentID string, bind *mcpBinding) *mcp.Serv
 	case bind != nil:
 		// Исполнитель задачи: задача сама держит проект, её правки разрешены.
 		s.OnCall, s.OnChange = bind.ev.OnCall, bind.ev.OnChange
-		s.Skills = bind.ev.Skills
+		s.Skills, s.Memory = bind.ev.Skills, bind.ev.Memory
 		if s.Skills == nil {
 			s.Skills = []string{}
 		}
 		return s
 	case agentID != "":
+		s.Memory = &memory.Access{St: h.Store, Project: project, Source: "mcp:" + agentID, Limit: 20}
 		s.OnCall = func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {

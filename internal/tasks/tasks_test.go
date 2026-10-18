@@ -381,3 +381,56 @@ func TestReviewGatesAutoApprove(t *testing.T) {
 		t.Fatalf("ревью без замечаний — автопринятие: %s", v.State)
 	}
 }
+
+// remembering — исполнитель, который пишет факт в память и чинит Add.
+type remembering struct{ fixer }
+
+func (f *remembering) Chat(ctx context.Context, model string, msgs []agent.Msg, tools []agent.ToolDef) (agent.Msg, error) {
+	if len(msgs) == 2 {
+		if !strings.Contains(msgs[0].Content, "Закреплённое в памяти проекта:\n- [факт] Тесты: go test ./...") {
+			return agent.Msg{}, fmt.Errorf("исполнитель не видит закреплённое: %s", msgs[0].Content)
+		}
+		return tc("remember", map[string]string{"text": "В calc.go всё целочисленное"}), nil
+	}
+	if len(msgs) == 4 {
+		return tc("replace_in_file", map[string]string{"path": "calc.go", "old": "a - b", "new": "a + b"}), nil
+	}
+	return tc("finish", map[string]string{"summary": "Исправил Add"}), nil
+}
+
+func TestMemoryLearnsFromTasks(t *testing.T) {
+	dir := project(t)
+	m, st := newMgr(t, &remembering{})
+	m.Notes = st
+	st.AddNote(store.Note{Project: dir, Kind: store.NoteFact, Text: "Тесты: go test ./...", Pinned: true})
+	v, _ := m.Start(dir, "Почини Add", []string{"m/m"})
+	if v = wait(t, m, v.ID); v.State != StateDone {
+		t.Fatalf("state %s %s", v.State, v.Error)
+	}
+	m.Approve(v.ID)
+	notes, _ := st.Notes(dir)
+	var texts []string
+	for _, n := range notes {
+		texts = append(texts, n.Kind+": "+n.Text+" ("+n.Source+")")
+	}
+	all := strings.Join(texts, "\n")
+	if !strings.Contains(all, "fact: В calc.go всё целочисленное (task:"+v.ID+")") || !strings.Contains(all, "task: «Почини Add»: Исправил Add (модель m/m)") {
+		t.Fatalf("память после задачи:\n%s", all)
+	}
+
+	// Провал: урок с причиной.
+	m2, st2 := newMgr(t, &fixer{})
+	m2.Notes = st2
+	os.WriteFile(filepath.Join(dir, "calc_test.go"), []byte(strings.Replace(test, "5", "6", 1)), 0o644)
+	exec.Command("git", "-C", dir, "commit", "-qam", "сломать тест").Run()
+	m2.MaxAttemptsForTest(1)
+	v, _ = m2.Start(dir, "Почини Add", []string{"m/m"})
+	if v = wait(t, m2, v.ID); v.State != StateNeedsHuman {
+		t.Fatalf("ожидали провал: %s", v.State)
+	}
+	m2.Wait()
+	notes, _ = st2.Notes(dir)
+	if len(notes) != 1 || notes[0].Kind != store.NoteLesson || !strings.Contains(notes[0].Text, "не удалась (m/m): ✗ go test") {
+		t.Fatalf("урок: %+v", notes)
+	}
+}

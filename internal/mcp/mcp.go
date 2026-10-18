@@ -34,6 +34,8 @@ type Server struct {
 	Version string
 	// Skills — какие скиллы видны клиенту; nil — все скиллы проекта и общие.
 	Skills []string
+	// Memory — память проекта (project_memory, remember); nil — без неё.
+	Memory agent.Memory
 	// Busy сообщает, что над проектом сейчас работает задача Edy: тогда
 	// правки через MCP запрещены, чтобы не мешать агенту (блокировка файлов).
 	Busy func() bool
@@ -202,11 +204,15 @@ type tool struct {
 	Annotations map[string]any  `json:"annotations,omitempty"`
 }
 
-var readOnly = map[string]bool{"project_skeleton": true, "search_code": true, "list_files": true, "read_file": true, "list_skills": true, "use_skill": true}
+var readOnly = map[string]bool{"project_skeleton": true, "search_code": true, "list_files": true, "read_file": true, "list_skills": true, "use_skill": true, "project_memory": true}
+
+// noFiles — инструменты, которые не трогают файлы проекта: им не нужны
+// блокировка и снимок.
+var noFiles = map[string]bool{"remember": true}
 
 func (s *Server) tools() []tool {
 	// use_skill есть всегда: скиллы могут появиться, пока клиент подключён.
-	ws := agent.Workspace{Root: s.Root, Skills: []skills.Skill{{}}}
+	ws := agent.Workspace{Root: s.Root, Skills: []skills.Skill{{}}, Memory: s.Memory}
 	var out []tool
 	for _, d := range ws.Tools() {
 		if d.Function.Name == "finish" {
@@ -255,7 +261,7 @@ func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (s
 		return strings.TrimSpace(report), !ok
 	}
 
-	writes := !readOnly[name]
+	writes := !readOnly[name] && !noFiles[name]
 	if writes {
 		if s.Busy != nil && s.Busy() {
 			return "Ошибка: над проектом сейчас работает задача Edy — правки через MCP временно запрещены.", true
@@ -264,7 +270,7 @@ func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (s
 		defer s.mu.Unlock()
 	}
 	list, _ := s.skills()
-	ws := agent.Workspace{Root: s.Root, Skills: list}
+	ws := agent.Workspace{Root: s.Root, Skills: list, Memory: s.Memory}
 	out, changed, err := ws.Call(name, argStr)
 	if err != nil {
 		return "Ошибка: " + err.Error(), true
