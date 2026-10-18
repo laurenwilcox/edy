@@ -123,7 +123,7 @@ func Open(path string, v *vault.Vault) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + agentsSchema + gitSchema + mcpSchema); err != nil {
+	if _, err := db.Exec(schema + agentsSchema + gitSchema + mcpSchema + boardSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: миграция схемы: %w", err)
 	}

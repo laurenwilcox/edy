@@ -205,6 +205,53 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .orch-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--a1) 4%, transparent); }
 .orch-bar label { font-size: 11.5px; }
 .orch-bar select { width: auto; max-width: 240px; padding: 6px 9px; }
+/* ---- Доска задач ---- */
+.board-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.board-bar { display: flex; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.switch-label { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.switch-label input { width: auto; }
+.board-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, minmax(190px, 1fr)); gap: 10px; padding: 14px 16px 16px; overflow-x: auto; }
+.col { display: flex; flex-direction: column; min-height: 0; border-radius: 16px; background: color-mix(in srgb, var(--text) 3%, transparent); border: 1px solid var(--line); transition: background .15s, border-color .15s; }
+.col.drop { border-color: var(--a1); background: color-mix(in srgb, var(--a1) 8%, transparent); }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; font-weight: 600; font-size: 13px; }
+.col-head .count { margin-left: auto; font-size: 11.5px; color: var(--muted); font-weight: 500; }
+.col-hint { padding: 0 12px 6px; font-size: 11.5px; color: var(--muted); }
+.col-body { flex: 1; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.tcard { background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 12px; padding: 9px 10px; cursor: pointer; box-shadow: var(--shadow); transition: transform .15s, border-color .15s; animation: rise .3s both; }
+.tcard:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--a1) 40%, transparent); }
+.tcard.dragging { opacity: .5; }
+.tcard .t-title { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.tcard .t-parent { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.tcard .t-meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.tcard .t-actions { display: flex; gap: 6px; margin-top: 8px; }
+.tcard .t-actions .btn { padding: 4px 9px; font-size: 12px; }
+.st { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; background: var(--code); }
+.st.running { color: var(--a2); background: color-mix(in srgb, var(--a2) 14%, transparent); }
+.st.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.st.needs_human, .st.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.st.approved { color: var(--ok); }
+.st.rejected, .st.cancelled { color: var(--muted); }
+.st.queued { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.modal { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(10,10,25,.35); backdrop-filter: blur(4px); animation: dd-in .15s; }
+.modal-box { width: min(860px, 100%); max-height: 100%; overflow-y: auto; border-radius: 20px; padding: 20px 22px; background: var(--glass-strong); border: 1px solid var(--glass-border); box-shadow: 0 30px 80px -20px rgba(0,0,0,.45); }
+.modal-head { display: flex; gap: 10px; align-items: flex-start; }
+.modal-head h3 { margin: 0; font-size: 17px; flex: 1; }
+.tsec { margin-top: 14px; }
+.tsec h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.timeline { display: flex; flex-direction: column; gap: 2px; border-left: 2px solid var(--line); margin-left: 6px; padding-left: 12px; }
+.tl { position: relative; font-size: 12.5px; padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
+.tl::before { content: ""; position: absolute; left: -18px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); border: 2px solid var(--glass-strong); }
+.tl .when { color: var(--muted); font-size: 11px; margin-right: 6px; }
+.tl.k-comment::before, .tl.k-plan::before { background: var(--a1); }
+.tl.k-model::before, .tl.k-breaker::before { background: var(--warn); }
+.tl.k-review::before { background: var(--a3); }
+.tl.k-approved::before, .tl.k-hooks::before { background: var(--ok); }
+.tl.k-error::before, .tl.k-rejected::before { background: var(--danger); }
+.tl.k-subtask::before { background: var(--a2); }
+.review { border-radius: 12px; padding: 10px 12px; border: 1px solid var(--line); white-space: pre-wrap; font-size: 13px; }
+.review.ok { border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 7%, transparent); }
+.review.issues { border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 7%, transparent); }
+@media (max-width: 760px) { .board-cols { grid-template-columns: repeat(5, 78vw); } .board-bar { flex-wrap: wrap; } }
 /* Выпадающие списки: родной select скрыт, вместо него — своя кнопка и список
    в стиле приложения (системный список macOS не красится через CSS). */
 .dd { position: relative; display: block; width: 100%; min-width: 0; }
@@ -435,6 +482,7 @@ h3.sub:first-child { margin-top: 0; }
         </section>
 
         <section id="p-project">
+          <button class="btn" type="button" id="open-board" style="width:100%;margin-bottom:12px">📋 Доска задач проекта</button>
           <form id="project-form" class="card">
             <label>Папка проекта (полный путь)
               <input name="path" placeholder="/Users/vova/projects/my-app" autocomplete="off">
@@ -487,6 +535,7 @@ h3.sub:first-child { margin-top: 0; }
               <label class="choice"><input type="radio" name="commit" value="direct"><span><b>Прямо в текущую ветку</b><small>Коммит сразу в ветку, на которой стоит проект.</small></span></label>
               <label class="choice"><input type="radio" name="commit" value="none"><span><b>Без коммита</b><small>Изменения остаются в папке, коммитите сами.</small></span></label>
             </div>
+            <label class="switch-label" style="margin-top:12px"><input type="checkbox" name="auto_approve"> Автопринятие — принимать результат без меня, если проверки и ревью прошли (очередь задач идёт сама)</label>
             <div class="form-grid" style="margin-top:12px">
               <label>После коммита
                 <select name="push">
@@ -633,6 +682,7 @@ h3.sub:first-child { margin-top: 0; }
       <div class="seg" id="mode-seg">
         <button type="button" data-chat-mode="chat" class="on">Чат</button>
         <button type="button" data-chat-mode="orch">Оркестратор</button>
+        <button type="button" data-chat-mode="board">Доска</button>
       </div>
       <select id="model" title="Модель"></select>
       <span class="grow"></span>
@@ -646,7 +696,19 @@ h3.sub:first-child { margin-top: 0; }
     </div>
     <div class="messages" id="messages"></div>
     <div class="messages" id="orch-messages" hidden></div>
-    <div class="composer">
+    <div class="board-wrap" id="board" hidden>
+      <div class="board-bar">
+        <form class="row" id="board-new" style="flex:1;flex-wrap:nowrap">
+          <input name="request" placeholder="Новая задача в пул: опишите, что сделать" autocomplete="off">
+          <button class="btn" type="submit">＋ В пул</button>
+        </form>
+        <label class="switch-label" title="Принимать результат без вас, если проверки и ревью прошли — очередь идёт сама, например ночью">
+          <input type="checkbox" id="board-auto"> Автопринятие
+        </label>
+      </div>
+      <div class="board-cols" id="board-cols"></div>
+    </div>
+    <div class="composer" id="composer-wrap">
       <form class="composer-box" id="composer">
         <textarea id="input" rows="1" placeholder="Напишите сообщение…"></textarea>
         <button class="send" id="send" type="submit" title="Отправить">➤</button>
@@ -655,6 +717,10 @@ h3.sub:first-child { margin-top: 0; }
     </div>
   </main>
 
+</div>
+
+<div class="modal" id="task-modal" hidden>
+  <div class="modal-box glass" id="task-modal-box"></div>
 </div>
 
 <div id="auth" class="toast error" hidden>Нет токена доступа. Откройте интерфейс командой edy ui.</div>
@@ -1414,7 +1480,8 @@ input.addEventListener("keydown", (e) => {
 });
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
 $("#new-chat").addEventListener("click", () => {
-  if (chatMode === "orch") { orchHistory = []; orchConversation = ""; }
+  if (chatMode === "board") { $("#board-new").request.focus(); return; }
+  if (chatMode === "orch") { orchHistory = []; orchConversation = ""; orchTaskID = ""; }
   else { if (abort) abort.abort(); history_ = []; }
   showWelcome();
   input.focus();
@@ -1426,9 +1493,14 @@ function setChatMode(mode) {
   chatMode = mode;
   store.set("edy-chat-mode", mode);
   for (const b of document.querySelectorAll("#mode-seg button")) b.classList.toggle("on", b.dataset.chatMode === mode);
-  $("#orch-bar").hidden = mode !== "orch";
+  $("#orch-bar").hidden = mode === "chat";
   $("#messages").hidden = mode !== "chat";
   $("#orch-messages").hidden = mode !== "orch";
+  $("#board").hidden = mode !== "board";
+  $("#composer-wrap").hidden = mode === "board";
+  $("#model").parentElement.hidden = mode === "board";
+  if (mode === "board") { loadBoard(); return; }
+  clearTimeout(boardTimer);
   msgsBox = mode === "orch" ? $("#orch-messages") : $("#messages");
   $("#model").title = mode === "orch" ? "Модель Оркестратора" : "Модель";
   input.placeholder = mode === "orch" ? "Опишите задачу для проекта…" : "Напишите сообщение…";
@@ -1441,6 +1513,7 @@ for (const b of document.querySelectorAll("#mode-seg button")) b.addEventListene
 let orchHistory = [];
 let orchBusy = false;
 let orchConversation = "";
+let orchTaskID = ""; // задача из пула, которую обсуждаем с Оркестратором
 const newConversation = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 async function sendOrch() {
@@ -1506,8 +1579,10 @@ function planCard(plan, project, mcp, skills) {
     start.disabled = true;
     const request = orchHistory.filter((x) => x.role === "user").map((x) => x.content).join("\n");
     try {
-      const v = await api("POST", "/api/tasks", { project, request, plan, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
-      start.textContent = "Работа начата";
+      const comment = box.closest(".msg")?.querySelector(".body")?.innerText || "";
+      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
+      orchTaskID = "";
+      start.textContent = v.state === "queued" ? "Поставлено в очередь" : "Работа начата";
       watchTask(v);
       refreshProjectState();
     } catch (e) {
@@ -1519,8 +1594,9 @@ function planCard(plan, project, mcp, skills) {
 }
 
 // ============ Ход работы агента ============
-const kindIcon = { model: "🤖", tool: "🔧", checkpoint: "📸", hooks: "🧪", breaker: "⚡", info: "ℹ️", error: "⚠️" };
-const stateTitle = { running: "Агент работает", done: "Готово — нужно ваше решение", needs_human: "Нужна помощь человека", failed: "Ошибка", cancelled: "Остановлено", approved: "Применено", rejected: "Откачено" };
+const kindIcon = { model: "🤖", tool: "🔧", checkpoint: "📸", hooks: "🧪", breaker: "⚡", info: "ℹ️", error: "⚠️",
+  created: "🆕", queued: "⏳", started: "▶️", plan: "📋", comment: "💬", subtask: "🧩", review: "🔍", approved: "✅", rejected: "↩️" };
+const stateTitle = { backlog: "В пуле", queued: "В очереди — ждёт своей очереди", running: "Агент работает", done: "Готово — нужно ваше решение", needs_human: "Нужна помощь человека", failed: "Ошибка", cancelled: "Остановлено", approved: "Применено", rejected: "Откачено" };
 
 function watchTask(v) {
   if (msgsBox.querySelector(".welcome")) msgsBox.replaceChildren();
@@ -1549,7 +1625,7 @@ function watchTask(v) {
     for (const e of t.events) feed.append(el("div", { class: "k-" + e.kind }, el("span", {}, kindIcon[e.kind] || "•"), el("span", {}, e.text)));
     feed.scrollTop = feed.scrollHeight;
     if (stick) msgsBox.scrollTop = msgsBox.scrollHeight;
-    if (t.state === "running") { setTimeout(poll, 1000); return; }
+    if (t.state === "running" || t.state === "queued") { title.textContent = stateTitle[t.state]; setTimeout(poll, 1000); return; }
     spin.remove(); stop.remove();
     title.textContent = stateTitle[t.state] || t.state;
     showResult(t, result, title);
@@ -1590,6 +1666,239 @@ function showResult(t, box, title) {
   }
 }
 
+
+// ============ Доска задач ============
+const columns = [
+  { id: "backlog", title: "📥 Пул задач", hint: "Идеи. Обсудите с Оркестратором или перетащите в очередь", states: ["backlog"] },
+  { id: "queued", title: "⏳ Очередь", hint: "Пойдут по порядку, когда проект освободится", states: ["queued"] },
+  { id: "running", title: "⚙️ В работе", hint: "", states: ["running"] },
+  { id: "review", title: "👀 Ждёт решения", hint: "Approve / Reject или нужна помощь", states: ["done", "needs_human", "failed"] },
+  { id: "done", title: "✅ Готово", hint: "", states: ["approved", "rejected", "cancelled"] },
+];
+const stateShort = { backlog: "пул", queued: "в очереди", running: "в работе", done: "ждёт решения", needs_human: "нужна помощь", failed: "ошибка", approved: "принято", rejected: "отклонено", cancelled: "остановлено" };
+let boardTimer = null;
+let boardTasks = [];
+let dragID = "";
+
+function executors() {
+  const w = $("#worker").value, f = $("#fallback").value;
+  return w ? (f && f !== w ? [w, f] : [w]) : [];
+}
+
+async function loadBoard() {
+  clearTimeout(boardTimer);
+  const project = $("#project").value;
+  const cols = $("#board-cols");
+  if (!project) { cols.replaceChildren(el("div", { class: "muted", style: "padding:20px" }, "Добавьте проект в разделе «Проект».")); return; }
+  try {
+    boardTasks = await api("GET", "/api/tasks?project=" + encodeURIComponent(project));
+    const gs = await api("GET", "/api/git/info?path=" + encodeURIComponent(project)).catch(() => null);
+    if (gs) $("#board-auto").checked = !!gs.settings.auto_approve;
+  } catch (e) { toast(e.message, true); return; }
+  renderBoard();
+  if (chatMode === "board") boardTimer = setTimeout(loadBoard, boardTasks.some((t) => t.state === "running" || t.state === "queued") ? 2000 : 6000);
+}
+
+function renderBoard() {
+  const byID = Object.fromEntries(boardTasks.map((t) => [t.id, t]));
+  const kids = {};
+  for (const t of boardTasks) if (t.parent) (kids[t.parent] ||= []).push(t);
+  $("#board-cols").replaceChildren(...columns.map((c) => {
+    let list = boardTasks.filter((t) => c.states.includes(t.state));
+    if (c.id === "done") list = list.sort((a, b) => new Date(b.updated) - new Date(a.updated)).slice(0, 30);
+    const body = el("div", { class: "col-body" }, ...list.map((t) => taskCard(t, byID, kids[t.id] || [])));
+    const col = el("div", { class: "col", "data-col": c.id },
+      el("div", { class: "col-head" }, c.title, el("span", { class: "count" }, String(list.length))),
+      c.hint ? el("div", { class: "col-hint" }, c.hint) : "", body);
+    if (c.id === "backlog" || c.id === "queued") {
+      col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop"); });
+      col.addEventListener("dragleave", () => col.classList.remove("drop"));
+      col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("drop"); dropTask(c.id, e); });
+    }
+    return col;
+  }));
+}
+
+function taskCard(t, byID, children) {
+  const meta = [el("span", { class: "st " + t.state }, stateShort[t.state] || t.state)];
+  if (t.models?.length) meta.push(el("span", {}, "🤖 " + t.models[0].split("/").pop()));
+  if (t.review) meta.push(el("span", { title: "Ревью" }, t.review.verdict === "ok" ? "🔍 ✓" : t.review.verdict === "issues" ? "🔍 замечания" : "🔍 ?"));
+  if (t.mcp?.length) meta.push(el("span", { title: "MCP: " + t.mcp.join(", ") }, "🧩 " + t.mcp.length));
+  if (t.skills?.length) meta.push(el("span", { title: "Скиллы: " + t.skills.join(", ") }, "📘 " + t.skills.length));
+  if (children.length) meta.push(el("span", { title: "Подзадачи" }, "↳ " + children.filter((k) => k.state === "approved").length + "/" + children.length));
+  meta.push(el("span", { style: "margin-left:auto" }, ago(t.updated)));
+  const actions = [];
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  if (t.state === "backlog") {
+    actions.push(el("button", { class: "btn ghost", onclick: stop(() => discuss(t)) }, "💬 С Оркестратором"));
+    actions.push(el("button", { class: "btn ghost", title: "В очередь без плана: исполнитель получит текст задачи", onclick: stop(() => enqueueRaw(t)) }, "▶"));
+  }
+  if (t.state === "queued") actions.push(el("button", { class: "btn ghost", onclick: stop(() => taskAction(t.id, "cancel")) }, "Снять"));
+  if (t.state === "running") actions.push(el("button", { class: "btn danger", onclick: stop(() => taskAction(t.id, "cancel")) }, "Остановить"));
+  if (t.state === "done") {
+    actions.push(el("button", { class: "btn", onclick: stop(() => taskAction(t.id, "approve")) }, "✓ Approve"));
+    actions.push(el("button", { class: "btn danger", onclick: stop(() => taskAction(t.id, "reject")) }, "✕"));
+  }
+  const card = el("div", { class: "tcard", draggable: String(t.state === "backlog" || t.state === "queued" || ["needs_human", "failed", "cancelled", "rejected"].includes(t.state)), onclick: () => openTask(t.id) },
+    t.parent && byID[t.parent] ? el("div", { class: "t-parent" }, "↳ " + byID[t.parent].title) : "",
+    el("div", { class: "t-title" }, t.title || "(без названия)"),
+    el("div", { class: "t-meta" }, ...meta),
+    actions.length ? el("div", { class: "t-actions" }, ...actions) : "");
+  card.addEventListener("dragstart", (e) => { dragID = t.id; card.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+  card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  card.dataset.id = t.id;
+  return card;
+}
+
+function ago(at) {
+  const s = (Date.now() - new Date(at)) / 1000;
+  if (s < 60) return "сейчас";
+  if (s < 3600) return Math.floor(s / 60) + " мин";
+  if (s < 86400) return Math.floor(s / 3600) + " ч";
+  return new Date(at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+
+async function dropTask(col, e) {
+  const t = boardTasks.find((x) => x.id === dragID);
+  dragID = "";
+  if (!t) return;
+  // Порядок: карта ставится перед той, на которую её бросили.
+  const target = e.target.closest(".tcard");
+  const before = target && boardTasks.find((x) => x.id === target.dataset.id);
+  try {
+    if (col === "queued" && t.state !== "queued") { await enqueueRaw(t); return; }
+    if (col === "backlog" && t.state === "queued") await api("POST", `/api/tasks/${t.id}/cancel`);
+    if (before && before.id !== t.id) await api("PUT", "/api/tasks/" + t.id, { position: before.position - 1 });
+    loadBoard();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function enqueueRaw(t) {
+  const models = executors();
+  if (!models.length) return toast("Выберите исполнителя вверху", true);
+  try {
+    const v = await api("POST", "/api/tasks", { id: t.id, project: t.project, request: t.request || t.title, models });
+    toast(v.state === "running" ? "Задача в работе" : "Задача в очереди");
+    loadBoard();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function taskAction(id, action, body) {
+  try {
+    const v = await api("POST", `/api/tasks/${id}/${action}`, body);
+    if (action === "approve") toast("✓ " + (v.note || "Принято"));
+    if (action === "reject") toast("Изменения откачены");
+    loadBoard();
+    if (!$("#task-modal").hidden) openTask(id);
+    refreshProjectState();
+    return v;
+  } catch (e) { toast(e.message, true); }
+}
+
+// Обсуждение задачи из пула: открывается Оркестратор с её текстом, а
+// «Начать работу» в его плане ставит в очередь именно эту карточку.
+function discuss(t) {
+  closeTask();
+  setChatMode("orch");
+  orchHistory = []; orchConversation = ""; showWelcome();
+  orchTaskID = t.id;
+  input.value = t.request || t.title;
+  autosize();
+  input.focus();
+  toast("Обсудите задачу с Оркестратором — план поставит её в очередь");
+}
+
+$("#board-new").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, request = f.request.value.trim();
+  if (!request) return;
+  try { await api("POST", "/api/board", { project: $("#project").value, request }); f.request.value = ""; loadBoard(); }
+  catch (err) { toast(err.message, true); }
+});
+
+$("#board-auto").addEventListener("change", async (e) => {
+  const path = $("#project").value;
+  try {
+    const gs = await api("GET", "/api/git/info?path=" + encodeURIComponent(path));
+    await api("PUT", "/api/git/settings", { path, settings: { ...gs.settings, auto_approve: e.target.checked } });
+    toast(e.target.checked ? "Автопринятие включено: результат с пройденными проверками и ревью примется сам" : "Автопринятие выключено");
+  } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+});
+
+$("#open-board").addEventListener("click", () => { closePanel(); setChatMode("board"); });
+
+// ---- карточка задачи ----
+function closeTask() { $("#task-modal").hidden = true; clearTimeout(taskTimer); }
+let taskTimer = null;
+$("#task-modal").addEventListener("click", (e) => { if (e.target.id === "task-modal") closeTask(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#task-modal").hidden) closeTask(); });
+
+async function openTask(id) {
+  clearTimeout(taskTimer);
+  let t;
+  try { t = await api("GET", "/api/tasks/" + id); } catch (e) { return toast(e.message, true); }
+  const box = $("#task-modal-box");
+  const kids = boardTasks.filter((x) => x.parent === id);
+  const parent = boardTasks.find((x) => x.id === t.parent);
+  const sec = (title, ...body) => el("div", { class: "tsec" }, el("h4", {}, title), ...body);
+  const actions = [];
+  if (t.state === "backlog") {
+    actions.push(el("button", { class: "btn", onclick: () => discuss(t) }, "💬 Обсудить с Оркестратором"));
+    actions.push(el("button", { class: "btn ghost", onclick: () => enqueueRaw(t).then(() => openTask(id)) }, "▶ В очередь без плана"));
+  }
+  if (["needs_human", "failed", "cancelled", "rejected"].includes(t.state)) actions.push(el("button", { class: "btn ghost", onclick: () => discuss(t) }, "↻ Ещё раз с Оркестратором"));
+  if (t.state === "queued") actions.push(el("button", { class: "btn ghost", onclick: () => taskAction(id, "cancel") }, "Снять с очереди"));
+  if (t.state === "running") actions.push(el("button", { class: "btn danger", onclick: () => taskAction(id, "cancel") }, "Остановить"));
+  if (t.state === "done") {
+    actions.push(el("button", { class: "btn", onclick: () => taskAction(id, "approve") }, "✓ Approve — принять"));
+    actions.push(el("button", { class: "btn danger", onclick: () => taskAction(id, "reject") }, "✕ Reject — откатить"));
+  }
+  if (!["running", "done"].includes(t.state)) actions.push(el("button", { class: "btn danger icon", onclick: async () => {
+    if (!confirm("Удалить задачу с доски?")) return;
+    try { await api("DELETE", "/api/tasks/" + id); closeTask(); loadBoard(); } catch (e) { toast(e.message, true); }
+  } }, "Удалить"));
+
+  const comment = el("form", { class: "row", style: "flex-wrap:nowrap;margin-top:8px" },
+    el("input", { name: "text", placeholder: "Комментарий к задаче", autocomplete: "off" }), el("button", { class: "btn ghost", type: "submit" }, "Добавить"));
+  comment.addEventListener("submit", async (e) => { e.preventDefault(); const v = e.target.text.value.trim(); if (v) { await taskAction(id, "comment", { text: v }); } });
+  const subForm = el("form", { class: "row", style: "flex-wrap:nowrap;margin-top:6px" },
+    el("input", { name: "title", placeholder: "Новая подзадача", autocomplete: "off" }), el("button", { class: "btn ghost", type: "submit" }, "＋"));
+  subForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = e.target.title.value.trim();
+    if (!title) return;
+    try { await api("POST", "/api/board", { project: t.project, parent: id, title, request: title }); await loadBoard(); openTask(id); } catch (err) { toast(err.message, true); }
+  });
+
+  box.replaceChildren(
+    el("div", { class: "modal-head" },
+      el("h3", {}, t.title || "(без названия)"),
+      el("span", { class: "st " + t.state }, stateShort[t.state] || t.state),
+      el("button", { class: "btn ghost icon", onclick: closeTask }, "✕")),
+    parent ? el("div", { class: "small muted", style: "margin-top:4px" }, "Подзадача к: ", el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(parent.id); } }, parent.title)) : "",
+    el("div", { class: "row", style: "margin-top:12px" }, ...actions),
+    t.request ? sec("Задача", el("div", { class: "small", style: "white-space:pre-wrap" }, t.request)) : "",
+    t.plan ? sec("План Оркестратора", el("div", { class: "plan", style: "margin-top:0" }, t.plan)) : "",
+    (t.models?.length || t.mcp?.length || t.skills?.length) ? sec("Исполнитель",
+      el("div", { class: "row small" }, ...(t.models || []).map((m, i) => el("span", { class: "badge" + (i ? " cli" : "") }, (i ? "резерв: " : "") + m)),
+        ...(t.mcp || []).map((m) => el("span", { class: "badge" }, "🧩 " + m)), ...(t.skills || []).map((m) => el("span", { class: "badge cli" }, "📘 " + m)))) : "",
+    t.summary ? sec("Итог", el("div", {}, t.summary, el("span", { class: "muted small" }, t.model ? "  · " + t.model : ""))) : "",
+    t.review ? sec("Ревью · " + (t.review.model || ""), el("div", { class: "review " + t.review.verdict }, t.review.verdict === "ok" ? "✓ Замечаний нет.\n" + (t.review.text || "") : t.review.text)) : "",
+    t.error ? sec("Ошибка", el("div", { style: "color:var(--danger)" }, t.error)) : "",
+    t.diff ? sec("Изменения", diffView(t)) : "",
+    t.note ? sec("Результат", el("div", {}, t.note, t.pr_url ? el("div", {}, el("a", { href: t.pr_url, target: "_blank", rel: "noopener" }, "Открыть запрос на слияние ↗")) : "")) : "",
+    sec("Подзадачи (" + kids.length + ")", ...kids.map((k) => el("div", { class: "row small", style: "padding:3px 0" },
+      el("span", { class: "st " + k.state }, stateShort[k.state]), el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(k.id); } }, k.title))), subForm),
+    sec("История", el("div", { class: "timeline" }, ...t.events.map((e) => el("div", { class: "tl k-" + e.kind },
+      el("span", { class: "when" }, new Date(e.at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
+      (kindIcon[e.kind] || "•") + " " + e.text))), comment));
+  $("#task-modal").hidden = false;
+  if (t.state === "running" || t.state === "queued") taskTimer = setTimeout(() => { if (!$("#task-modal").hidden) openTask(id); }, 3000);
+}
+
+// diffView — сводка изменений (подробный просмотр строк — ниже).
+function diffView(t) { return el("pre", { class: "log" }, t.diff); }
+
 // ============ Проекты ============
 let projects = [];
 
@@ -1610,6 +1919,7 @@ $("#project").addEventListener("change", (e) => {
   refreshProjectState();
   if ($("#drawer").classList.contains("open") && !$("#p-git").hidden) loadGit();
   renderMCP();
+  if (chatMode === "board") loadBoard();
 });
 
 async function loadProjects() {
@@ -1787,6 +2097,7 @@ async function loadGit() {
   const st = info.settings;
   form.querySelector(`input[name=commit][value=${st.commit}]`).checked = true;
   form.push.value = st.push;
+  form.auto_approve.checked = !!st.auto_approve;
   form.account_id.value = String(st.account_id || 0);
   form.author_name.value = st.author_name || "";
   form.author_email.value = st.author_email || "";
@@ -1803,6 +2114,7 @@ $("#git-settings").addEventListener("submit", async (e) => {
     author_name: f.author_name.value.trim(),
     author_email: f.author_email.value.trim(),
     prefix: f.prefix.value,
+    auto_approve: f.auto_approve.checked,
   };
   try { await api("PUT", "/api/git/settings", { path: $("#project").value, settings }); toast("Настройки сохранены"); }
   catch (err) { toast(err.message, true); }
@@ -1927,10 +2239,9 @@ async function showAgent(id) {
     await refreshProviders();
     await refreshProjectState();
   } catch (e) {
-    if (e.status === 401) { $("#auth").hidden = false; return; }
     toast(e.message, true);
   }
-  if (store.get("edy-chat-mode") === "orch") setChatMode("orch");
+  if (["orch", "board"].includes(store.get("edy-chat-mode"))) setChatMode(store.get("edy-chat-mode"));
   const last = store.get("edy-panel");
   if (last && titles[last]) openPanel(last);
   input.focus();

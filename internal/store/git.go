@@ -115,6 +115,9 @@ type ProjectSettings struct {
 	AuthorName  string `json:"author_name"`
 	AuthorEmail string `json:"author_email"`
 	Prefix      string `json:"prefix"`
+	// AutoApprove — принимать результат без человека, если проверки и
+	// ревью прошли: так очередь задач идёт сама (например, ночью).
+	AutoApprove bool `json:"auto_approve"`
 }
 
 // DefaultProjectSettings — как было до настроек: новая ветка, без push.

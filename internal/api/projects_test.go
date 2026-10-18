@@ -66,7 +66,7 @@ func TestProjectOrchestratorTaskFlow(t *testing.T) {
 	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "{prompt}"}, Models: []string{"m"}})
 	b := &brain{}
 	h.LLM = b
-	h.Tasks = tasks.NewManager(b)
+	h.Tasks = tasks.NewManager(b, st)
 	dir := gitProject(t)
 
 	if rec := call(h, "POST", "/api/projects", `{"path":"relative/path"}`); rec.Code != http.StatusBadRequest {

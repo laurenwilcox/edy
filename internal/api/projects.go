@@ -33,6 +33,9 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/orchestrator", h.orchestrate)
 	m.HandleFunc("GET /api/tasks", h.listTasks)
 	m.HandleFunc("POST /api/tasks", h.startTask)
+	m.HandleFunc("POST /api/board", h.createTask)
+	m.HandleFunc("PUT /api/tasks/{id}", h.editTask)
+	m.HandleFunc("DELETE /api/tasks/{id}", h.deleteTask)
 	m.HandleFunc("GET /api/tasks/{id}", h.getTask)
 	m.HandleFunc("POST /api/tasks/{id}/{action}", h.taskAction)
 }
@@ -357,18 +360,44 @@ func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 		reply(w, []tasks.View{})
 		return
 	}
-	reply(w, h.Tasks.List())
+	project := r.URL.Query().Get("project")
+	if project != "" && !h.knownProject(w, project) {
+		return
+	}
+	reply(w, h.Tasks.List(project))
 }
 
+// checkModels проверяет, что модели «провайдер/модель» подключены.
+func (h *Handler) checkModels(w http.ResponseWriter, list []string) ([]string, bool) {
+	var models []string
+	for _, m := range list {
+		if p, _, ok := splitModelName(m); ok {
+			if _, err := h.Store.Provider(p); err == nil {
+				models = append(models, m)
+				continue
+			}
+		}
+		fail(w, http.StatusBadRequest, "неизвестная модель "+m)
+		return nil, false
+	}
+	return models, true
+}
+
+// startTask ставит задачу в очередь проекта с утверждённым планом: новую
+// или из пула (id). Если проект свободен, работа начинается сразу.
 func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 	if h.Tasks == nil {
 		fail(w, http.StatusServiceUnavailable, "задачи недоступны")
 		return
 	}
 	var req struct {
+		ID           string   `json:"id"` // задача из пула
 		Project      string   `json:"project"`
+		Parent       string   `json:"parent"`
+		Title        string   `json:"title"`
 		Request      string   `json:"request"`
 		Plan         string   `json:"plan"`
+		Comment      string   `json:"comment"` // пояснение Оркестратора к плану
 		Models       []string `json:"models"`
 		Conversation string   `json:"conversation"`
 	}
@@ -379,15 +408,8 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 	if !h.knownProject(w, req.Project) {
 		return
 	}
-	var models []string
-	for _, m := range req.Models {
-		if p, _, ok := splitModelName(m); ok {
-			if _, err := h.Store.Provider(p); err == nil {
-				models = append(models, m)
-				continue
-			}
-		}
-		fail(w, http.StatusBadRequest, "неизвестная модель "+m)
+	models, ok := h.checkModels(w, req.Models)
+	if !ok {
 		return
 	}
 	// Скиллы и внешние MCP-серверы берутся из утверждённого плана: их выдал
@@ -401,18 +423,54 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 			opts.Skills = []string{}
 		}
 	}
-	v, err := h.Tasks.StartWith(req.Project, orchestrator.Goal(req.Request, req.Plan), models, opts)
-	if errors.Is(err, tasks.ErrBusy) {
-		fail(w, http.StatusConflict, err.Error())
-		return
-	} else if err != nil {
+	if req.ID != "" {
+		if cur := h.Tasks.Get(req.ID, 0); cur.ID == "" || cur.Project != req.Project {
+			fail(w, http.StatusNotFound, "задача не найдена")
+			return
+		}
+	} else if strings.TrimSpace(req.Plan) == "" {
+		// Без плана задача сразу идёт в работу: проект должен быть готов.
+		if err := agent.CheckClean(r.Context(), req.Project); err != nil && !h.Tasks.Running(req.Project) {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	v, err := h.Tasks.Enqueue(req.ID, tasks.Draft{Project: req.Project, Parent: req.Parent, Title: req.Title, Request: req.Request},
+		tasks.Plan{Request: req.Request, Plan: req.Plan, Goal: orchestrator.Goal(req.Request, req.Plan), Models: models, Options: opts})
+	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if strings.TrimSpace(req.Comment) != "" {
+		h.Tasks.Comment(v.ID, "Оркестратор", req.Comment)
+	}
 	if req.Conversation != "" {
 		if _, err := h.Store.Agent("orch-" + req.Conversation); err == nil {
-			h.Store.AddAgentEvent("orch-"+req.Conversation, "info", "План утверждён, запущена задача "+v.ID, time.Now())
+			h.Store.AddAgentEvent("orch-"+req.Conversation, "info", "План утверждён, задача "+v.ID+" поставлена в очередь", time.Now())
 		}
+	}
+	replyStatus(w, http.StatusCreated, h.Tasks.Get(v.ID, 0))
+}
+
+// createTask кладёт задачу в пул доски (без запуска).
+func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Project string `json:"project"`
+		Parent  string `json:"parent"`
+		Title   string `json:"title"`
+		Request string `json:"request"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	if h.Tasks == nil || !h.knownProject(w, req.Project) {
+		return
+	}
+	v, err := h.Tasks.Create(tasks.Draft{Project: req.Project, Parent: req.Parent, Title: req.Title, Request: req.Request})
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	replyStatus(w, http.StatusCreated, v)
 }
@@ -422,13 +480,62 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "задача не найдена")
 		return
 	}
-	from, _ := strconv.Atoi(r.URL.Query().Get("from"))
+	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
 	v := h.Tasks.Get(r.PathValue("id"), from)
 	if v.ID == "" {
 		fail(w, http.StatusNotFound, "задача не найдена")
 		return
 	}
 	reply(w, v)
+}
+
+func (h *Handler) editTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title    *string `json:"title"`
+		Request  *string `json:"request"`
+		Position *int64  `json:"position"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	id := r.PathValue("id")
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	if req.Position != nil {
+		if err := h.Tasks.Move(id, *req.Position); err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	if req.Title != nil || req.Request != nil {
+		title, request := "", ""
+		if req.Title != nil {
+			title = *req.Title
+		}
+		if req.Request != nil {
+			request = *req.Request
+		}
+		if _, err := h.Tasks.Edit(id, title, request); err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	reply(w, h.Tasks.Get(id, 0))
+}
+
+func (h *Handler) deleteTask(w http.ResponseWriter, r *http.Request) {
+	if h.Tasks == nil {
+		fail(w, http.StatusNotFound, "задача не найдена")
+		return
+	}
+	if err := h.Tasks.Delete(r.PathValue("id")); err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	reply(w, map[string]bool{"ok": true})
 }
 
 func (h *Handler) taskAction(w http.ResponseWriter, r *http.Request) {
@@ -446,6 +553,13 @@ func (h *Handler) taskAction(w http.ResponseWriter, r *http.Request) {
 		v, err = h.Tasks.Reject(id)
 	case "cancel":
 		err = h.Tasks.Cancel(id)
+		v = h.Tasks.Get(id, 0)
+	case "comment":
+		var req struct {
+			Text string `json:"text"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		err = h.Tasks.Comment(id, "Вы", req.Text)
 		v = h.Tasks.Get(id, 0)
 	default:
 		fail(w, http.StatusNotFound, "неизвестное действие")

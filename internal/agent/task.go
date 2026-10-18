@@ -472,6 +472,29 @@ func BranchName(goal string, now time.Time) string {
 	return "edy/" + slug + "-" + now.Format("0102-1504")
 }
 
+// HasChanges сообщает, есть ли в проекте незакоммиченные изменения (в папке
+// без git — всегда да: проверить нечем).
+func HasChanges(ctx context.Context, root string) bool {
+	if !isRepo(ctx, root) {
+		return true
+	}
+	status, err := gitIn(ctx, root, "status", "--porcelain")
+	return err != nil || status != ""
+}
+
+// FreeBranch возвращает name, а если такая ветка уже есть — name-2, name-3…
+// (две задачи с одинаковым названием, принятые в одну минуту).
+func FreeBranch(ctx context.Context, root, name string) string {
+	branch := name
+	for i := 2; i < 100; i++ {
+		if _, err := gitIn(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
+			return branch
+		}
+		branch = fmt.Sprintf("%s-%d", name, i)
+	}
+	return branch
+}
+
 // Approve оформляет результат одним коммитом в новой ветке и переключает на неё проект.
 func Approve(ctx context.Context, root, branch, message string) error {
 	if _, err := gitIn(ctx, root, "check-ref-format", "--branch", branch); err != nil {

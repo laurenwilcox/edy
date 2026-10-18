@@ -20,7 +20,7 @@ func TestGitTabAndAgentJournal(t *testing.T) {
 	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "{prompt}"}, Models: []string{"m"}})
 	b := &brain{}
 	h.LLM = b
-	h.Tasks = tasks.NewManager(b)
+	h.Tasks = tasks.NewManager(b, st)
 	h.Tasks.Journal = st
 	h.Tasks.Finalize = Finalizer(st)
 	h.ReposDir = filepath.Join(t.TempDir(), "repos")

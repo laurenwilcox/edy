@@ -78,7 +78,7 @@ func TestOrchestratorAssignsMCPFromCatalog(t *testing.T) {
 	st.SaveMCPServer(store.MCPServer{Name: "docs", Description: "документация библиотек", Enabled: true, MCPConfig: store.MCPConfig{Type: store.MCPStdio, Command: "npx"}})
 	p := &planner{}
 	h.LLM = p
-	h.Tasks = tasks.NewManager(p)
+	h.Tasks = tasks.NewManager(p, st)
 	dir := gitProject(t)
 	call(h, "POST", "/api/projects", fmt.Sprintf(`{"path":%q}`, dir))
 	for _, sk := range []string{"go-tests", "migrations"} {

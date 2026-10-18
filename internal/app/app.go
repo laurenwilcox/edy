@@ -109,16 +109,23 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h := api.New(st, tok, ln.Addr().String())
 	h.Web = web
 	h.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
-	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)})
+	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)}, st)
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
 	h.Tasks.MCP = h.MCPBridge()
+	h.Tasks.AutoApprove = func(project string) bool {
+		ps, err := st.ProjectSettings(project)
+		return err == nil && ps.AutoApprove
+	}
 	h.Tasks.Finalize = api.Finalizer(st)
 	h.ReposDir = filepath.Join(home, "repos")
 	h.Home = home
 	if n, err := st.InterruptRunningAgents(); err == nil && n > 0 {
 		log.Info("агенты прошлого запуска помечены как прерванные", "count", n)
 	}
+
+	// Задачи, оборванные прошлым закрытием Edy, откатываются; очереди продолжаются.
+	h.Tasks.Recover()
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", router)

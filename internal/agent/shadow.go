@@ -29,6 +29,11 @@ type Checkpoint struct {
 func (s Shadow) gitDir() string { return filepath.Join(s.Root, ".edy", "shadow.git") }
 
 func (s Shadow) git(ctx context.Context, args ...string) (string, error) {
+	// Снимок нельзя обрывать на полпути: убитый git оставляет index.lock и
+	// неполные объекты, и откатиться потом нельзя. Поэтому остановка задачи
+	// git не прерывает — команды короткие и доводятся до конца.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + s.gitDir(), "--work-tree=" + s.Root}, args...)...)
 	cmd.Dir = s.Root
 	// Снимки делает Edy, а не пользователь: своё имя автора и без подписи.
@@ -41,11 +46,11 @@ func (s Shadow) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
-// Init создаёт теневой репозиторий, если его ещё нет.
+// Init создаёт теневой репозиторий или чинит недоделанный. Повторный
+// `git init` для существующего репозитория безопасен, а исключения и
+// настройки пишутся каждый раз: если создание когда-то оборвали, снимки
+// не начнут захватывать саму папку .edy.
 func (s Shadow) Init(ctx context.Context) error {
-	if _, err := os.Stat(filepath.Join(s.gitDir(), "HEAD")); err == nil {
-		return nil
-	}
 	if err := os.MkdirAll(filepath.Dir(s.gitDir()), 0o755); err != nil {
 		return err
 	}

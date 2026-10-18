@@ -289,7 +289,7 @@ func Finalizer(st *store.Store) tasks.FinalizeFunc {
 			acc = &a
 		}
 		title := strings.TrimSpace(strings.SplitN(goal, "\n", 2)[0])
-		res, err := gitops.Finalize(ctx, project, ps, acc, agent.BranchName(goal, time.Now()), title, summary+"\n\nМодель: "+model)
+		res, err := gitops.Finalize(ctx, project, ps, acc, agent.FreeBranch(ctx, project, agent.BranchName(goal, time.Now())), title, summary+"\n\nМодель: "+model)
 		if err != nil {
 			return tasks.Outcome{}, err
 		}

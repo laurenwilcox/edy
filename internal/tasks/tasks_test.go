@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/store"
+	"github.com/laurenwilcox/name/internal/vault"
 )
 
 const (
@@ -67,19 +69,31 @@ func (f *fixer) Chat(ctx context.Context, model string, msgs []agent.Msg, tools 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.n++
-	switch f.n {
-	case 1:
+	// Первый шаг каждой задачи — правка, дальше — finish.
+	if len(msgs) == 2 {
 		return tc("replace_in_file", map[string]string{"path": "calc.go", "old": "a - b", "new": "a + b"}), nil
-	default:
-		return tc("finish", map[string]string{"summary": "Исправил Add"}), nil
 	}
+	return tc("finish", map[string]string{"summary": "Исправил Add"}), nil
+}
+
+func newMgr(t *testing.T, llm agent.LLM) (*Manager, *store.Store) {
+	t.Helper()
+	v, _ := vault.New(bytes.Repeat([]byte{4}, 32))
+	st, err := store.Open(filepath.Join(t.TempDir(), "edy.db"), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	m := NewManager(llm, st)
+	t.Cleanup(m.Wait)
+	return m, st
 }
 
 func wait(t *testing.T, m *Manager, id string) View {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
-		if v := m.Get(id, 0); v.State != StateRunning {
+		if v := m.Get(id, 0); v.State != StateRunning && v.State != StateQueued {
 			return v
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -90,7 +104,7 @@ func wait(t *testing.T, m *Manager, id string) View {
 
 func TestStartApproveFlow(t *testing.T) {
 	dir := project(t)
-	m := NewManager(&fixer{})
+	m, _ := newMgr(t, &fixer{})
 	v, err := m.Start(dir, "Почини Add", []string{"m/m"})
 	if err != nil {
 		t.Fatal(err)
@@ -116,21 +130,25 @@ func TestStartApproveFlow(t *testing.T) {
 	if m.Pending(dir) {
 		t.Fatal("после Approve решение больше не ждётся")
 	}
-	if len(m.List()) != 1 || m.List()[0].Events != nil {
-		t.Fatal("List должен отдавать задачи без событий")
+	if l := m.List(dir); len(l) != 1 || l[0].Events != nil || l[0].Diff != "" {
+		t.Fatal("List должен отдавать задачи без событий и diff")
 	}
 }
 
-func TestRejectAndBusyAndCancel(t *testing.T) {
+func TestQueueRejectAndCancel(t *testing.T) {
 	dir := project(t)
 	f := &fixer{gate: make(chan struct{})}
-	m := NewManager(f)
+	m, _ := newMgr(t, f)
 	v, err := m.Start(dir, "Почини Add", []string{"m/m"})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || v.State != StateRunning {
+		t.Fatalf("первая задача: %+v %v", v.State, err)
 	}
-	if _, err := m.Start(dir, "ещё", []string{"m/m"}); err != ErrBusy {
-		t.Fatalf("вторая задача в том же проекте: %v", err)
+	q, err := m.Start(dir, "ещё", []string{"m/m"})
+	if err != nil || q.State != StateQueued {
+		t.Fatalf("вторая задача в том же проекте встаёт в очередь: %s %v", q.State, err)
+	}
+	if err := m.Cancel(q.ID); err != nil || m.Get(q.ID, 0).State != StateBacklog {
+		t.Fatalf("снять с очереди: %v %s", err, m.Get(q.ID, 0).State)
 	}
 	if !m.Running(dir) {
 		t.Fatal("проект должен быть занят")
@@ -159,13 +177,105 @@ func TestRejectAndBusyAndCancel(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, "calc.go")); string(b) != buggy {
 		t.Fatal("Reject должен откатить правки")
 	}
+}
+
+func TestQueueWaitsForDecisionAndAutoApprove(t *testing.T) {
+	dir := project(t)
+	m, _ := newMgr(t, &fixer{})
+	a, _ := m.Start(dir, "Почини Add", []string{"m/m"})
+	b, _ := m.Start(dir, "Почини Add ещё раз", []string{"m/m"})
+	if a = wait(t, m, a.ID); a.State != StateDone {
+		t.Fatalf("a: %s %s", a.State, a.Error)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if s := m.Get(b.ID, 0).State; s != StateQueued {
+		t.Fatalf("следующая ждёт решения по предыдущей: %s", s)
+	}
+	if _, err := m.Approve(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if b = wait(t, m, b.ID); b.State != StateDone {
+		t.Fatalf("после Approve очередь продолжилась: %s %s", b.State, b.Error)
+	}
+	m.Reject(b.ID)
+
+	// Автопринятие: очередь идёт без человека.
+	var notes []string
+	var mu sync.Mutex
+	m.AutoApprove = func(string) bool { return true }
+	m.Notify = func(v View, msg string) { mu.Lock(); notes = append(notes, msg); mu.Unlock() }
+	c, _ := m.Start(dir, "Почини Add", []string{"m/m"})
+	wait(t, m, c.ID)
+	for i := 0; i < 100 && m.Get(c.ID, 0).State == StateDone; i++ {
+		time.Sleep(50 * time.Millisecond) // автопринятие идёт сразу после «готово»
+	}
 	m.Wait()
+	if c = m.Get(c.ID, 0); c.State != StateApproved {
+		for _, e := range c.Events {
+			t.Log(e.Kind, e.Text)
+		}
+		t.Fatalf("автопринятие: %s", c.State)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(notes) != 1 || !strings.Contains(notes[0], "принято автоматически") {
+		t.Fatalf("уведомления: %v", notes)
+	}
+}
+
+func TestBoardPoolSubtasksAndRecover(t *testing.T) {
+	dir := project(t)
+	m, st := newMgr(t, &fixer{})
+	p, err := m.Create(Draft{Project: dir, Request: "Сделать вход по паролю\nподробности"})
+	if err != nil || p.State != StateBacklog || p.Title != "Сделать вход по паролю" {
+		t.Fatalf("пул: %+v %v", p, err)
+	}
+	sub, err := m.Create(Draft{Project: dir, Parent: p.ID, Title: "Тесты для входа", Request: "покрыть тестами"})
+	if err != nil || sub.Parent != p.ID {
+		t.Fatalf("подзадача: %+v %v", sub, err)
+	}
+	if _, err := m.Create(Draft{Project: "/другой", Parent: p.ID, Request: "x"}); err == nil {
+		t.Fatal("подзадача из другого проекта")
+	}
+	m.Comment(p.ID, "Оркестратор", "Начнём с формы")
+	ev := m.Get(p.ID, 0).Events
+	if len(ev) != 3 || ev[1].Kind != "subtask" || !strings.Contains(ev[2].Text, "Оркестратор: Начнём с формы") {
+		t.Fatalf("история: %+v", ev)
+	}
+	if _, err := m.Edit(p.ID, "Вход", ""); err != nil || m.Get(p.ID, 0).Title != "Вход" {
+		t.Fatal("правка в пуле")
+	}
+	v, err := m.Enqueue(p.ID, Draft{}, Plan{Goal: "Почини Add", Plan: "1. calc.go", Models: []string{"m/m"}, Options: Options{Skills: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v = wait(t, m, v.ID); v.State != StateDone || v.Plan != "1. calc.go" {
+		t.Fatalf("из пула в работу: %s", v.State)
+	}
+
+	// Перезапуск Edy: задача, оставшаяся «в работе», откатывается.
+	r, _ := m.load(v.ID)
+	r.State = StateRunning
+	m.save(&r)
+	m2 := NewManager(&fixer{}, st)
+	m2.Recover()
+	got := m2.Get(v.ID, 0)
+	if got.State != StateFailed || !strings.Contains(got.Error, "откачен") {
+		t.Fatalf("после перезапуска: %s %s", got.State, got.Error)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "calc.go")); string(b) != buggy {
+		t.Fatal("оборванная задача должна откатиться")
+	}
+	if err := m2.Delete(sub.ID); err != nil || len(m2.List(dir)) != 1 {
+		t.Fatalf("удаление: %v", err)
+	}
 }
 
 func TestStartRefusesDirtyProject(t *testing.T) {
 	dir := project(t)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x"), 0o644)
-	if _, err := NewManager(&fixer{}).Start(dir, "x", []string{"m/m"}); err == nil {
+	m, _ := newMgr(t, &fixer{})
+	if _, err := m.Start(dir, "x", []string{"m/m"}); err == nil {
 		t.Fatal("в «грязном» проекте задача не должна стартовать")
 	}
 }
@@ -205,7 +315,7 @@ func (j *memJournal) FinishAgent(id, state, summary, errText string) error {
 func TestJournalAndCustomFinalize(t *testing.T) {
 	dir := project(t)
 	j := &memJournal{}
-	m := NewManager(&fixer{})
+	m, _ := newMgr(t, &fixer{})
 	m.Journal = j
 	var finalized string
 	m.Finalize = func(ctx context.Context, project, goal, summary, model string) (Outcome, error) {
