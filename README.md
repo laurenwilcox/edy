@@ -1,5 +1,7 @@
 # Edy
 
+<p align="center"><img src="assets/logo.png" width="160" alt="Edy"></p>
+
 Лёгкая агентная ИИ-панель для macOS на Go. Архитектура и принятые решения описаны в
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -76,3 +78,11 @@ claude mcp add edy -- edy mcp -project "$PWD"
 ```sh
 go test ./...
 ```
+
+## Автор
+
+**Vollo** ([@laurenwilcox](https://github.com/laurenwilcox)) — автор и владелец проекта.
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 Vollo
