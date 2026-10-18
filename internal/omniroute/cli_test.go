@@ -3,6 +3,7 @@ package omniroute
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -22,7 +23,7 @@ model="$1"; prompt="$2"
 if [ ! -t 1 ]; then echo "stdout не терминал"; exit 7; fi
 case "$prompt" in
   fail*) echo "model not found"; exit 3 ;;
-  sleep*) printf 'Trust this folder? (y/n) '; sleep 30 ;;
+  sleep*) printf 'Trust this folder? (y/n) '; : > "$0.asked"; sleep 30 ;;
 esac
 printf '⠋ loading\r⠙ loading 50%%\r\033[2K'
 printf '\033[1;32m[%s]\033[0m ответ на: %s\n' "$model" "$prompt"
@@ -85,17 +86,30 @@ func TestCLIAdapterRejectsImages(t *testing.T) {
 
 func TestCLIAdapterKilledOnCancel(t *testing.T) {
 	_, dir := setupCLI(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	script := filepath.Join(dir, "fake-agent")
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Отменяем не по таймеру, а когда утилита задала вопрос: на медленной
+	// машине первый запуск скрипта может занять больше секунды.
+	var cancelled time.Time
+	go func() {
+		defer cancel()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(script + ".asked"); err == nil {
+				break
+			}
+		}
+		cancelled = time.Now()
+	}()
 	call := Call{
-		Provider: store.Provider{Command: []string{filepath.Join(dir, "fake-agent"), "{model}", "{prompt}"}},
+		Provider: store.Provider{Command: []string{script, "{model}", "{prompt}"}},
 		Model:    "m",
 		Request:  &ChatRequest{Messages: []Message{{Role: "user", Content: json.RawMessage(`"sleep"`)}}},
 	}
-	start := time.Now()
 	_, err := (&CLIAdapter{}).Stream(ctx, call, func(Event) error { return nil })
-	if err == nil || time.Since(start) > 5*time.Second {
-		t.Fatalf("err = %v, прошло %v", err, time.Since(start))
+	// Процесс должен умереть сразу после отмены, а не досыпать свои 30 секунд.
+	if err == nil || !errors.Is(err, context.Canceled) || time.Since(cancelled) > 5*time.Second {
+		t.Fatalf("err = %v, после отмены прошло %v", err, time.Since(cancelled))
 	}
 	// В ошибке должен быть вопрос, на котором утилита зависла.
 	if !strings.Contains(err.Error(), "Trust this folder? (y/n)") {
