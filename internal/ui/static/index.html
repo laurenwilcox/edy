@@ -3063,8 +3063,8 @@ $("#git-account-form").addEventListener("submit", async (e) => {
 });
 
 // ============ Агенты ============
-const roleIcon = { orchestrator: "🧭", executor: "🛠", mcp: "🔌", reviewer: "🔍" };
-const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель", mcp: "Внешний агент (MCP)", reviewer: "Ревьюер" };
+const roleIcon = { orchestrator: "🧭", executor: "🛠", mcp: "🔌", reviewer: "🔍", micro: "⚡" };
+const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель", mcp: "Внешний агент (MCP)", reviewer: "Ревьюер", micro: "Микро-агент" };
 const agentState = { running: "работает", done: "закончил", failed: "не справился", cancelled: "остановлен", interrupted: "прерван" };
 let agentsTimer = null;
 let openAgent = null;

@@ -13,6 +13,7 @@ const (
 	RoleExecutor     = "executor"
 	RoleMCP          = "mcp" // внешний агент (Claude Code, Gemini CLI…), подключённый по MCP
 	RoleReviewer     = "reviewer"
+	RoleMicro        = "micro" // разовая задача со строгим JSON-ответом
 )
 
 // Состояния агентов.
