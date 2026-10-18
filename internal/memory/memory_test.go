@@ -63,3 +63,21 @@ func TestAccess(t *testing.T) {
 		t.Fatalf("заметка: %+v", m.notes[0])
 	}
 }
+
+type lastRanker struct{}
+
+// Rank «по смыслу» считает самой близкой самую новую заметку.
+func (lastRanker) Rank(_ string, notes []store.Note, k int) []store.Note {
+	return notes[:1]
+}
+
+func TestAccessRanker(t *testing.T) {
+	m := &mem{}
+	a := &Access{St: m, Project: "/p", Limit: 5, Ranker: lastRanker{}}
+	a.Remember("Сборка: go build ./cmd/app")
+	a.Remember("Вход в систему — через OAuth")
+	out := a.Search("сборка")
+	if !strings.Contains(out, "go build") || !strings.Contains(out, "OAuth") {
+		t.Fatalf("слова и смысл вместе: %s", out)
+	}
+}

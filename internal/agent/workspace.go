@@ -35,6 +35,14 @@ type Workspace struct {
 	Skills []skills.Skill
 	// Memory — память проекта (project_memory, remember); nil — без памяти.
 	Memory Memory
+	// Code — поиск кода по смыслу в дополнение к поиску по словам; nil — только по словам.
+	Code CodeSearch
+}
+
+// CodeSearch — поиск кода (например, гибридный: слова и смысл). note —
+// пояснение для модели, если что-то пошло не так (пусто — всё хорошо).
+type CodeSearch interface {
+	Search(idx *codeindex.Index, query string, k int) (hits []codeindex.Hit, note string)
 }
 
 // Memory — память проекта для агента.
@@ -95,7 +103,7 @@ func (w Workspace) Tools() []ToolDef {
 	path := `{"type":"object","properties":{"path":{"type":"string","description":"путь от корня проекта"}},"required":["path"]}`
 	tools := []ToolDef{
 		def("project_skeleton", "Скелет проекта: файлы, типы, функции и классы с номерами строк, без тел. Начинайте с него.", `{"type":"object","properties":{}}`),
-		def("search_code", "Найти код по словам (имена функций, понятия). Возвращает подходящие функции и классы с номерами строк.", `{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"сколько результатов, по умолчанию 5"}},"required":["query"]}`),
+		def("search_code", "Найти код по словам или по смыслу («где проверяется пароль»). Возвращает подходящие функции и классы с номерами строк.", `{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"сколько результатов, по умолчанию 5"}},"required":["query"]}`),
 		def("list_files", "Список файлов проекта (рекурсивно) в папке path.", `{"type":"object","properties":{"path":{"type":"string","description":"папка от корня проекта, по умолчанию корень"}}}`),
 		def("read_file", "Прочитать файл целиком.", path),
 		def("write_file", "Создать файл или полностью перезаписать его.", `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`),
@@ -144,7 +152,15 @@ func (w Workspace) Call(name, args string) (result string, changed bool, err err
 		if a.Limit <= 0 || a.Limit > 20 {
 			a.Limit = 5
 		}
-		return codeindex.FormatHits(idx.Search(a.Query, a.Limit), 80), false, nil
+		if w.Code == nil {
+			return codeindex.FormatHits(idx.Search(a.Query, a.Limit), 80), false, nil
+		}
+		hits, note := w.Code.Search(idx, a.Query, a.Limit)
+		out := codeindex.FormatHits(hits, 80)
+		if note != "" {
+			out = "(" + note + ")\n" + out
+		}
+		return out, false, nil
 	case "project_memory", "remember":
 		if w.Memory == nil {
 			return "", false, errors.New("память проекта недоступна")

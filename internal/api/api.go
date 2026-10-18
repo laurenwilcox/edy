@@ -23,6 +23,7 @@ import (
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/notify"
 	"github.com/laurenwilcox/name/internal/omniroute"
+	"github.com/laurenwilcox/name/internal/semantic"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
 	"github.com/laurenwilcox/name/internal/webchat"
@@ -66,6 +67,8 @@ type Handler struct {
 	Home string
 	// Notify показывает системное уведомление; подменяется в тестах.
 	Notify notify.Notifier
+	// Semantic — поиск по смыслу (эмбеддинги); nil — только поиск по словам.
+	Semantic *semantic.Engine
 
 	mux  *http.ServeMux
 	mcpM sync.Mutex
@@ -77,6 +80,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels, OpenURL: openInBrowser, Notify: notify.System}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/info", h.info)
+	h.semanticRoutes(m)
 	m.HandleFunc("GET /api/presets", h.presets)
 	m.HandleFunc("GET /api/providers", h.listProviders)
 	m.HandleFunc("POST /api/providers", h.addProvider)

@@ -18,6 +18,7 @@ import (
 	"github.com/laurenwilcox/name/internal/mcp"
 	"github.com/laurenwilcox/name/internal/memory"
 	"github.com/laurenwilcox/name/internal/omniroute"
+	"github.com/laurenwilcox/name/internal/semantic"
 	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 )
@@ -145,13 +146,18 @@ func (h *Handler) mcpServer(project, agentID string, bind *mcpBinding) *mcp.Serv
 	case bind != nil:
 		// Исполнитель задачи: задача сама держит проект, её правки разрешены.
 		s.OnCall, s.OnChange = bind.ev.OnCall, bind.ev.OnChange
-		s.Skills, s.Memory = bind.ev.Skills, bind.ev.Memory
+		s.Skills, s.Memory, s.Code = bind.ev.Skills, bind.ev.Memory, bind.ev.Code
 		if s.Skills == nil {
 			s.Skills = []string{}
 		}
 		return s
 	case agentID != "":
-		s.Memory = &memory.Access{St: h.Store, Project: project, Source: "mcp:" + agentID, Limit: 20}
+		mem := &memory.Access{St: h.Store, Project: project, Source: "mcp:" + agentID, Limit: 20}
+		if h.Semantic != nil {
+			mem.Ranker = semantic.Notes{E: h.Semantic, Project: project}
+			s.Code = semantic.Code{E: h.Semantic, Project: project}
+		}
+		s.Memory = mem
 		s.OnCall = func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {

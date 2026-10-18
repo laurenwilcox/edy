@@ -36,6 +36,8 @@ type Server struct {
 	Skills []string
 	// Memory — память проекта (project_memory, remember); nil — без неё.
 	Memory agent.Memory
+	// Code — поиск кода по смыслу для search_code; nil — только по словам.
+	Code agent.CodeSearch
 	// Busy сообщает, что над проектом сейчас работает задача Edy: тогда
 	// правки через MCP запрещены, чтобы не мешать агенту (блокировка файлов).
 	Busy func() bool
@@ -212,7 +214,7 @@ var noFiles = map[string]bool{"remember": true}
 
 func (s *Server) tools() []tool {
 	// use_skill есть всегда: скиллы могут появиться, пока клиент подключён.
-	ws := agent.Workspace{Root: s.Root, Skills: []skills.Skill{{}}, Memory: s.Memory}
+	ws := agent.Workspace{Root: s.Root, Skills: []skills.Skill{{}}, Memory: s.Memory, Code: s.Code}
 	var out []tool
 	for _, d := range ws.Tools() {
 		if d.Function.Name == "finish" {
@@ -270,7 +272,7 @@ func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (s
 		defer s.mu.Unlock()
 	}
 	list, _ := s.skills()
-	ws := agent.Workspace{Root: s.Root, Skills: list, Memory: s.Memory}
+	ws := agent.Workspace{Root: s.Root, Skills: list, Memory: s.Memory, Code: s.Code}
 	out, changed, err := ws.Call(name, argStr)
 	if err != nil {
 		return "Ошибка: " + err.Error(), true

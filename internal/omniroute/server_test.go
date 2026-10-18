@@ -55,6 +55,11 @@ func (f *fakeOpenAI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, "/embeddings") {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"object":"list","model":%q,"data":[{"index":0,"embedding":[0.1,0.2]}],"usage":{"prompt_tokens":1000000,"total_tokens":1000000}}`, body["model"])
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	for _, c := range []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"При"}}]}`,
@@ -399,5 +404,24 @@ func TestMediaNeedsCaps(t *testing.T) {
 	audio := `{"model":"oa/gpt-x","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"UklGRg==","format":"wav"}}]}]}`
 	if rec := do(t, srv, "POST", "/v1/chat/completions", audio); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "не принимает звук") {
 		t.Fatalf("звук без тега: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestEmbeddingsEndpoint(t *testing.T) {
+	srv, st, fake := setupOpenAI(t, "sk-limited", "sk-good")
+	rec := do(t, srv, "POST", "/v1/embeddings", `{"model":"oa/gpt-x","input":["оплата заказа"]}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"embedding":[0.1,0.2]`) || !strings.Contains(rec.Body.String(), `"model":"gpt-x"`) {
+		t.Fatalf("эмбеддинги: %d %s", rec.Code, rec.Body)
+	}
+	if fake.keysSeen[len(fake.keysSeen)-1] != "sk-good" {
+		t.Fatalf("ротация ключей: %v", fake.keysSeen)
+	}
+	spent, _ := st.SpentSince(time.Now().Add(-time.Minute))
+	if spent < 0.99 || spent > 1.01 {
+		t.Fatalf("расход за 1M токенов по $1: %v", spent)
+	}
+	st.AddProvider(store.Provider{Name: "cli", Kind: store.KindCLI, Command: []string{"x", "{prompt}"}, Models: []string{"m"}})
+	if rec := do(t, srv, "POST", "/v1/embeddings", `{"model":"cli/m","input":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("CLI не умеет эмбеддинги: %d", rec.Code)
 	}
 }

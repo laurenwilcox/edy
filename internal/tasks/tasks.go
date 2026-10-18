@@ -18,6 +18,7 @@ import (
 
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/memory"
+	"github.com/laurenwilcox/name/internal/semantic"
 	"github.com/laurenwilcox/name/internal/skills"
 	"github.com/laurenwilcox/name/internal/store"
 )
@@ -174,6 +175,9 @@ type Manager struct {
 	Team interface {
 		TeamAgent(id string) (store.TeamAgent, error)
 	}
+	// Semantic — поиск по смыслу: перед задачей индекс проекта обновляется,
+	// а search_code и project_memory ищут и по смыслу. nil — только по словам.
+	Semantic *semantic.Engine
 	// MaxParallel — сколько агентов эпика работают одновременно (0 — 2).
 	MaxParallel func(project string) int
 	// Now подменяется в тестах.
@@ -464,10 +468,26 @@ func (m *Manager) memoryFor(r record) (agent.Memory, string) {
 		return nil, ""
 	}
 	notes, _ := m.Notes.Notes(r.Project)
-	if r.Agent != "" {
-		return &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID, Agent: r.Agent}, memory.AgentBrief(notes, r.Agent, r.Goal, 2000)
+	acc := &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID, Agent: r.Agent}
+	if m.Semantic != nil {
+		acc.Ranker = semantic.Notes{E: m.Semantic, Project: r.Project}
 	}
-	return &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID}, memory.Pinned(notes, 1500)
+	if r.Agent != "" {
+		return acc, memory.AgentBrief(notes, r.Agent, r.Goal, 2000)
+	}
+	return acc, memory.Pinned(notes, 1500)
+}
+
+// codeSearch обновляет индекс смыслового поиска проекта (только изменённые
+// куски, не дольше минуты) и возвращает поиск для search_code.
+func (m *Manager) codeSearch(ctx context.Context, project string) agent.CodeSearch {
+	if m.Semantic == nil || m.Semantic.Model() == "" {
+		return nil
+	}
+	ictx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	m.Semantic.Index(ictx, project, project) // ошибка не мешает: остаётся поиск по словам
+	return semantic.Code{E: m.Semantic, Project: project}
 }
 
 // roleFor — инструкции постоянного агента для системного промпта.
@@ -980,7 +1000,9 @@ func (m *Manager) execute(ctx context.Context, ru *run, r record, root, goal str
 	attempt := 0
 	var agentsMu sync.Mutex
 	mem, brief := m.memoryFor(r)
+	code := m.codeSearch(ctx, r.Project)
 	task := &agent.Task{
+		Code:        code,
 		Images:      m.images(r),
 		CanSee:      m.CanSee,
 		MaxAttempts: m.maxAttempts,

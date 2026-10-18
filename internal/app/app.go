@@ -20,6 +20,7 @@ import (
 	"github.com/laurenwilcox/name/internal/api"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/review"
+	"github.com/laurenwilcox/name/internal/semantic"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
 	"github.com/laurenwilcox/name/internal/ui"
@@ -115,6 +116,8 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
 	h.Tasks.Notes = st
+	h.Semantic = semantic.New(&semantic.Client{BaseURL: "http://edy.local/v1", Token: tok, Client: "embeddings", HTTP: agent.InProcess(router)}, st)
+	h.Tasks.Semantic = h.Semantic
 	h.Tasks.Team = st
 	h.Tasks.AttachDir = filepath.Join(home, "attachments")
 	h.Tasks.CanSee = func(model string) bool {

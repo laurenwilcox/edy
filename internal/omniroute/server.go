@@ -96,6 +96,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleModels(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
 		s.handleChat(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/embeddings":
+		s.handleEmbeddings(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "неизвестный маршрут "+r.Method+" "+r.URL.Path)
 	}

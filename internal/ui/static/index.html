@@ -603,9 +603,21 @@ h3.sub:first-child { margin-top: 0; }
           <div class="card">
             <form class="row" id="ctx-form" style="flex-wrap:nowrap">
               <input name="q" placeholder="поиск по коду: имя функции или понятие">
+              <label class="switch-label small" title="Гибридный поиск: слова + смысл (нужен индекс ниже)"><input type="checkbox" name="semantic"> по смыслу</label>
               <button class="btn ghost" type="submit">Найти</button>
             </form>
             <pre class="list-lines" id="ctx-out" style="margin-top:10px;max-height:340px;white-space:pre">Выберите проект.</pre>
+          </div>
+          <h3 class="sub">Поиск по смыслу</h3>
+          <div class="card" id="sem-card">
+            <p class="small muted" style="margin-top:0">Агенты находят код не только по словам, но и по смыслу: «где проверяется пароль» найдёт checkCredentials. Куски кода и заметки памяти превращаются в векторы моделью эмбеддингов (OpenAI-совместимый провайдер: Ollama — бесплатно и локально, OpenAI, OpenRouter…). Перед каждой задачей индекс обновляется сам — пересчитываются только изменённые куски.</p>
+            <form class="row" id="sem-form">
+              <input name="model" list="sem-models" placeholder="ollama/nomic-embed-text или openai/text-embedding-3-small" autocomplete="off" style="flex:1 1 100%">
+              <datalist id="sem-models"></datalist>
+              <button class="btn ghost" type="submit">Сохранить</button>
+              <button class="btn" type="button" id="sem-index">Построить индекс</button>
+            </form>
+            <div class="small muted" id="sem-status" style="margin-top:8px"></div>
           </div>
         </section>
 
@@ -1475,8 +1487,13 @@ const sendBtn = $("#send");
 let history_ = [];
 let abort = null;
 
+// Модели для чата и задач — без моделей эмбеддингов (они только для поиска по смыслу).
+function chatModels() {
+  return providers.flatMap((p) => p.models.filter((m) => !/embed/i.test(m)).map((m) => p.name + "/" + m));
+}
+
 function fillModels() {
-  const all = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const all = chatModels();
   const mcp = new Set(providers.filter((p) => p.mcp).flatMap((p) => p.models.map((m) => p.name + "/" + m)));
   const fill = (sel, key, empty, markMCP) => {
     const current = sel.value || store.get(key);
@@ -1887,7 +1904,7 @@ async function loadTeam() {
 
 function fillAgentForm(a) {
   const f = $("#team-form");
-  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const models = chatModels();
   f.model.replaceChildren(...models.map((m) => el("option", { value: m }, m)));
   f.fallback.replaceChildren(el("option", { value: "" }, "— нет"), ...models.map((m) => el("option", { value: m }, m)));
   f.id.value = a?.id || "";
@@ -2026,7 +2043,7 @@ function proposalCard(pr) {
 // сменить, а флажок «одним агентом» отменяет деление.
 function subtasksBlock(subtasks) {
   if (!subtasks.length) return { el: "", read: () => [] };
-  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const models = chatModels();
   const agents = team.filter((a) => a.enabled);
   const selects = subtasks.map((st) => {
     const sel = el("select", { title: "Исполнитель подзадачи" },
@@ -2738,6 +2755,7 @@ function renderProjects() {
   loadSkills(current);
   loadMemory(current, "");
   loadContext(current, "");
+  loadSemantic(current);
 }
 
 // ---- Память проекта ----
@@ -2805,16 +2823,58 @@ $("#skill-form").addEventListener("submit", async (e) => {
   } catch (err) { toast(err.message, true); }
 });
 
-async function loadContext(path, q) {
+async function loadContext(path, q, sem) {
   const out = $("#ctx-out");
   if (!path) { out.textContent = "Выберите проект."; return; }
   out.textContent = "Читаю проект…";
   try {
+    if (sem && q) {
+      const r = await api("GET", `/api/semantic/search?project=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}`);
+      out.textContent = (r.note ? "(" + r.note + ")\n" : "") + (r.hits.length ? r.hits.map((h) => `── ${h.path}${h.symbol ? " · " + h.symbol : ""} (строки ${h.start}–${h.end})\n` +
+        h.text.split("\n").slice(0, 12).map((l, i) => String(h.start + i).padStart(5) + "  " + l).join("\n")).join("\n\n") : "Ничего не найдено.");
+      return;
+    }
     const r = await api("GET", `/api/projects/context?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}`);
     out.textContent = r.text;
   } catch (e) { out.textContent = e.message; }
 }
-$("#ctx-form").addEventListener("submit", (e) => { e.preventDefault(); loadContext($("#project").value, e.target.q.value.trim()); });
+$("#ctx-form").addEventListener("submit", (e) => { e.preventDefault(); loadContext($("#project").value, e.target.q.value.trim(), e.target.semantic.checked); });
+
+let semTimer = null;
+function semText(s) {
+  if (!s.model) return "Выключено — выберите модель эмбеддингов. Пока работает только поиск по словам.";
+  if (s.indexing) return `Строю индекс… ${s.done} из ${s.total} кусков` + (s.embedded ? ` (новых векторов: ${s.embedded})` : "");
+  if (s.error) return "Ошибка: " + s.error + (s.total ? ` · готово ${s.done} из ${s.total}` : "");
+  if (s.updated && s.total) return `Индекс готов — кусков кода и заметок: ${s.total} · обновлён ${new Date(s.updated).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+  return "Индекс ещё не строился — нажмите «Построить индекс» (или он соберётся перед первой задачей).";
+}
+async function loadSemantic(path) {
+  clearTimeout(semTimer);
+  const f = $("#sem-form"), out = $("#sem-status");
+  $("#sem-models").replaceChildren(...providers.filter((p) => p.kind === "openai")
+    .flatMap((p) => [...p.models.filter((m) => /embed/i.test(m)).map((m) => p.name + "/" + m), p.name + "/"])
+    .map((m) => el("option", { value: m })));
+  let s;
+  try { s = await api("GET", "/api/semantic" + (path ? "?project=" + encodeURIComponent(path) : "")); } catch (e) { out.textContent = e.message; return; }
+  if (document.activeElement !== f.model) f.model.value = s.model || "";
+  $("#sem-index").disabled = !path || !s.model || s.indexing;
+  out.textContent = path ? semText(s) : (s.model ? "Модель: " + s.model + ". Выберите проект, чтобы построить индекс." : semText(s));
+  if (s.indexing) semTimer = setTimeout(() => loadSemantic($("#project").value), 1000);
+}
+$("#sem-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("PUT", "/api/semantic", { model: e.target.model.value.trim() });
+    toast(e.target.model.value.trim() ? "Модель эмбеддингов сохранена" : "Поиск по смыслу выключен");
+    loadSemantic($("#project").value);
+  } catch (err) { toast(err.message, true); }
+});
+$("#sem-index").addEventListener("click", async () => {
+  try {
+    await api("POST", "/api/semantic/index", { project: $("#project").value });
+    loadSemantic($("#project").value);
+  } catch (err) { toast(err.message, true); }
+});
 
 async function loadCheckpoints(path) {
   const box = $("#checkpoints");
@@ -2926,7 +2986,7 @@ async function loadGit() {
   form.author_name.value = st.author_name || "";
   form.author_email.value = st.author_email || "";
   form.prefix.value = st.prefix || "";
-  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const models = chatModels();
   form.review_model.replaceChildren(el("option", { value: "" }, "Автоматически — резервная модель задачи"), el("option", { value: "off" }, "Без ревью"),
     ...models.map((m) => el("option", { value: m }, m)));
   form.review_model.value = st.review_model || "";

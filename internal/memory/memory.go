@@ -171,6 +171,36 @@ func AgentBrief(notes []store.Note, agentID, goal string, budget int) string {
 	return b.String()
 }
 
+// Ranker ранжирует заметки по смыслу запроса (лучшие k).
+type Ranker interface {
+	Rank(query string, notes []store.Note, k int) []store.Note
+}
+
+// fuse объединяет два ранжированных списка заметок (reciprocal rank fusion).
+func fuse(a, b []store.Note, k int) []store.Note {
+	score := map[int64]float64{}
+	byID := map[int64]store.Note{}
+	var order []int64
+	for _, list := range [][]store.Note{a, b} {
+		for r, n := range list {
+			if _, ok := byID[n.ID]; !ok {
+				byID[n.ID] = n
+				order = append(order, n.ID)
+			}
+			score[n.ID] += 1 / float64(60+r+1)
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return score[order[i]] > score[order[j]] })
+	if len(order) > k {
+		order = order[:k]
+	}
+	out := make([]store.Note, len(order))
+	for i, id := range order {
+		out[i] = byID[id]
+	}
+	return out
+}
+
 // Access — доступ агента к памяти одного проекта (инструменты
 // project_memory и remember). Записать агент может не больше нескольких
 // заметок за задачу.
@@ -180,6 +210,8 @@ type Access struct {
 	Source  string
 	Agent   string // постоянный агент: его заметки попадают в личную память
 	Limit   int    // сколько заметок можно записать; 0 — 5
+	// Ranker — поиск заметок по смыслу в дополнение к поиску по словам; nil — только по словам.
+	Ranker Ranker
 
 	mu      sync.Mutex
 	written int
@@ -195,6 +227,9 @@ func (a *Access) Search(query string) string {
 		return "Память проекта пуста."
 	}
 	hits := Search(notes, query, 8)
+	if a.Ranker != nil {
+		hits = fuse(hits, a.Ranker.Rank(query, notes, 8), 8)
+	}
 	if len(hits) == 0 {
 		return "В памяти проекта ничего похожего не нашлось."
 	}

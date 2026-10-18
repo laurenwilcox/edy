@@ -57,6 +57,8 @@ type Task struct {
 	// исполнитель видит сразу (остальное ищет сам через project_memory).
 	Memory      Memory
 	MemoryBrief string
+	// Code — поиск кода по смыслу для search_code; nil — только по словам.
+	Code CodeSearch
 	// Images — скриншоты к задаче (data:-URL); их получает модель, для
 	// которой CanSee вернёт true, остальные — предупреждение в ленте.
 	Images []string
@@ -82,6 +84,7 @@ type MCPEvents struct {
 	Skills []string
 	// Memory — память проекта для project_memory и remember.
 	Memory   Memory
+	Code     CodeSearch
 	OnCall   func(tool, note string, isErr bool)
 	OnChange func(step string)
 }
@@ -161,7 +164,7 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 
 	// CLI-утилиты запускаются в папке проекта.
 	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root})
-	ws := Workspace{Root: t.Root, Skills: t.Skills, Memory: t.Memory}
+	ws := Workspace{Root: t.Root, Skills: t.Skills, Memory: t.Memory, Code: t.Code}
 	if len(t.Skills) > 0 {
 		t.emit("info", "Скиллов доступно агенту: %d", len(t.Skills))
 	}
@@ -346,6 +349,7 @@ func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step 
 	url, release := t.MCP.Bind(t.Root, MCPEvents{
 		Skills: names,
 		Memory: t.Memory,
+		Code:   t.Code,
 		OnCall: func(tool, note string, isErr bool) {
 			kind := "tool"
 			if isErr {
