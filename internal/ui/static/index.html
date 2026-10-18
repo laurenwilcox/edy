@@ -442,6 +442,7 @@ h3.sub:first-child { margin-top: 0; }
     </div>
     <button class="menu-item" data-open="p-project"><span class="ico">🗂</span>Проект</button>
     <button class="menu-item" data-open="p-git"><span class="ico">🔀</span>Git</button>
+    <button class="menu-item" data-open="p-team"><span class="ico">👥</span>Команда</button>
     <button class="menu-item" data-open="p-mcp"><span class="ico">🧩</span>MCP-серверы</button>
     <button class="menu-item" data-open="p-agents"><span class="ico">🤖</span>Агенты<span class="soon" id="agents-running" hidden></span></button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
@@ -691,6 +692,27 @@ h3.sub:first-child { margin-top: 0; }
           </form>
         </section>
 
+        <section id="p-team">
+          <div class="hint-box small">Постоянные агенты проекта. У каждого роль, зона и своя память: после каждой задачи он помнит, что сделал и на чём споткнулся. Оркестратор отдаёт им задачи из их зоны; вручную агента можно выбрать в списке «Исполнитель».</div>
+          <div id="team-list" style="margin-top:12px"></div>
+          <div class="row spread" style="margin-top:4px"><h3 class="sub" id="team-form-title" style="margin:0">Новый агент</h3><button class="btn ghost icon" type="button" id="team-new">＋ Новый</button></div>
+          <form class="card form-grid" id="team-form" style="margin-top:8px">
+            <input type="hidden" name="id">
+            <label>Имя <input name="name" placeholder="Фронтенд" maxlength="40" required autocomplete="off"></label>
+            <label>Значок <input name="emoji" placeholder="🎨" maxlength="4" autocomplete="off"></label>
+            <label class="wide">Роль — что делает, как, чего избегать
+              <textarea name="role" rows="4" placeholder="Интерфейс на React в web/. Компоненты — функциональные, стили — CSS-модули. Не трогает серверный код."></textarea>
+            </label>
+            <label class="wide">Зона — папки, файлы, темы через запятую <input name="scope" placeholder="web/, *.css, интерфейс" autocomplete="off"></label>
+            <label>Модель <select name="model"></select></label>
+            <label>Резерв <select name="fallback"></select></label>
+            <label>Скиллы всегда (через запятую) <input name="skills" placeholder="react-style" autocomplete="off"></label>
+            <label>MCP всегда (через запятую) <input name="mcp" placeholder="playwright" autocomplete="off"></label>
+            <label class="switch-label wide"><input type="checkbox" name="enabled" checked> Включён — Оркестратор может давать ему задачи</label>
+            <div class="row wide"><button class="btn" type="submit">Сохранить</button></div>
+          </form>
+        </section>
+
         <section id="p-mcp">
           <div class="hint-box small">Каталог внешних MCP-серверов. Оркестратор видит их описания и сам решает, какие выдать исполнителю под задачу: в плане появляется строка «MCP: …». Исполнитель с поддержкой MCP (Claude Code) получает их вместе с MCP Edy. Файлы проекта он всё равно правит только через Edy.</div>
           <div id="mcp-list" style="margin-top:12px"></div>
@@ -906,8 +928,8 @@ if (inApp) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-mcp": "MCP-серверы", "p-agents": "Агенты" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-mcp": loadMCPServers, "p-agents": loadAgents };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-team": "Команда", "p-mcp": "MCP-серверы", "p-agents": "Агенты" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-team": loadTeam, "p-mcp": loadMCPServers, "p-agents": loadAgents };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -1461,8 +1483,9 @@ function fillModels() {
     // Исполнитель с MCP правит проект инструментами Edy напрямую.
     const opts = all.map((m) => el("option", { value: m }, markMCP && mcp.has(m) ? m + " · MCP" : m));
     if (empty) opts.unshift(el("option", { value: "" }, empty));
-    sel.replaceChildren(...(opts.length ? opts : [el("option", { value: "" }, "нет моделей")]));
-    if (all.includes(current) || (empty && current === "")) sel.value = current;
+    const agents = markMCP && !empty ? teamOptions() : [];
+    sel.replaceChildren(...(opts.length ? [...agents, ...(agents.length ? [el("optgroup", { label: "Модели" }, ...opts)] : opts)] : [el("option", { value: "" }, "нет моделей")]));
+    if (all.includes(current) || (empty && current === "") || (current?.startsWith("agent:") && agentOf(current.slice(6)))) sel.value = current;
   };
   fill($("#model"), "edy-model");
   fill($("#worker"), "edy-worker", "", true);
@@ -1810,6 +1833,112 @@ $("#task-modal").addEventListener("paste", (e) => {
   if (files.length && gallery?.upload) { e.preventDefault(); gallery.upload(files); }
 });
 
+// ============ Команда проекта ============
+// Постоянные агенты: роль, зона, модель и своя память. В списке
+// «Исполнитель» они идут вместе с моделями (значение agent:<id>).
+let team = [];
+async function loadTeamList() {
+  const project = $("#project").value;
+  if (!project) { team = []; return; }
+  try { team = await api("GET", "/api/team?project=" + encodeURIComponent(project)); } catch { team = []; }
+}
+const agentOf = (id) => team.find((a) => a.id === id);
+const agentLabel = (a) => `${a.emoji || "👤"} ${a.name}`;
+
+// pickExecutor разбирает выбор «Исполнитель/Резерв»: агент команды или модели.
+function pickExecutor() {
+  const w = $("#worker").value, f = $("#fallback").value;
+  if (w.startsWith("agent:")) {
+    const a = agentOf(w.slice(6));
+    if (a) return { agent: a.id, models: [a.model, a.fallback].filter((x, i, l) => x && l.indexOf(x) === i) };
+  }
+  return { agent: "", models: w ? (f && f !== w && !f.startsWith("agent:") ? [w, f] : [w]) : [] };
+}
+
+function teamOptions() {
+  const active = team.filter((a) => a.enabled);
+  return active.length ? [el("optgroup", { label: "Команда проекта" }, ...active.map((a) => el("option", { value: "agent:" + a.id }, `${agentLabel(a)} · ${a.model}`)))] : [];
+}
+
+async function loadTeam() {
+  await loadTeamList();
+  fillModels();
+  const project = $("#project").value;
+  const box = $("#team-list");
+  if (!project) { box.replaceChildren(el("div", { class: "card muted small" }, "Выберите проект в разделе «Проект».")); return; }
+  box.replaceChildren(...(team.length ? team.map((a) => el("div", { class: "card" },
+    el("div", { class: "mcp-row" },
+      el("div", { class: "grow" },
+        el("div", { class: "row" }, el("span", { style: "font-size:20px" }, a.emoji || "👤"), el("strong", {}, a.name),
+          el("span", { class: "badge" }, a.model), a.fallback ? el("span", { class: "badge cli" }, "резерв " + a.fallback) : "",
+          a.enabled ? "" : el("span", { class: "badge off" }, "выключен")),
+        a.role ? el("div", { class: "small", style: "margin-top:6px;white-space:pre-wrap" }, a.role) : "",
+        a.scope?.length ? el("div", { class: "row small", style: "margin-top:6px" }, "Зона:", ...a.scope.map((s) => el("code", {}, s))) : "",
+        el("div", { class: "small muted", style: "margin-top:6px" }, `✓ сделал ${a.done} · ✗ не справился ${a.failed} · 🧠 в памяти ${a.notes}`)),
+      el("div", { class: "row", style: "flex-direction:column;align-items:stretch" },
+        el("button", { class: "btn ghost icon", onclick: () => editAgent(a) }, "Изменить"),
+        el("button", { class: "btn ghost icon", onclick: () => agentMemory(a) }, "🧠 Память"),
+        el("button", { class: "btn danger icon", onclick: async () => {
+          if (!confirm(`Удалить агента «${a.name}» и его память?`)) return;
+          try { await api("DELETE", "/api/team/" + a.id); loadTeam(); } catch (e) { toast(e.message, true); }
+        } }, "Удалить"))))) : [el("div", { class: "card muted small" }, "В команде пока никого. Добавьте агента под часть проекта — например «Фронтенд» с зоной web/ или «Тесты».")]));
+  fillAgentForm(null);
+}
+
+function fillAgentForm(a) {
+  const f = $("#team-form");
+  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  f.model.replaceChildren(...models.map((m) => el("option", { value: m }, m)));
+  f.fallback.replaceChildren(el("option", { value: "" }, "— нет"), ...models.map((m) => el("option", { value: m }, m)));
+  f.id.value = a?.id || "";
+  f.name.value = a?.name || "";
+  f.emoji.value = a?.emoji || "";
+  f.role.value = a?.role || "";
+  f.scope.value = (a?.scope || []).join(", ");
+  f.skills.value = (a?.skills || []).join(", ");
+  f.mcp.value = (a?.mcp || []).join(", ");
+  f.model.value = a?.model || $("#worker").value.replace(/^agent:.*/, "") || models[0] || "";
+  f.fallback.value = a?.fallback || "";
+  f.enabled.checked = a ? a.enabled : true;
+  $("#team-form-title").textContent = a ? `Изменить «${a.name}»` : "Новый агент";
+}
+function editAgent(a) { fillAgentForm(a); $("#team-form").scrollIntoView({ behavior: "smooth" }); }
+
+async function agentMemory(a) {
+  let r;
+  try { r = await api("GET", `/api/memory?project=${encodeURIComponent(a.project)}&agent=${a.id}`); } catch (e) { return toast(e.message, true); }
+  const add = el("form", { class: "row", style: "flex-wrap:nowrap;margin-top:10px" },
+    el("input", { name: "text", placeholder: "Что агенту стоит помнить", maxlength: "400", autocomplete: "off" }), el("button", { class: "btn", type: "submit" }, "＋"));
+  add.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = e.target.text.value.trim();
+    if (!text) return;
+    try { await api("POST", "/api/memory", { project: a.project, agent: a.id, text, kind: "fact" }); agentMemory(a); loadTeam(); } catch (err) { toast(err.message, true); }
+  });
+  $("#file-modal-box").replaceChildren(
+    el("div", { class: "modal-head" }, el("h3", {}, `🧠 Память: ${agentLabel(a)}`), el("button", { class: "btn ghost icon", onclick: () => ($("#file-modal").hidden = true) }, "✕")),
+    el("div", { class: "small muted", style: "margin-top:6px" }, "Личный опыт агента: итоги и уроки его задач и факты, которые он записал сам. Похожие на задачу заметки он получает в начале работы."),
+    el("div", { style: "margin-top:10px" }, ...(r.notes.length ? r.notes.map((n) => el("div", { class: "skill" },
+      el("div", { class: "grow" }, el("span", { class: "badge" + (n.kind === "lesson" ? " off" : n.kind === "task" ? " cli" : "") }, noteKind[n.kind] || n.kind), " ", el("span", { class: "small" }, n.text)),
+      el("button", { class: "btn danger icon", onclick: async () => { await api("DELETE", `/api/memory/${n.id}?project=${encodeURIComponent(a.project)}`); agentMemory(a); } }, "✕")))
+      : [el("div", { class: "muted small" }, "Память пуста — она наполнится после первых задач.")])),
+    add);
+  $("#file-modal").hidden = false;
+}
+
+$("#team-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const list = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
+  try {
+    await api("POST", "/api/team", { id: f.id.value, project: $("#project").value, name: f.name.value.trim(), emoji: f.emoji.value.trim(), role: f.role.value.trim(),
+      scope: list(f.scope.value), model: f.model.value, fallback: f.fallback.value, skills: list(f.skills.value), mcp: list(f.mcp.value), enabled: f.enabled.checked });
+    toast(f.id.value ? "Агент обновлён" : "Агент добавлен в команду — Оркестратор увидит его в следующем ответе");
+    loadTeam();
+  } catch (err) { toast(err.message, true); }
+});
+$("#team-new").addEventListener("click", () => fillAgentForm(null));
+
 // ============ Режимы чата ============
 let chatMode = "chat";
 function setChatMode(mode) {
@@ -1860,12 +1989,12 @@ async function sendOrch() {
   orchBusy = true;
   try {
     // Оркестратор видит возможности исполнителя и резерва и по ним решает, что выдать.
-    const executors = [$("#worker").value, $("#fallback").value].filter((x, i, a) => x && a.indexOf(x) === i);
+    const executors = pickExecutor().models;
     const r = await api("POST", "/api/orchestrator", { project, model, executors, messages: orchHistory, conversation: orchConversation });
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
     for (const pr of r.new_mcp || []) m.append(proposalCard(pr));
-    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || [], r.subtasks || []));
+    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || [], r.subtasks || [], r.agent || ""));
   } catch (e) {
     orchHistory.pop();
     m.classList.add("error");
@@ -1898,9 +2027,12 @@ function proposalCard(pr) {
 function subtasksBlock(subtasks) {
   if (!subtasks.length) return { el: "", read: () => [] };
   const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const agents = team.filter((a) => a.enabled);
   const selects = subtasks.map((st) => {
-    const sel = el("select", { title: "Исполнитель подзадачи" }, ...models.map((m) => el("option", { value: m }, m)));
-    sel.value = models.includes(st.model) ? st.model : models[0];
+    const sel = el("select", { title: "Исполнитель подзадачи" },
+      ...(agents.length ? [el("optgroup", { label: "Команда" }, ...agents.map((a) => el("option", { value: "agent:" + a.name }, agentLabel(a))))] : []),
+      el("optgroup", { label: "Модели" }, ...models.map((m) => el("option", { value: m }, m))));
+    sel.value = st.agent && agents.some((a) => a.name === st.agent) ? "agent:" + st.agent : models.includes(st.model) ? st.model : models[0];
     return sel;
   });
   const single = el("input", { type: "checkbox" });
@@ -1911,15 +2043,20 @@ function subtasksBlock(subtasks) {
       el("div", { class: "grow" }, el("b", {}, st.title), el("div", { class: "small muted" }, st.goal + (st.after?.length ? " · после " + st.after.join(", ") : ""))),
       selects[i])),
     el("label", { class: "switch-label small" }, single, "Сделать одним агентом, без деления"));
-  return { el: box, read: () => single.checked ? [] : subtasks.map((st, i) => ({ ...st, model: selects[i].value })) };
+  return { el: box, read: () => single.checked ? [] : subtasks.map((st, i) => {
+    const v = selects[i].value;
+    return v.startsWith("agent:") ? { ...st, agent: v.slice(6) } : { ...st, model: v, agent: "" };
+  }) };
 }
 
-function planCard(plan, project, mcp, skills, subtasks = []) {
+function planCard(plan, project, mcp, skills, subtasks = [], agentName = "") {
   const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
   const split = subtasksBlock(subtasks);
   const given = (icon, title, list, cls) => el("div", { class: "plan-mcp" }, icon + " " + title + ": ",
     ...(list.length ? list.map((n) => el("span", { class: "badge" + cls }, n)) : [el("span", { class: "small muted" }, "не нужны")]));
-  const tools = el("div", {}, given("🧩", "MCP для исполнителя", mcp, ""), given("📘", "Скиллы", skills, " cli"));
+  const lead = agentName && !subtasks.length ? team.find((a) => a.name === agentName) : null;
+  const tools = el("div", {}, lead ? el("div", { class: "plan-mcp" }, "👥 Ведёт агент команды: ", el("span", { class: "badge" }, agentLabel(lead) + " · " + lead.model), el("span", { class: "small muted" }, " (с его ролью и памятью)")) : "",
+    given("🧩", "MCP для исполнителя", mcp, ""), given("📘", "Скиллы", skills, " cli"));
   const box = el("div", { class: "plan" }, plan, tools, split.el, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
   start.addEventListener("click", async () => {
     const worker = $("#worker").value;
@@ -1929,7 +2066,8 @@ function planCard(plan, project, mcp, skills, subtasks = []) {
     const request = orchHistory.filter((x) => x.role === "user").map((x) => x.content).join("\n");
     try {
       const comment = box.closest(".msg")?.querySelector(".body")?.innerText || "";
-      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker], subtasks: split.read() });
+      const ex = pickExecutor();
+      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: ex.models, agent: ex.agent, subtasks: split.read() });
       orchTaskID = "";
       start.textContent = v.state === "queued" ? "Поставлено в очередь" : "Работа начата";
       watchTask(v);
@@ -2224,10 +2362,7 @@ let boardTimer = null;
 let boardTasks = [];
 let dragID = "";
 
-function executors() {
-  const w = $("#worker").value, f = $("#fallback").value;
-  return w ? (f && f !== w ? [w, f] : [w]) : [];
-}
+function executors() { return pickExecutor().models; }
 
 async function loadBoard() {
   clearTimeout(boardTimer);
@@ -2268,7 +2403,9 @@ function renderBoard() {
 
 function taskCard(t, byID, children) {
   const meta = [el("span", { class: "st " + t.state }, stateShort[t.state] || t.state)];
-  if (t.models?.length) meta.push(el("span", {}, "🤖 " + t.models[0].split("/").pop()));
+  const ag = t.agent && agentOf(t.agent);
+  if (ag) meta.push(el("span", { class: "badge", title: "Агент команды" }, agentLabel(ag)));
+  else if (t.models?.length) meta.push(el("span", {}, "🤖 " + t.models[0].split("/").pop()));
   if (t.review) meta.push(el("span", { title: "Ревью" }, t.review.verdict === "ok" ? "🔍 ✓" : t.review.verdict === "issues" ? "🔍 замечания" : "🔍 ?"));
   if (t.mcp?.length) meta.push(el("span", { title: "MCP: " + t.mcp.join(", ") }, "🧩 " + t.mcp.length));
   if (t.skills?.length) meta.push(el("span", { title: "Скиллы: " + t.skills.join(", ") }, "📘 " + t.skills.length));
@@ -2333,7 +2470,7 @@ async function enqueueRaw(t) {
   const models = executors();
   if (!models.length) return toast("Выберите исполнителя вверху", true);
   try {
-    const v = await api("POST", "/api/tasks", { id: t.id, project: t.project, request: t.request || t.title, models });
+    const v = await api("POST", "/api/tasks", { id: t.id, project: t.project, request: t.request || t.title, models, agent: pickExecutor().agent });
     toast(v.state === "running" ? "Задача в работе" : "Задача в очереди");
     loadBoard();
   } catch (e) { toast(e.message, true); }
@@ -2507,7 +2644,7 @@ async function openTask(id) {
       return sec("Скриншоты (" + (t.attachments?.length || 0) + ")", holder);
     })(),
     t.plan ? sec("План Оркестратора", el("div", { class: "plan", style: "margin-top:0" }, t.plan)) : "",
-    (t.models?.length || t.mcp?.length || t.skills?.length) ? sec("Исполнитель",
+    (t.models?.length || t.mcp?.length || t.skills?.length) ? sec("Исполнитель" + (t.agent && agentOf(t.agent) ? " — агент команды " + agentLabel(agentOf(t.agent)) : ""),
       el("div", { class: "row small" }, ...(t.models || []).map((m, i) => el("span", { class: "badge" + (i ? " cli" : "") }, (i ? "резерв: " : "") + m)),
         ...(t.mcp || []).map((m) => el("span", { class: "badge" }, "🧩 " + m)), ...(t.skills || []).map((m) => el("span", { class: "badge cli" }, "📘 " + m)))) : "",
     t.summary ? sec("Итог", el("div", {}, t.summary, el("span", { class: "muted small" }, t.model ? "  · " + t.model : ""))) : "",
@@ -2527,7 +2664,7 @@ async function openTask(id) {
       ? sec("Агенты эпика (" + kids.length + ")", ...kids.map((k) => el("div", { class: "subrow" },
           el("span", { class: "subnum" }, String(k.step)),
           el("div", { class: "grow" }, el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(k.id); } }, k.title),
-            el("div", { class: "small muted" }, (k.models || []).join(" → ") + (k.after?.length ? " · после " + k.after.join(", ") : "") + (k.error ? " · " + k.error : ""))),
+            el("div", { class: "small muted" }, (k.agent && agentOf(k.agent) ? agentLabel(agentOf(k.agent)) + " · " : "") + (k.models || []).join(" → ") + (k.after?.length ? " · после " + k.after.join(", ") : "") + (k.error ? " · " + k.error : ""))),
           el("span", { class: "st " + k.state }, stateShort[k.state] || k.state))),
           el("div", { class: "small muted", style: "margin-top:6px" }, "Каждая подзадача — свой агент в своей копии проекта; готовые сливаются в общую ветку эпика. Approve — один на весь эпик."))
       : sec("Подзадачи (" + kids.length + ")", ...kids.map((k) => el("div", { class: "row small", style: "padding:3px 0" },
@@ -2575,6 +2712,7 @@ $("#project").addEventListener("change", (e) => {
   refreshProjectState();
   if ($("#drawer").classList.contains("open") && !$("#p-git").hidden) loadGit();
   renderMCP();
+  loadTeamList().then(fillModels);
   if (chatMode === "board") loadBoard();
 });
 
@@ -2932,6 +3070,8 @@ async function showAgent(id) {
     await refreshProviders();
     await refreshProjectState();
     await loadTemplates();
+    await loadTeamList();
+    fillModels();
   } catch (e) {
     toast(e.message, true);
   }

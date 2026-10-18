@@ -51,6 +51,8 @@ type Task struct {
 	// (Claude Code): они правят проект инструментами Edy сами, без пошаговой
 	// эмуляции. nil — все модели работают через инструменты в промпте.
 	MCP MCPBridge
+	// Role — инструкции постоянного агента (роль, зона), если задачу ведёт он.
+	Role string
 	// Memory — память проекта; MemoryBrief — закреплённые заметки, которые
 	// исполнитель видит сразу (остальное ищет сам через project_memory).
 	Memory      Memory
@@ -307,14 +309,18 @@ func (t *Task) imagesFor(model string) []string {
 
 // memoryNote — раздел системного промпта о памяти проекта.
 func (t *Task) memoryNote() string {
+	role := ""
+	if strings.TrimSpace(t.Role) != "" {
+		role = "\n\n" + strings.TrimSpace(t.Role)
+	}
 	if t.Memory == nil {
-		return ""
+		return role
 	}
 	note := "\n\nПамять проекта: ищи в ней через project_memory (как запускать, что хрупко, уроки прошлых задач); полезный неочевидный факт запиши через remember."
 	if strings.TrimSpace(t.MemoryBrief) != "" {
 		note += "\nЗакреплённое в памяти проекта:\n" + t.MemoryBrief
 	}
-	return note
+	return role + note
 }
 
 const mcpPrompt = `Ты — агент-разработчик в Edy. Работай с проектом через инструменты MCP-сервера edy:

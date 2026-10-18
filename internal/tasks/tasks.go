@@ -83,7 +83,9 @@ type View struct {
 	Parent  string `json:"parent,omitempty"` // подзадача: к какой задаче относится
 	// Kind — epic: задача, разбитая Оркестратором на подзадачи для нескольких
 	// агентов; sub — такая подзадача. Пусто — обычная задача.
-	Kind     string `json:"kind,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	// Agent — постоянный агент команды, который ведёт задачу (id).
+	Agent    string `json:"agent,omitempty"`
 	Step     int    `json:"step,omitempty"`  // номер подзадачи в эпике
 	After    []int  `json:"after,omitempty"` // подзадача ждёт эти номера
 	Title    string `json:"title"`
@@ -168,6 +170,10 @@ type Manager struct {
 	// картинки (тег «Картинки»).
 	AttachDir string
 	CanSee    func(model string) bool
+	// Team — постоянные агенты команды (роль, память). nil — без команды.
+	Team interface {
+		TeamAgent(id string) (store.TeamAgent, error)
+	}
 	// MaxParallel — сколько агентов эпика работают одновременно (0 — 2).
 	MaxParallel func(project string) int
 	// Now подменяется в тестах.
@@ -306,6 +312,7 @@ type Plan struct {
 	Plan    string
 	Goal    string
 	Models  []string
+	Agent   string // постоянный агент (его модели уже в Models)
 	Options
 }
 
@@ -333,7 +340,7 @@ func (m *Manager) enqueue(id string, d Draft, p Plan, start bool) (View, error) 
 		default:
 			return fmt.Errorf("задача в состоянии %q, поставить её в очередь нельзя", r.State)
 		}
-		r.State, r.Goal, r.Models, r.MCP = StateQueued, p.Goal, p.Models, p.MCP
+		r.State, r.Goal, r.Models, r.MCP, r.Agent = StateQueued, p.Goal, p.Models, p.MCP, p.Agent
 		if p.Request != "" {
 			r.Request = p.Request
 		}
@@ -457,7 +464,29 @@ func (m *Manager) memoryFor(r record) (agent.Memory, string) {
 		return nil, ""
 	}
 	notes, _ := m.Notes.Notes(r.Project)
+	if r.Agent != "" {
+		return &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID, Agent: r.Agent}, memory.AgentBrief(notes, r.Agent, r.Goal, 2000)
+	}
 	return &memory.Access{St: m.Notes, Project: r.Project, Source: "task:" + r.ID}, memory.Pinned(notes, 1500)
+}
+
+// roleFor — инструкции постоянного агента для системного промпта.
+func (m *Manager) roleFor(r record) string {
+	if r.Agent == "" || m.Team == nil {
+		return ""
+	}
+	a, err := m.Team.TeamAgent(r.Agent)
+	if err != nil {
+		return ""
+	}
+	role := fmt.Sprintf("Ты — «%s», постоянный агент команды этого проекта.", a.Name)
+	if strings.TrimSpace(a.Role) != "" {
+		role += "\nТвоя роль:\n" + strings.TrimSpace(a.Role)
+	}
+	if len(a.Scope) > 0 {
+		role += "\nТвоя зона: " + strings.Join(a.Scope, ", ")
+	}
+	return role + "\nВсё полезное о своей части проекта записывай через remember — это твоя память для следующих задач."
 }
 
 // learn записывает в память проекта итог или урок задачи — без вызова ИИ.
@@ -469,6 +498,10 @@ func (m *Manager) learn(r record, kind, text string) {
 		text = string(rs[:memory.MaxNote-1]) + "…"
 	}
 	m.Notes.AddNote(store.Note{Project: r.Project, Kind: kind, Text: text, Source: "task:" + r.ID})
+	if r.Agent != "" {
+		// Свой итог или урок агент помнит лично — это и есть его опыт.
+		m.Notes.AddNote(store.Note{Project: r.Project, Kind: kind, Text: text, Source: "task:" + r.ID, Agent: r.Agent})
+	}
 }
 
 // lastFailure — первая строка последнего провала проверок или ошибки задачи.
@@ -953,6 +986,7 @@ func (m *Manager) execute(ctx context.Context, ru *run, r record, root, goal str
 		MaxAttempts: m.maxAttempts,
 		Memory:      mem,
 		MemoryBrief: brief,
+		Role:        m.roleFor(r),
 		Root:        root,
 		Goal:        goal,
 		Models:      r.Models,

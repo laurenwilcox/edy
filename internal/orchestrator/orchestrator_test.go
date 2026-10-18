@@ -145,3 +145,17 @@ func TestSubtasksForSeveralAgents(t *testing.T) {
 		t.Fatal("без git подзадач нет")
 	}
 }
+
+func TestTeamAssignment(t *testing.T) {
+	c := Context{Git: true, Executors: []Executor{{Model: "smart/m"}}, Others: []Executor{{Model: "cheap/m"}},
+		Team: []Member{{Name: "Фронтенд", Role: "Интерфейс на React. Стиль — как в проекте.", Scope: []string{"web/", "*.css"}, Model: "cheap/m", Stats: "сделал 4 задачи"}}}
+	llm := &fakeLLM{reply: "<plan>\nЗадача: кнопка.\n1. web/app.js\nАгент: «фронтенд»\n</plan>\n" +
+		`<subtasks>[{"title":"API","goal":"api.go","model":"smart/m"},{"title":"Кнопка","goal":"web/app.js","model":"x","agent":"Фронтенд"},{"title":"?","goal":"y","model":"smart/m","agent":"Бэкенд"}]</subtasks>`}
+	r, _ := Chat(context.Background(), llm, "m", t.TempDir(), nil, c)
+	if !strings.Contains(llm.got[0].Content, "- Фронтенд (cheap/m): Интерфейс на React; зона: web/, *.css; сделал 4 задачи") {
+		t.Fatalf("команда в инструкциях:\n%s", llm.got[0].Content)
+	}
+	if r.Agent != "Фронтенд" || r.Subtasks[1].Agent != "Фронтенд" || r.Subtasks[2].Agent != "" {
+		t.Fatalf("назначения: %q %+v", r.Agent, r.Subtasks)
+	}
+}

@@ -30,6 +30,19 @@ func (h *Handler) listMemory(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if agent := r.URL.Query().Get("agent"); agent != "" {
+		// Личная память агента команды.
+		var own []store.Note
+		for _, n := range notes {
+			if n.Agent == agent {
+				own = append(own, n)
+			}
+		}
+		notes = own
+		if notes == nil {
+			notes = []store.Note{}
+		}
+	}
 	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
 		notes = memory.Search(notes, q, 30)
 		if notes == nil {
@@ -46,6 +59,7 @@ func (h *Handler) addMemory(w http.ResponseWriter, r *http.Request) {
 		Text    string `json:"text"`
 		Kind    string `json:"kind"`
 		Pinned  bool   `json:"pinned"`
+		Agent   string `json:"agent"` // заметка в личную память агента
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -68,7 +82,13 @@ func (h *Handler) addMemory(w http.ResponseWriter, r *http.Request) {
 	default:
 		req.Kind = store.NoteNote
 	}
-	id, err := h.Store.AddNote(store.Note{Project: req.Project, Kind: req.Kind, Text: req.Text, Source: "user", Pinned: req.Pinned})
+	if req.Agent != "" {
+		if a, err := h.Store.TeamAgent(req.Agent); err != nil || a.Project != req.Project {
+			fail(w, http.StatusBadRequest, "агент команды не найден")
+			return
+		}
+	}
+	id, err := h.Store.AddNote(store.Note{Project: req.Project, Kind: req.Kind, Text: req.Text, Source: "user", Pinned: req.Pinned, Agent: req.Agent})
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return

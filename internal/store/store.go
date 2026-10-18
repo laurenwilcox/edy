@@ -68,6 +68,7 @@ var migrations = []string{
 	`ALTER TABLE providers ADD COLUMN browser TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE providers ADD COLUMN caps TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE mcp_servers ADD COLUMN account TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE project_memory ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
 }
 
 // Provider — источник ИИ, подключённый к OmniRoute.
@@ -123,7 +124,7 @@ func Open(path string, v *vault.Vault) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + agentsSchema + gitSchema + mcpSchema + boardSchema + memorySchema); err != nil {
+	if _, err := db.Exec(schema + agentsSchema + gitSchema + mcpSchema + boardSchema + memorySchema + teamSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: миграция схемы: %w", err)
 	}

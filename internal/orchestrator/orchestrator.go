@@ -45,6 +45,8 @@ type Reply struct {
 	NewMCP []Proposal `json:"new_mcp,omitempty"`
 	// Subtasks — задача разбита для нескольких агентов (пусто — один агент).
 	Subtasks []Subtask `json:"subtasks,omitempty"`
+	// Agent — постоянный агент, которому Оркестратор отдаёт задачу целиком.
+	Agent string `json:"agent,omitempty"`
 }
 
 // Server — внешний MCP-сервер из каталога.
@@ -83,6 +85,17 @@ type Context struct {
 	// агентов работают одновременно.
 	Git      bool
 	Parallel int
+	// Team — постоянные агенты проекта.
+	Team []Member
+}
+
+// Member — постоянный агент команды проекта.
+type Member struct {
+	Name  string
+	Role  string
+	Scope []string
+	Model string
+	Stats string // «сделал 5 задач, 1 не удалась»
 }
 
 // Subtask — часть большой задачи для отдельного агента.
@@ -90,6 +103,7 @@ type Subtask struct {
 	Title string `json:"title"`
 	Goal  string `json:"goal"`
 	Model string `json:"model"`
+	Agent string `json:"agent,omitempty"` // имя постоянного агента команды
 	After []int  `json:"after,omitempty"`
 }
 
@@ -147,6 +161,22 @@ func instructions(c Context) string {
 	b.WriteString("Если задаче нужно то, чего исполнитель не умеет (картинки, звук, голос, интернет), скажи об этом и посоветуй модель, которая умеет.\n")
 	b.WriteString("Если по статистике есть модель дешевле, которая обычно справляется с такими задачами, или выбранная часто проваливается, коротко посоветуй замену.\n")
 
+	if len(c.Team) > 0 {
+		b.WriteString("\nКоманда проекта — постоянные агенты. У каждого своя роль, зона и память о прошлых задачах в этой зоне, поэтому задачу из его зоны лучше отдать ему. Назначь агента строкой в плане:\nАгент: имя\nВ подзадачах — полем \"agent\":\"имя\" (модель агента подставится сама). Если задача ни в чьей зоне, агента не назначай.\n")
+		for _, mb := range c.Team {
+			line := "- " + mb.Name + " (" + mb.Model + ")"
+			if mb.Role != "" {
+				line += ": " + firstSentence(mb.Role)
+			}
+			if len(mb.Scope) > 0 {
+				line += "; зона: " + strings.Join(mb.Scope, ", ")
+			}
+			if mb.Stats != "" {
+				line += "; " + mb.Stats
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 	if len(c.Skills) > 0 {
 		b.WriteString("\nСкиллы — инструкции проекта. Выдай исполнителю только те, что относятся к задаче, отдельной строкой в плане:\nСкиллы: имя1, имя2\nЕсли ни один не нужен, строку не пиши.\nДоступные скиллы:\n")
 		for _, sk := range c.Skills {
@@ -218,6 +248,7 @@ func Chat(ctx context.Context, llm agent.LLM, model, project string, history []a
 		out.MCP = PlanMCP(out.Plan, c.Servers)
 	}
 	out.Skills = PlanSkills(out.Plan, c.Skills)
+	out.Agent = PlanAgent(out.Plan, c.Team)
 	if c.Git {
 		out.Subtasks = checkSubtasks(out.Subtasks, c)
 	} else {
@@ -242,6 +273,9 @@ func checkSubtasks(list []Subtask, c Context) []Subtask {
 		if strings.TrimSpace(st.Goal) == "" || len(out) == 6 {
 			continue
 		}
+		if st.Agent != "" {
+			st.Agent = memberName(st.Agent, c.Team)
+		}
 		if !known[st.Model] {
 			st.Model = fallback
 		}
@@ -265,6 +299,7 @@ func checkSubtasks(list []Subtask, c Context) []Subtask {
 
 var (
 	mcpLineRe    = regexp.MustCompile(`(?mi)^\s*[-*]?\s*MCP\s*:\s*(.+)$`)
+	agentLineRe  = regexp.MustCompile(`(?mi)^\s*[-*]?\s*(?:Агент|Agent)\s*:\s*(.+)$`)
 	skillsLineRe = regexp.MustCompile(`(?mi)^\s*[-*]?\s*(?:Скиллы|Skills)\s*:\s*(.+)$`)
 	newMCPRe     = regexp.MustCompile(`(?s)<new_mcp>\s*(.*?)\s*</new_mcp>`)
 	subtasksRe   = regexp.MustCompile(`(?s)<subtasks>\s*(.*?)\s*</subtasks>`)
@@ -339,4 +374,35 @@ func Goal(request, plan string) string {
 		return plan
 	}
 	return strings.TrimSpace(request) + "\n\nУтверждённый план:\n" + plan
+}
+
+// PlanAgent достаёт из плана строку «Агент: имя» — только агент команды.
+func PlanAgent(plan string, team []Member) string {
+	m := agentLineRe.FindStringSubmatch(plan)
+	if m == nil {
+		return ""
+	}
+	return memberName(m[1], team)
+}
+
+// memberName находит агента команды по имени (без учёта регистра и кавычек).
+func memberName(name string, team []Member) string {
+	name = strings.TrimSpace(strings.Trim(strings.TrimSpace(name), "`*.\"'«»"))
+	for _, mb := range team {
+		if strings.EqualFold(mb.Name, name) {
+			return mb.Name
+		}
+	}
+	return ""
+}
+
+func firstSentence(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, ".\n"); i > 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > 140 {
+		s = string(r[:140]) + "…"
+	}
+	return s
 }

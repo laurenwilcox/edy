@@ -115,6 +115,7 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
 	h.Tasks.Notes = st
+	h.Tasks.Team = st
 	h.Tasks.AttachDir = filepath.Join(home, "attachments")
 	h.Tasks.CanSee = func(model string) bool {
 		name, _, _ := strings.Cut(model, "/")

@@ -142,11 +142,33 @@ func Brief(notes []store.Note, query string, budget int) string {
 func Pinned(notes []store.Note, budget int) string {
 	var pinned []store.Note
 	for _, n := range notes {
-		if n.Pinned {
+		if n.Pinned && n.Agent == "" {
 			pinned = append(pinned, n)
 		}
 	}
 	return Brief(pinned, "", budget)
+}
+
+// AgentBrief — выжимка для постоянного агента: его личные заметки
+// (закреплённые и похожие на задачу) и закреплённое общее, в пределах budget.
+func AgentBrief(notes []store.Note, agentID, goal string, budget int) string {
+	var own, shared []store.Note
+	for _, n := range notes {
+		switch {
+		case n.Agent == agentID:
+			own = append(own, n)
+		case n.Agent == "" && n.Pinned:
+			shared = append(shared, n)
+		}
+	}
+	var b strings.Builder
+	if mine := Brief(own, goal, budget*2/3); mine != "" {
+		b.WriteString("Твоя память (опыт прошлых задач):\n" + mine)
+	}
+	if rest := Brief(shared, "", budget-b.Len()); rest != "" {
+		b.WriteString("Общее закреплённое:\n" + rest)
+	}
+	return b.String()
 }
 
 // Access — доступ агента к памяти одного проекта (инструменты
@@ -156,7 +178,8 @@ type Access struct {
 	St      Store
 	Project string
 	Source  string
-	Limit   int // сколько заметок можно записать; 0 — 5
+	Agent   string // постоянный агент: его заметки попадают в личную память
+	Limit   int    // сколько заметок можно записать; 0 — 5
 
 	mu      sync.Mutex
 	written int
@@ -200,7 +223,7 @@ func (a *Access) Remember(text string) error {
 	if a.written >= limit {
 		return fmt.Errorf("за одну задачу можно записать не больше %d заметок", limit)
 	}
-	if _, err := a.St.AddNote(store.Note{Project: a.Project, Kind: store.NoteFact, Text: text, Source: a.Source}); err != nil {
+	if _, err := a.St.AddNote(store.Note{Project: a.Project, Kind: store.NoteFact, Text: text, Source: a.Source, Agent: a.Agent}); err != nil {
 		return err
 	}
 	a.written++

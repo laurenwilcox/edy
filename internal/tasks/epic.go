@@ -32,6 +32,7 @@ type SubPlan struct {
 	Title  string
 	Goal   string
 	Models []string // исполнитель подзадачи (и резерв)
+	Agent  string   // постоянный агент, если подзадачу ведёт он
 	After  []int    // номера подзадач (с 1), которые должны быть готовы раньше
 }
 
@@ -98,7 +99,7 @@ func (m *Manager) EnqueueEpic(id string, d Draft, p Plan, subs []SubPlan) (View,
 		titles[i] = fmt.Sprintf("%d. %s", i+1, sp.Title)
 	}
 	for i, sp := range subs {
-		sub := record{View: View{ID: newID(), Project: ep.Project, Parent: ep.ID, Kind: KindSub, Step: i + 1, After: sp.After,
+		sub := record{View: View{ID: newID(), Project: ep.Project, Parent: ep.ID, Kind: KindSub, Agent: sp.Agent, Step: i + 1, After: sp.After,
 			Title: titleOf(sp.Title, sp.Goal), Request: sp.Goal, Models: sp.Models, MCP: ep.MCP, Skills: ep.Skills,
 			State: StateQueued, Created: m.Now(), Position: m.Now().UnixMilli() + int64(i), Agents: []string{}},
 			AllSkills: ep.AllSkills}

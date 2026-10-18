@@ -29,12 +29,14 @@ const (
 
 // Note — заметка памяти проекта.
 type Note struct {
-	ID      int64     `json:"id"`
-	Project string    `json:"project"`
-	Kind    string    `json:"kind"`
-	Text    string    `json:"text"`
-	Source  string    `json:"source"`
-	Pinned  bool      `json:"pinned"`
+	ID      int64  `json:"id"`
+	Project string `json:"project"`
+	Kind    string `json:"kind"`
+	Text    string `json:"text"`
+	Source  string `json:"source"`
+	Pinned  bool   `json:"pinned"`
+	// Agent — заметка из личной памяти постоянного агента (пусто — общая).
+	Agent   string    `json:"agent,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -42,8 +44,8 @@ func (s *Store) AddNote(n Note) (int64, error) {
 	if n.Created.IsZero() {
 		n.Created = time.Now()
 	}
-	res, err := s.db.Exec(`INSERT INTO project_memory(project, kind, text, source, pinned, created) VALUES (?,?,?,?,?,?)`,
-		n.Project, n.Kind, n.Text, n.Source, n.Pinned, n.Created.UnixMilli())
+	res, err := s.db.Exec(`INSERT INTO project_memory(project, kind, text, source, pinned, agent, created) VALUES (?,?,?,?,?,?,?)`,
+		n.Project, n.Kind, n.Text, n.Source, n.Pinned, n.Agent, n.Created.UnixMilli())
 	if err != nil {
 		return 0, err
 	}
@@ -52,7 +54,7 @@ func (s *Store) AddNote(n Note) (int64, error) {
 
 // Notes возвращает заметки проекта, новые первыми.
 func (s *Store) Notes(project string) ([]Note, error) {
-	rows, err := s.db.Query(`SELECT id, project, kind, text, source, pinned, created FROM project_memory WHERE project = ? ORDER BY id DESC`, project)
+	rows, err := s.db.Query(`SELECT id, project, kind, text, source, pinned, agent, created FROM project_memory WHERE project = ? ORDER BY id DESC`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +63,7 @@ func (s *Store) Notes(project string) ([]Note, error) {
 	for rows.Next() {
 		var n Note
 		var created int64
-		if err := rows.Scan(&n.ID, &n.Project, &n.Kind, &n.Text, &n.Source, &n.Pinned, &created); err != nil {
+		if err := rows.Scan(&n.ID, &n.Project, &n.Kind, &n.Text, &n.Source, &n.Pinned, &n.Agent, &created); err != nil {
 			return nil, err
 		}
 		n.Created = time.UnixMilli(created)

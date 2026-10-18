@@ -261,6 +261,7 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	oc := h.orchestratorContext(req.Project, req.Executors)
 	oc.Git = gitops.IsRepo(req.Project)
+	oc.Team = h.teamMembers(req.Project)
 	if ps, err := h.Store.ProjectSettings(req.Project); err == nil {
 		oc.Parallel = ps.MaxParallel
 	}
@@ -269,6 +270,9 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		oc.Memory = memory.Brief(notes, history[len(history)-1].Content, 2000)
 	}
 	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, oc)
+	if err == nil && out.Agent != "" && agentID != "" {
+		h.Store.AddAgentEvent(agentID, "info", "Отдаёт задачу агенту команды «"+out.Agent+"»", time.Now())
+	}
 	if agentID != "" {
 		switch {
 		case err != nil:
@@ -461,6 +465,8 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		Conversation string   `json:"conversation"`
 		// Subtasks — задача разбита Оркестратором на части для нескольких агентов.
 		Subtasks []orchestrator.Subtask `json:"subtasks"`
+		// Agent — постоянный агент команды (id), выбранный исполнителем вручную.
+		Agent string `json:"agent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -496,8 +502,34 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Агент команды: выбран вручную или назначен Оркестратором в плане.
+	var teamAgent *store.TeamAgent
+	if req.Agent != "" {
+		a, err := h.Store.TeamAgent(req.Agent)
+		if err != nil || a.Project != req.Project {
+			fail(w, http.StatusBadRequest, "агент команды не найден")
+			return
+		}
+		teamAgent = &a
+	} else if len(req.Subtasks) < 2 {
+		if name := orchestrator.PlanAgent(req.Plan, h.teamMembers(req.Project)); name != "" {
+			if a, ok := h.agentByName(req.Project, name); ok {
+				teamAgent = &a
+			}
+		}
+	}
+	if teamAgent != nil {
+		models = agentModels(*teamAgent)
+		opts.MCP = union(opts.MCP, teamAgent.MCP)
+		if opts.Skills != nil {
+			opts.Skills = union(opts.Skills, teamAgent.Skills)
+		}
+	}
 	draft := tasks.Draft{Project: req.Project, Parent: req.Parent, Title: req.Title, Request: req.Request}
 	plan := tasks.Plan{Request: req.Request, Plan: req.Plan, Goal: orchestrator.Goal(req.Request, req.Plan), Models: models, Options: opts}
+	if teamAgent != nil {
+		plan.Agent = teamAgent.ID
+	}
 	var v tasks.View
 	var err error
 	if req.ID != "" && strings.TrimSpace(req.Plan) != "" && len(req.Subtasks) < 2 {
@@ -512,6 +544,11 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		// резервная модель задачи.
 		var subs []tasks.SubPlan
 		for _, st := range req.Subtasks {
+			if a, ok := h.agentByName(req.Project, st.Agent); st.Agent != "" && ok {
+				// Подзадачу ведёт агент команды — со своей моделью и памятью.
+				subs = append(subs, tasks.SubPlan{Title: st.Title, Goal: st.Goal, Models: agentModels(a), After: st.After, Agent: a.ID})
+				continue
+			}
 			sm, ok := h.checkModels(w, []string{st.Model})
 			if !ok {
 				return
