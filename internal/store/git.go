@@ -121,6 +121,8 @@ type ProjectSettings struct {
 	// ReviewModel — кто проверяет результат перед Approve: «провайдер/модель»,
 	// пусто — автоматически (резервная модель задачи), off — без ревью.
 	ReviewModel string `json:"review_model"`
+	// MaxParallel — сколько агентов эпика работают одновременно (0 — 2).
+	MaxParallel int `json:"max_parallel"`
 }
 
 // DefaultProjectSettings — как было до настроек: новая ветка, без push.

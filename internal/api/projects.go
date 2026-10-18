@@ -260,6 +260,10 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	oc := h.orchestratorContext(req.Project, req.Executors)
+	oc.Git = gitops.IsRepo(req.Project)
+	if ps, err := h.Store.ProjectSettings(req.Project); err == nil {
+		oc.Parallel = ps.MaxParallel
+	}
 	if notes, err := h.Store.Notes(req.Project); err == nil && len(history) > 0 {
 		// Выжимка под последнюю просьбу: не вся память, а похожее (≈500 токенов).
 		oc.Memory = memory.Brief(notes, history[len(history)-1].Content, 2000)
@@ -455,6 +459,8 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		Comment      string   `json:"comment"` // пояснение Оркестратора к плану
 		Models       []string `json:"models"`
 		Conversation string   `json:"conversation"`
+		// Subtasks — задача разбита Оркестратором на части для нескольких агентов.
+		Subtasks []orchestrator.Subtask `json:"subtasks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -490,8 +496,35 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	v, err := h.Tasks.Enqueue(req.ID, tasks.Draft{Project: req.Project, Parent: req.Parent, Title: req.Title, Request: req.Request},
-		tasks.Plan{Request: req.Request, Plan: req.Plan, Goal: orchestrator.Goal(req.Request, req.Plan), Models: models, Options: opts})
+	draft := tasks.Draft{Project: req.Project, Parent: req.Parent, Title: req.Title, Request: req.Request}
+	plan := tasks.Plan{Request: req.Request, Plan: req.Plan, Goal: orchestrator.Goal(req.Request, req.Plan), Models: models, Options: opts}
+	var v tasks.View
+	var err error
+	if req.ID != "" && strings.TrimSpace(req.Plan) != "" && len(req.Subtasks) < 2 {
+		// Новый план без деления: прежние подзадачи эпика больше не нужны.
+		if err := h.Tasks.Unsplit(req.ID); err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	if len(req.Subtasks) >= 2 {
+		// Несколько агентов: у каждой подзадачи свой исполнитель, резерв —
+		// резервная модель задачи.
+		var subs []tasks.SubPlan
+		for _, st := range req.Subtasks {
+			sm, ok := h.checkModels(w, []string{st.Model})
+			if !ok {
+				return
+			}
+			if len(models) > 1 && models[1] != sm[0] {
+				sm = append(sm, models[1])
+			}
+			subs = append(subs, tasks.SubPlan{Title: st.Title, Goal: st.Goal, Models: sm, After: st.After})
+		}
+		v, err = h.Tasks.EnqueueEpic(req.ID, draft, plan, subs)
+	} else {
+		v, err = h.Tasks.Enqueue(req.ID, draft, plan)
+	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return

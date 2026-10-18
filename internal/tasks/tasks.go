@@ -78,9 +78,14 @@ var ErrBusy = errors.New("в этом проекте уже идёт задач�
 
 // View — карточка задачи для интерфейса.
 type View struct {
-	ID       string `json:"id"`
-	Project  string `json:"project"`
-	Parent   string `json:"parent,omitempty"` // подзадача: к какой задаче относится
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Parent  string `json:"parent,omitempty"` // подзадача: к какой задаче относится
+	// Kind — epic: задача, разбитая Оркестратором на подзадачи для нескольких
+	// агентов; sub — такая подзадача. Пусто — обычная задача.
+	Kind     string `json:"kind,omitempty"`
+	Step     int    `json:"step,omitempty"`  // номер подзадачи в эпике
+	After    []int  `json:"after,omitempty"` // подзадача ждёт эти номера
 	Title    string `json:"title"`
 	Request  string `json:"request,omitempty"`   // исходная просьба
 	IssueURL string `json:"issue_url,omitempty"` // задача импортирована из issue
@@ -119,7 +124,15 @@ type record struct {
 	// Patch — полный diff готового результата: сохраняется, чтобы его можно
 	// было посмотреть и после Approve, когда изменения уже в коммите.
 	Patch string `json:"patch,omitempty"`
+	// Эпик: коммит, от которого начали, и общая ветка, куда сливаются
+	// подзадачи; у подзадачи — её ветка.
+	EpicBase   string `json:"epic_base,omitempty"`
+	EpicBranch string `json:"epic_branch,omitempty"`
+	SubBranch  string `json:"sub_branch,omitempty"`
 }
+
+// StateMerged — подзадача эпика готова и слита в общую ветку.
+const StateMerged = "merged"
 
 const patchLimit = 400 << 10
 
@@ -155,6 +168,8 @@ type Manager struct {
 	// картинки (тег «Картинки»).
 	AttachDir string
 	CanSee    func(model string) bool
+	// MaxParallel — сколько агентов эпика работают одновременно (0 — 2).
+	MaxParallel func(project string) int
 	// Now подменяется в тестах.
 	Now func() time.Time
 	// maxAttempts — провалов проверок до передачи задачи (0 — по умолчанию).
@@ -298,6 +313,10 @@ type Plan struct {
 // проекта с утверждённым планом и моделями. Если проект свободен, задача
 // сразу начинается.
 func (m *Manager) Enqueue(id string, d Draft, p Plan) (View, error) {
+	return m.enqueue(id, d, p, true)
+}
+
+func (m *Manager) enqueue(id string, d Draft, p Plan, start bool) (View, error) {
 	if strings.TrimSpace(p.Goal) == "" || len(p.Models) == 0 {
 		return View{}, errors.New("нужны задача и хотя бы одна модель")
 	}
@@ -330,8 +349,14 @@ func (m *Manager) Enqueue(id string, d Draft, p Plan) (View, error) {
 	if r.Plan != "" {
 		m.event(id, "", "plan", r.Plan)
 	}
+	if r.Kind == KindEpic {
+		// Повторный запуск эпика: подзадачи снова ждут своей очереди.
+		m.resetEpic(r)
+	}
 	m.event(id, "", "queued", "В очереди. Исполнитель: "+strings.Join(r.Models, " → "))
-	m.kick(r.Project)
+	if start {
+		m.kick(r.Project)
+	}
 	return m.Get(id, 0), nil
 }
 
@@ -360,22 +385,23 @@ func (m *Manager) kick(project string) {
 	if err != nil {
 		return
 	}
-	var next *store.BoardTask
+	var r record
+	found := false
 	for i := range list {
 		switch list[i].State {
 		case StateDone:
 			return // ждём Approve/Reject
 		case StateQueued:
-			if next == nil {
-				next = &list[i]
+			if found {
+				continue
+			}
+			// Подзадачи эпика запускает сам эпик, а не очередь проекта.
+			if c, err := m.load(list[i].ID); err == nil && c.Kind != KindSub {
+				r, found = c, true
 			}
 		}
 	}
-	if next == nil {
-		return
-	}
-	r, err := m.load(next.ID)
-	if err != nil {
+	if !found {
 		return
 	}
 	if err := agent.CheckClean(context.Background(), project); err != nil {
@@ -384,6 +410,17 @@ func (m *Manager) kick(project string) {
 		m.save(&r)
 		go m.event(r.ID, "", "error", "Не удалось начать: "+err.Error())
 		go m.notify(r.View, "Задача не началась: "+err.Error())
+		return
+	}
+	if r.Kind == KindEpic {
+		r.State = StateRunning
+		if err := m.save(&r); err != nil {
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		m.active[project] = &run{id: r.ID, cancel: cancel}
+		m.running.Add(1)
+		go m.runEpic(ctx, m.active[project], r)
 		return
 	}
 	list2, err := skills.Load(skills.Dirs(m.SkillsHome, project))
@@ -455,78 +492,7 @@ func (m *Manager) lastFailure(id string) string {
 func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Skill) {
 	defer m.running.Done()
 	m.event(r.ID, "", "started", "Работа началась")
-	attempt := 0
-	var agentsMu sync.Mutex
-	mem, brief := m.memoryFor(r)
-	task := &agent.Task{
-		Images:      m.images(r),
-		CanSee:      m.CanSee,
-		MaxAttempts: m.maxAttempts,
-		Memory:      mem,
-		MemoryBrief: brief,
-		Root:        r.Project,
-		Goal:        r.Goal,
-		Models:      r.Models,
-		LLM:         m.LLM,
-		Skills:      given,
-		MCP:         m.MCP,
-		Extra:       r.MCP,
-		OnEvent: func(e agent.Event) {
-			agentsMu.Lock()
-			id := ru.agentID
-			if id == "" {
-				ru.pending = append(ru.pending, e)
-			}
-			agentsMu.Unlock()
-			m.Board.AddBoardEvent(r.ID, e.Kind, e.Text, e.At)
-			if id != "" && m.Journal != nil {
-				m.Journal.AddAgentEvent(id, e.Kind, e.Text, e.At)
-			}
-		},
-		// Каждая модель, взявшая задачу, — отдельный агент в журнале.
-		OnAttempt: func(model string) {
-			attempt++
-			id := fmt.Sprintf("%s-%d", r.ID, attempt)
-			if m.Journal != nil {
-				m.Journal.CreateAgent(store.Agent{ID: id, Role: store.RoleExecutor, Model: model, Project: r.Project, TaskID: r.ID, Goal: r.Goal, Created: m.Now()})
-			}
-			if attempt > 1 {
-				m.event(r.ID, "", "model", "Модель сменилась: задачу взяла "+model)
-			}
-			agentsMu.Lock()
-			ru.agentID = id
-			pending := ru.pending
-			ru.pending = nil
-			agentsMu.Unlock()
-			m.update(r.ID, func(x *record) error { x.Agents = append(x.Agents, id); return nil })
-			if m.Journal != nil {
-				for _, e := range pending {
-					m.Journal.AddAgentEvent(id, e.Kind, e.Text, e.At)
-				}
-			}
-		},
-		OnAttemptEnd: func(model string, ok bool, note string) {
-			agentsMu.Lock()
-			id := ru.agentID
-			agentsMu.Unlock()
-			if m.Journal == nil || id == "" {
-				return
-			}
-			switch {
-			case ok:
-				m.Journal.FinishAgent(id, store.AgentDone, note, "")
-			case ctx.Err() != nil:
-				m.Journal.FinishAgent(id, store.AgentCancelled, "", "остановлен пользователем")
-			default:
-				m.Journal.FinishAgent(id, store.AgentFailed, "", note)
-			}
-		},
-	}
-	res, err := task.Run(ctx)
-
-	agentsMu.Lock()
-	agentID := ru.agentID
-	agentsMu.Unlock()
+	res, err, agentID := m.execute(ctx, ru, r, r.Project, r.Goal, given)
 	final, _ := m.update(r.ID, func(x *record) error {
 		x.Baseline = res.Baseline
 		switch {
@@ -700,6 +666,12 @@ func (m *Manager) approve(id string, auto bool) (View, error) {
 	if finalize == nil {
 		finalize = defaultFinalize(m.Now)
 	}
+	if r.Kind == KindEpic {
+		if err := m.applyEpic(r); err != nil {
+			return View{}, err
+		}
+		defer m.cleanupEpic(r)
+	}
 	var out Outcome
 	if agent.HasChanges(context.Background(), r.Project) {
 		summary := r.Summary
@@ -755,7 +727,10 @@ func (m *Manager) Reject(id string) (View, error) {
 	if r.State != StateDone {
 		return View{}, fmt.Errorf("задача в состоянии %q, решение уже не требуется", r.State)
 	}
-	if err := agent.Reject(context.Background(), r.Project, r.Baseline); err != nil {
+	if r.Kind == KindEpic {
+		// Основная папка не менялась — достаточно убрать копии и ветки.
+		m.cleanupEpic(r)
+	} else if err := agent.Reject(context.Background(), r.Project, r.Baseline); err != nil {
 		return View{}, err
 	}
 	r, err = m.update(id, func(x *record) error { x.State = StateRejected; return nil })
@@ -811,6 +786,9 @@ func (m *Manager) RevertFile(id, file string) (View, error) {
 	}
 	if r.State != StateDone {
 		return View{}, errors.New("откатить файл можно, пока результат ждёт решения")
+	}
+	if r.Kind == KindEpic {
+		return View{}, errors.New("в эпике файл отдельно не откатывается: отклоните эпик или исправьте подзадачей")
 	}
 	ctx := context.Background()
 	sh := agent.Shadow{Root: r.Project}
@@ -877,6 +855,15 @@ func (m *Manager) Delete(id string) error {
 	if r.State == StateRunning || r.State == StateDone {
 		return errors.New("сначала остановите задачу или примите решение по ней")
 	}
+	if r.Kind == KindSub {
+		return errors.New("подзадача эпика удаляется вместе с эпиком")
+	}
+	if r.Kind == KindEpic {
+		m.cleanupEpic(r)
+		for _, c := range m.children(id, r.Project) {
+			m.Board.DeleteBoardTask(c.ID)
+		}
+	}
 	if dir, err := m.attachDir(id); err == nil {
 		os.RemoveAll(dir)
 	}
@@ -898,6 +885,9 @@ func (m *Manager) Recover() {
 		}
 		r, err := m.update(t.ID, func(x *record) error {
 			x.State, x.Error = StateFailed, "прервана: Edy закрыли во время работы"
+			if x.Kind == KindEpic || x.Kind == KindSub {
+				return nil // копии проекта уберёт эпик ниже; основная папка не менялась
+			}
 			if x.Baseline != "" {
 				agent.Reject(context.Background(), x.Project, x.Baseline)
 				x.Error += ", проект откачен к началу задачи"
@@ -906,6 +896,9 @@ func (m *Manager) Recover() {
 		})
 		if err == nil {
 			m.event(r.ID, "", "error", r.Error)
+			if r.Kind == KindEpic {
+				m.cleanupEpic(r)
+			}
 		}
 	}
 	for p := range projects {
@@ -946,4 +939,81 @@ func firstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// execute запускает исполнителя задачи r в папке root (проект или копия
+// проекта для подзадачи) и ведёт журнал агентов.
+func (m *Manager) execute(ctx context.Context, ru *run, r record, root, goal string, given []skills.Skill) (agent.Result, error, string) {
+	attempt := 0
+	var agentsMu sync.Mutex
+	mem, brief := m.memoryFor(r)
+	task := &agent.Task{
+		Images:      m.images(r),
+		CanSee:      m.CanSee,
+		MaxAttempts: m.maxAttempts,
+		Memory:      mem,
+		MemoryBrief: brief,
+		Root:        root,
+		Goal:        goal,
+		Models:      r.Models,
+		LLM:         m.LLM,
+		Skills:      given,
+		MCP:         m.MCP,
+		Extra:       r.MCP,
+		OnEvent: func(e agent.Event) {
+			agentsMu.Lock()
+			id := ru.agentID
+			if id == "" {
+				ru.pending = append(ru.pending, e)
+			}
+			agentsMu.Unlock()
+			m.Board.AddBoardEvent(r.ID, e.Kind, e.Text, e.At)
+			if id != "" && m.Journal != nil {
+				m.Journal.AddAgentEvent(id, e.Kind, e.Text, e.At)
+			}
+		},
+		// Каждая модель, взявшая задачу, — отдельный агент в журнале.
+		OnAttempt: func(model string) {
+			attempt++
+			id := fmt.Sprintf("%s-%d", r.ID, attempt)
+			if m.Journal != nil {
+				m.Journal.CreateAgent(store.Agent{ID: id, Role: store.RoleExecutor, Model: model, Project: r.Project, TaskID: r.ID, Goal: r.Goal, Created: m.Now()})
+			}
+			if attempt > 1 {
+				m.event(r.ID, "", "model", "Модель сменилась: задачу взяла "+model)
+			}
+			agentsMu.Lock()
+			ru.agentID = id
+			pending := ru.pending
+			ru.pending = nil
+			agentsMu.Unlock()
+			m.update(r.ID, func(x *record) error { x.Agents = append(x.Agents, id); return nil })
+			if m.Journal != nil {
+				for _, e := range pending {
+					m.Journal.AddAgentEvent(id, e.Kind, e.Text, e.At)
+				}
+			}
+		},
+		OnAttemptEnd: func(model string, ok bool, note string) {
+			agentsMu.Lock()
+			id := ru.agentID
+			agentsMu.Unlock()
+			if m.Journal == nil || id == "" {
+				return
+			}
+			switch {
+			case ok:
+				m.Journal.FinishAgent(id, store.AgentDone, note, "")
+			case ctx.Err() != nil:
+				m.Journal.FinishAgent(id, store.AgentCancelled, "", "остановлен пользователем")
+			default:
+				m.Journal.FinishAgent(id, store.AgentFailed, "", note)
+			}
+		},
+	}
+	res, err := task.Run(ctx)
+	agentsMu.Lock()
+	agentID := ru.agentID
+	agentsMu.Unlock()
+	return res, err, agentID
 }

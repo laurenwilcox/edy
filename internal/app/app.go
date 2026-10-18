@@ -141,6 +141,10 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 			log.Warn("уведомление не показано", "err", err)
 		}
 	}
+	h.Tasks.MaxParallel = func(project string) int {
+		ps, _ := st.ProjectSettings(project)
+		return ps.MaxParallel
+	}
 	h.Tasks.AutoApprove = func(project string) bool {
 		ps, err := st.ProjectSettings(project)
 		return err == nil && ps.AutoApprove

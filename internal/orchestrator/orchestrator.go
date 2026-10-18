@@ -43,6 +43,8 @@ type Reply struct {
 	MCP    []string   `json:"mcp,omitempty"`    // внешние MCP-серверы для исполнителя
 	Skills []string   `json:"skills,omitempty"` // скиллы для исполнителя
 	NewMCP []Proposal `json:"new_mcp,omitempty"`
+	// Subtasks — задача разбита для нескольких агентов (пусто — один агент).
+	Subtasks []Subtask `json:"subtasks,omitempty"`
 }
 
 // Server — внешний MCP-сервер из каталога.
@@ -76,6 +78,19 @@ type Context struct {
 	Servers   []Server
 	// Memory — выжимка памяти проекта: закреплённое и похожее на просьбу.
 	Memory string
+	// Git — проект в git: можно делить задачу на подзадачи для нескольких
+	// агентов (каждый работает в своей копии проекта). Parallel — сколько
+	// агентов работают одновременно.
+	Git      bool
+	Parallel int
+}
+
+// Subtask — часть большой задачи для отдельного агента.
+type Subtask struct {
+	Title string `json:"title"`
+	Goal  string `json:"goal"`
+	Model string `json:"model"`
+	After []int  `json:"after,omitempty"`
 }
 
 // Proposal — новый MCP-сервер, которого нет в каталоге. Его добавляет
@@ -139,6 +154,23 @@ func instructions(c Context) string {
 		}
 	}
 
+	if c.Git {
+		par := c.Parallel
+		if par <= 0 {
+			par = 2
+		}
+		fmt.Fprintf(&b, `
+Несколько агентов. Если задача большая и делится на независимые части (разные файлы или модули), раздели её
+на 2–6 подзадач: их сделают разные агенты одновременно (до %d сразу), каждый в своей копии проекта, потом Edy
+сольёт результат и прогонит общие проверки. Простую задачу или задачу, где все правки в одном месте, не дели.
+Части не должны править одни и те же строки — иначе будет конфликт. Каждой подзадаче выбери исполнителя из
+моделей выше по возможностям и статистике: простое — дешёвой модели, сложное — сильной. Если часть зависит от
+другой, укажи её номер в after (только меньшие номера). Блок — после плана:
+<subtasks>[{"title":"коротко","goal":"что сделать и в каких файлах","model":"провайдер/модель","after":[1]}]</subtasks>
+`, par)
+	} else {
+		b.WriteString("\nПроект без git: задачу на подзадачи для нескольких агентов не дели.\n")
+	}
 	b.WriteString("\nMCP-серверы. ")
 	if !mcpOK {
 		b.WriteString("Основной исполнитель не умеет MCP: строку MCP не пиши.\n")
@@ -186,13 +218,56 @@ func Chat(ctx context.Context, llm agent.LLM, model, project string, history []a
 		out.MCP = PlanMCP(out.Plan, c.Servers)
 	}
 	out.Skills = PlanSkills(out.Plan, c.Skills)
+	if c.Git {
+		out.Subtasks = checkSubtasks(out.Subtasks, c)
+	} else {
+		out.Subtasks = nil
+	}
 	return out, nil
+}
+
+// checkSubtasks оставляет только осмысленные подзадачи: модель из
+// доступных (иначе — основной исполнитель), зависимости — на более ранние.
+func checkSubtasks(list []Subtask, c Context) []Subtask {
+	known := map[string]bool{}
+	fallback := ""
+	for _, e := range append(append([]Executor{}, c.Executors...), c.Others...) {
+		known[e.Model] = true
+		if fallback == "" {
+			fallback = e.Model
+		}
+	}
+	var out []Subtask
+	for _, st := range list {
+		if strings.TrimSpace(st.Goal) == "" || len(out) == 6 {
+			continue
+		}
+		if !known[st.Model] {
+			st.Model = fallback
+		}
+		var after []int
+		for _, a := range st.After {
+			if a >= 1 && a <= len(out) {
+				after = append(after, a)
+			}
+		}
+		st.After = after
+		if strings.TrimSpace(st.Title) == "" {
+			st.Title = st.Goal
+		}
+		out = append(out, st)
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
 }
 
 var (
 	mcpLineRe    = regexp.MustCompile(`(?mi)^\s*[-*]?\s*MCP\s*:\s*(.+)$`)
 	skillsLineRe = regexp.MustCompile(`(?mi)^\s*[-*]?\s*(?:Скиллы|Skills)\s*:\s*(.+)$`)
 	newMCPRe     = regexp.MustCompile(`(?s)<new_mcp>\s*(.*?)\s*</new_mcp>`)
+	subtasksRe   = regexp.MustCompile(`(?s)<subtasks>\s*(.*?)\s*</subtasks>`)
 )
 
 // pick достаёт имена из строк плана и оставляет только известные.
@@ -244,6 +319,10 @@ func parse(content string) Reply {
 		}
 	}
 	content = newMCPRe.ReplaceAllString(content, "")
+	if m := subtasksRe.FindStringSubmatch(content); m != nil {
+		json.Unmarshal([]byte(m[1]), &out.Subtasks)
+		content = subtasksRe.ReplaceAllString(content, "")
+	}
 	m := planRe.FindStringSubmatch(content)
 	if m == nil {
 		out.Text = strings.TrimSpace(content)

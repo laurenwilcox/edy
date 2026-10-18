@@ -211,3 +211,48 @@ func TestTemplates(t *testing.T) {
 		t.Fatalf("удаление: %+v", res.Custom)
 	}
 }
+
+func TestEpicFromOrchestratorPlan(t *testing.T) {
+	h, st := setup(t)
+	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "{prompt}"}, Models: []string{"m", "big"}})
+	b := &brain{}
+	h.LLM = b
+	h.Tasks = tasks.NewManager(b, st)
+	dir := gitProject(t)
+	call(h, "POST", "/api/projects", fmt.Sprintf(`{"path":%q}`, dir))
+	body, _ := json.Marshal(map[string]any{"project": dir, "request": "большая задача", "plan": "1. часть A\n2. часть B", "models": []string{"agy/big"},
+		"subtasks": []map[string]any{{"title": "A", "goal": "часть A", "model": "agy/m"}, {"title": "B", "goal": "часть B", "model": "agy/big", "after": []int{1}}}})
+	rec := call(h, "POST", "/api/tasks", string(body))
+	var v tasks.View
+	json.Unmarshal(rec.Body.Bytes(), &v)
+	if rec.Code != http.StatusCreated || v.Kind != tasks.KindEpic {
+		t.Fatalf("эпик: %d %s", rec.Code, rec.Body)
+	}
+	var list []tasks.View
+	json.Unmarshal(call(h, "GET", "/api/tasks?project="+dir, "").Body.Bytes(), &list)
+	subs := 0
+	for _, x := range list {
+		if x.Kind == tasks.KindSub && x.Parent == v.ID {
+			subs++
+		}
+	}
+	if subs != 2 {
+		t.Fatalf("подзадачи на доске: %d", subs)
+	}
+	bad, _ := json.Marshal(map[string]any{"project": dir, "request": "x", "plan": "p", "models": []string{"agy/m"},
+		"subtasks": []map[string]any{{"title": "A", "goal": "a", "model": "nope/m"}, {"title": "B", "goal": "b", "model": "agy/m"}}})
+	if rec := call(h, "POST", "/api/tasks", string(bad)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("неизвестная модель подзадачи: %d", rec.Code)
+	}
+	if rec := call(h, "PUT", "/api/git/settings", fmt.Sprintf(`{"path":%q,"settings":{"commit":"branch","push":"off","max_parallel":9}}`, dir)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("лимит агентов: %d", rec.Code)
+	}
+	deadline := time.Now().Add(time.Minute)
+	for time.Now().Before(deadline) {
+		if s := h.Tasks.Get(v.ID, 0).State; s != tasks.StateRunning && s != tasks.StateQueued {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	h.Tasks.Wait()
+}

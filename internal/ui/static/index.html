@@ -339,6 +339,13 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .messages[hidden] { display: none !important; }
 .plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
 .plan.proposal { border-style: dashed; }
+.subplan { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; white-space: normal; }
+.subrow { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; background: color-mix(in srgb, var(--a1) 5%, transparent); }
+.subrow .grow { flex: 1; min-width: 0; font-size: 13px; }
+.subrow .dd { width: auto; max-width: 220px; flex: none; }
+.subnum { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--grad); color: var(--on-grad); }
+.epic-bar { display: flex; height: 6px; border-radius: 99px; overflow: hidden; background: var(--code); margin-top: 6px; }
+.epic-bar span { height: 100%; }
 .tpl-pop { margin: 0 18px 4px; padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-strong); display: flex; flex-wrap: wrap; gap: 6px; }
 .tpl-pop .chip { font-size: 12.5px; padding: 5px 11px; }
 .tpl-pop .chip.custom { border-color: color-mix(in srgb, var(--a1) 40%, transparent); }
@@ -635,6 +642,9 @@ h3.sub:first-child { margin-top: 0; }
               </label>
               <label class="wide">Ревьюер перед Approve — второй агент читает изменения и ищет, что тесты не ловят
                 <select name="review_model"></select>
+              </label>
+              <label>Агентов одновременно (эпик)
+                <select name="max_parallel"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option></select>
               </label>
             </div>
             <div class="row" style="margin-top:12px"><button class="btn" type="submit">Сохранить</button></div>
@@ -1855,7 +1865,7 @@ async function sendOrch() {
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
     for (const pr of r.new_mcp || []) m.append(proposalCard(pr));
-    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || []));
+    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || [], r.subtasks || []));
   } catch (e) {
     orchHistory.pop();
     m.classList.add("error");
@@ -1883,12 +1893,34 @@ function proposalCard(pr) {
       el("span", { class: "small muted" }, "Сервер появится в каталоге и в следующий раз возьмётся из базы.")));
 }
 
-function planCard(plan, project, mcp, skills) {
+// subtasksBlock — подзадачи для нескольких агентов: модель каждой можно
+// сменить, а флажок «одним агентом» отменяет деление.
+function subtasksBlock(subtasks) {
+  if (!subtasks.length) return { el: "", read: () => [] };
+  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  const selects = subtasks.map((st) => {
+    const sel = el("select", { title: "Исполнитель подзадачи" }, ...models.map((m) => el("option", { value: m }, m)));
+    sel.value = models.includes(st.model) ? st.model : models[0];
+    return sel;
+  });
+  const single = el("input", { type: "checkbox" });
+  const box = el("div", { class: "subplan" },
+    el("div", { class: "plan-mcp" }, `👥 Несколько агентов: ${subtasks.length} подзадачи, каждая в своей копии проекта, потом Edy сольёт результат`),
+    ...subtasks.map((st, i) => el("div", { class: "subrow" },
+      el("span", { class: "subnum" }, String(i + 1)),
+      el("div", { class: "grow" }, el("b", {}, st.title), el("div", { class: "small muted" }, st.goal + (st.after?.length ? " · после " + st.after.join(", ") : ""))),
+      selects[i])),
+    el("label", { class: "switch-label small" }, single, "Сделать одним агентом, без деления"));
+  return { el: box, read: () => single.checked ? [] : subtasks.map((st, i) => ({ ...st, model: selects[i].value })) };
+}
+
+function planCard(plan, project, mcp, skills, subtasks = []) {
   const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
+  const split = subtasksBlock(subtasks);
   const given = (icon, title, list, cls) => el("div", { class: "plan-mcp" }, icon + " " + title + ": ",
     ...(list.length ? list.map((n) => el("span", { class: "badge" + cls }, n)) : [el("span", { class: "small muted" }, "не нужны")]));
   const tools = el("div", {}, given("🧩", "MCP для исполнителя", mcp, ""), given("📘", "Скиллы", skills, " cli"));
-  const box = el("div", { class: "plan" }, plan, tools, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
+  const box = el("div", { class: "plan" }, plan, tools, split.el, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
   start.addEventListener("click", async () => {
     const worker = $("#worker").value;
     const fallback = $("#fallback").value;
@@ -1897,7 +1929,7 @@ function planCard(plan, project, mcp, skills) {
     const request = orchHistory.filter((x) => x.role === "user").map((x) => x.content).join("\n");
     try {
       const comment = box.closest(".msg")?.querySelector(".body")?.innerText || "";
-      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker] });
+      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: fallback && fallback !== worker ? [worker, fallback] : [worker], subtasks: split.read() });
       orchTaskID = "";
       start.textContent = v.state === "queued" ? "Поставлено в очередь" : "Работа начата";
       watchTask(v);
@@ -2187,7 +2219,7 @@ const columns = [
   { id: "review", title: "👀 Ждёт решения", hint: "Approve / Reject или нужна помощь", states: ["done", "needs_human", "failed"] },
   { id: "done", title: "✅ Готово", hint: "", states: ["approved", "rejected", "cancelled"] },
 ];
-const stateShort = { backlog: "пул", queued: "в очереди", running: "в работе", done: "ждёт решения", needs_human: "нужна помощь", failed: "ошибка", approved: "принято", rejected: "отклонено", cancelled: "остановлено" };
+const stateShort = { merged: "слита", backlog: "пул", queued: "в очереди", running: "в работе", done: "ждёт решения", needs_human: "нужна помощь", failed: "ошибка", approved: "принято", rejected: "отклонено", cancelled: "остановлено" };
 let boardTimer = null;
 let boardTasks = [];
 let dragID = "";
@@ -2218,7 +2250,8 @@ function renderBoard() {
   const kids = {};
   for (const t of boardTasks) if (t.parent) (kids[t.parent] ||= []).push(t);
   $("#board-cols").replaceChildren(...columns.map((c) => {
-    let list = boardTasks.filter((t) => c.states.includes(t.state));
+    // Подзадачи эпика живут внутри его карточки, а не в колонках.
+    let list = boardTasks.filter((t) => t.kind !== "sub" && c.states.includes(t.state));
     if (c.id === "done") list = list.sort((a, b) => new Date(b.updated) - new Date(a.updated)).slice(0, 30);
     const body = el("div", { class: "col-body" }, ...list.map((t) => taskCard(t, byID, kids[t.id] || [])));
     const col = el("div", { class: "col", "data-col": c.id },
@@ -2239,7 +2272,8 @@ function taskCard(t, byID, children) {
   if (t.review) meta.push(el("span", { title: "Ревью" }, t.review.verdict === "ok" ? "🔍 ✓" : t.review.verdict === "issues" ? "🔍 замечания" : "🔍 ?"));
   if (t.mcp?.length) meta.push(el("span", { title: "MCP: " + t.mcp.join(", ") }, "🧩 " + t.mcp.length));
   if (t.skills?.length) meta.push(el("span", { title: "Скиллы: " + t.skills.join(", ") }, "📘 " + t.skills.length));
-  if (children.length) meta.push(el("span", { title: "Подзадачи" }, "↳ " + children.filter((k) => k.state === "approved").length + "/" + children.length));
+  if (t.kind === "epic") meta.unshift(el("span", { class: "badge" }, "👥 эпик"));
+  if (children.length) meta.push(el("span", { title: "Подзадачи" }, "↳ " + children.filter((k) => k.state === "approved" || k.state === "merged").length + "/" + children.length));
   meta.push(el("span", { style: "margin-left:auto" }, ago(t.updated)));
   const actions = [];
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
@@ -2257,11 +2291,19 @@ function taskCard(t, byID, children) {
     t.parent && byID[t.parent] ? el("div", { class: "t-parent" }, "↳ " + byID[t.parent].title) : "",
     el("div", { class: "t-title" }, t.title || "(без названия)"),
     el("div", { class: "t-meta" }, ...meta),
+    t.kind === "epic" && children.length ? epicBar(children) : "",
     actions.length ? el("div", { class: "t-actions" }, ...actions) : "");
   card.addEventListener("dragstart", (e) => { dragID = t.id; card.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
   card.addEventListener("dragend", () => card.classList.remove("dragging"));
   card.dataset.id = t.id;
   return card;
+}
+
+// epicBar — полоска прогресса агентов эпика по подзадачам.
+function epicBar(children) {
+  const color = { merged: "var(--ok)", running: "var(--a2)", queued: "var(--line)", needs_human: "var(--danger)", failed: "var(--danger)", cancelled: "var(--muted)" };
+  return el("div", { class: "epic-bar", title: children.map((k) => `${k.step}. ${k.title} — ${stateShort[k.state] || k.state}`).join("\n") },
+    ...children.map((k) => el("span", { style: `width:${100 / children.length}%;background:${color[k.state] || "var(--line)"};border-right:2px solid var(--glass-strong)` })));
 }
 
 function ago(at) {
@@ -2481,8 +2523,15 @@ async function openTask(id) {
     t.error ? sec("Ошибка", el("div", { style: "color:var(--danger)" }, t.error)) : "",
     t.diff ? sec("Изменения", diffView(t)) : "",
     t.note ? sec("Результат", el("div", {}, t.note, t.pr_url ? el("div", {}, el("a", { href: t.pr_url, target: "_blank", rel: "noopener" }, "Открыть запрос на слияние ↗")) : "")) : "",
-    sec("Подзадачи (" + kids.length + ")", ...kids.map((k) => el("div", { class: "row small", style: "padding:3px 0" },
-      el("span", { class: "st " + k.state }, stateShort[k.state]), el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(k.id); } }, k.title))), subForm),
+    t.kind === "epic"
+      ? sec("Агенты эпика (" + kids.length + ")", ...kids.map((k) => el("div", { class: "subrow" },
+          el("span", { class: "subnum" }, String(k.step)),
+          el("div", { class: "grow" }, el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(k.id); } }, k.title),
+            el("div", { class: "small muted" }, (k.models || []).join(" → ") + (k.after?.length ? " · после " + k.after.join(", ") : "") + (k.error ? " · " + k.error : ""))),
+          el("span", { class: "st " + k.state }, stateShort[k.state] || k.state))),
+          el("div", { class: "small muted", style: "margin-top:6px" }, "Каждая подзадача — свой агент в своей копии проекта; готовые сливаются в общую ветку эпика. Approve — один на весь эпик."))
+      : sec("Подзадачи (" + kids.length + ")", ...kids.map((k) => el("div", { class: "row small", style: "padding:3px 0" },
+          el("span", { class: "st " + k.state }, stateShort[k.state]), el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(k.id); } }, k.title))), subForm),
     sec("История", el("div", { class: "timeline" }, ...t.events.map((e) => el("div", { class: "tl k-" + e.kind },
       el("span", { class: "when" }, new Date(e.at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
       (kindIcon[e.kind] || "•") + " " + e.text))), comment));
@@ -2743,6 +2792,7 @@ async function loadGit() {
   form.review_model.replaceChildren(el("option", { value: "" }, "Автоматически — резервная модель задачи"), el("option", { value: "off" }, "Без ревью"),
     ...models.map((m) => el("option", { value: m }, m)));
   form.review_model.value = st.review_model || "";
+  form.max_parallel.value = String(st.max_parallel || 2);
 }
 
 $("#git-settings").addEventListener("submit", async (e) => {
@@ -2757,6 +2807,7 @@ $("#git-settings").addEventListener("submit", async (e) => {
     prefix: f.prefix.value,
     auto_approve: f.auto_approve.checked,
     review_model: f.review_model.value,
+    max_parallel: Number(f.max_parallel.value) || 2,
   };
   try { await api("PUT", "/api/git/settings", { path: $("#project").value, settings }); toast("Настройки сохранены"); }
   catch (err) { toast(err.message, true); }

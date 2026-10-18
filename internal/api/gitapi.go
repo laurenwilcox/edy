@@ -224,6 +224,10 @@ func (h *Handler) gitSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if ps.MaxParallel < 0 || ps.MaxParallel > 6 {
+		fail(w, http.StatusBadRequest, "одновременно — от 1 до 6 агентов")
+		return
+	}
 	if ps.ReviewModel != "" && ps.ReviewModel != "off" {
 		if p, _, ok := splitModelName(ps.ReviewModel); !ok {
 			fail(w, http.StatusBadRequest, "ревьюер: модель в виде провайдер/модель")

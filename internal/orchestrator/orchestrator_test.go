@@ -119,3 +119,29 @@ func TestExecutorStatsInInstructions(t *testing.T) {
 		t.Fatalf("статистика в инструкциях:\n%s", sys)
 	}
 }
+
+func TestSubtasksForSeveralAgents(t *testing.T) {
+	c := Context{Git: true, Parallel: 3,
+		Executors: []Executor{{Model: "smart/m", MCP: true}},
+		Others:    []Executor{{Model: "cheap/m"}}}
+	llm := &fakeLLM{reply: "Делю на части.\n<plan>\nЗадача: экспорт.\n1. csv.go\n2. ui\n</plan>\n" +
+		`<subtasks>[{"title":"CSV","goal":"экспорт в csv.go","model":"cheap/m"},{"title":"Кнопка","goal":"кнопка в ui.js","model":"выдуманная/м","after":[1,5]},{"title":"","goal":""}]</subtasks>`}
+	r, err := Chat(context.Background(), llm, "m", t.TempDir(), nil, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(llm.got[0].Content, "до 3 сразу") || !strings.Contains(llm.got[0].Content, "<subtasks>") {
+		t.Fatalf("инструкции:\n%s", llm.got[0].Content)
+	}
+	if len(r.Subtasks) != 2 || r.Subtasks[0].Model != "cheap/m" || r.Subtasks[1].Model != "smart/m" || len(r.Subtasks[1].After) != 1 || r.Subtasks[1].After[0] != 1 {
+		t.Fatalf("подзадачи: %+v", r.Subtasks)
+	}
+	if strings.Contains(r.Text, "subtasks") || r.Text != "Делю на части." {
+		t.Fatalf("текст без служебного блока: %q", r.Text)
+	}
+	c.Git = false
+	r, _ = Chat(context.Background(), llm, "m", t.TempDir(), nil, c)
+	if r.Subtasks != nil || !strings.Contains(llm.got[0].Content, "Проект без git") {
+		t.Fatal("без git подзадач нет")
+	}
+}
