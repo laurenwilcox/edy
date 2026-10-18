@@ -556,6 +556,9 @@ h3.sub:first-child { margin-top: 0; }
               <label class="wide">Префикс сообщения коммита
                 <input name="prefix" placeholder="Edy: ">
               </label>
+              <label class="wide">Ревьюер перед Approve — второй агент читает изменения и ищет, что тесты не ловят
+                <select name="review_model"></select>
+              </label>
             </div>
             <div class="row" style="margin-top:12px"><button class="btn" type="submit">Сохранить</button></div>
           </form>
@@ -1883,7 +1886,15 @@ async function openTask(id) {
       el("div", { class: "row small" }, ...(t.models || []).map((m, i) => el("span", { class: "badge" + (i ? " cli" : "") }, (i ? "резерв: " : "") + m)),
         ...(t.mcp || []).map((m) => el("span", { class: "badge" }, "🧩 " + m)), ...(t.skills || []).map((m) => el("span", { class: "badge cli" }, "📘 " + m)))) : "",
     t.summary ? sec("Итог", el("div", {}, t.summary, el("span", { class: "muted small" }, t.model ? "  · " + t.model : ""))) : "",
-    t.review ? sec("Ревью · " + (t.review.model || ""), el("div", { class: "review " + t.review.verdict }, t.review.verdict === "ok" ? "✓ Замечаний нет.\n" + (t.review.text || "") : t.review.text)) : "",
+    t.review ? sec("Ревью · " + (t.review.model || ""), el("div", { class: "review " + t.review.verdict }, t.review.verdict === "ok" ? "✓ Замечаний нет.\n" + (t.review.text || "") : t.review.text),
+      t.review.verdict === "issues" ? el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { class: "btn ghost", onclick: async () => {
+          try {
+            await api("POST", "/api/board", { project: t.project, parent: id, title: "Замечания ревью: " + t.title, request: "Исправить замечания ревьюера к задаче «" + t.title + "»:\n" + t.review.text });
+            toast("Подзадача добавлена в пул"); await loadBoard(); openTask(id);
+          } catch (e) { toast(e.message, true); }
+        } }, "🧩 Замечания → подзадача"),
+        el("span", { class: "small muted" }, "можно принять сейчас, а замечания исправить отдельной задачей")) : "") : "",
     t.error ? sec("Ошибка", el("div", { style: "color:var(--danger)" }, t.error)) : "",
     t.diff ? sec("Изменения", diffView(t)) : "",
     t.note ? sec("Результат", el("div", {}, t.note, t.pr_url ? el("div", {}, el("a", { href: t.pr_url, target: "_blank", rel: "noopener" }, "Открыть запрос на слияние ↗")) : "")) : "",
@@ -2102,6 +2113,10 @@ async function loadGit() {
   form.author_name.value = st.author_name || "";
   form.author_email.value = st.author_email || "";
   form.prefix.value = st.prefix || "";
+  const models = providers.flatMap((p) => p.models.map((m) => p.name + "/" + m));
+  form.review_model.replaceChildren(el("option", { value: "" }, "Автоматически — резервная модель задачи"), el("option", { value: "off" }, "Без ревью"),
+    ...models.map((m) => el("option", { value: m }, m)));
+  form.review_model.value = st.review_model || "";
 }
 
 $("#git-settings").addEventListener("submit", async (e) => {
@@ -2115,6 +2130,7 @@ $("#git-settings").addEventListener("submit", async (e) => {
     author_email: f.author_email.value.trim(),
     prefix: f.prefix.value,
     auto_approve: f.auto_approve.checked,
+    review_model: f.review_model.value,
   };
   try { await api("PUT", "/api/git/settings", { path: $("#project").value, settings }); toast("Настройки сохранены"); }
   catch (err) { toast(err.message, true); }
@@ -2155,8 +2171,8 @@ $("#git-account-form").addEventListener("submit", async (e) => {
 });
 
 // ============ Агенты ============
-const roleIcon = { orchestrator: "🧭", executor: "🛠", mcp: "🔌" };
-const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель", mcp: "Внешний агент (MCP)" };
+const roleIcon = { orchestrator: "🧭", executor: "🛠", mcp: "🔌", reviewer: "🔍" };
+const roleName = { orchestrator: "Оркестратор", executor: "Исполнитель", mcp: "Внешний агент (MCP)", reviewer: "Ревьюер" };
 const agentState = { running: "работает", done: "закончил", failed: "не справился", cancelled: "остановлен", interrupted: "прерван" };
 let agentsTimer = null;
 let openAgent = null;

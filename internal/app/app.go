@@ -18,6 +18,7 @@ import (
 	"github.com/laurenwilcox/name/internal/agent"
 	"github.com/laurenwilcox/name/internal/api"
 	"github.com/laurenwilcox/name/internal/omniroute"
+	"github.com/laurenwilcox/name/internal/review"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
 	"github.com/laurenwilcox/name/internal/ui"
@@ -113,6 +114,17 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks.Journal = st
 	h.Tasks.SkillsHome = home
 	h.Tasks.MCP = h.MCPBridge()
+	h.Tasks.Review = review.New(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "reviewer", HTTP: agent.InProcess(router)}, st,
+		func(v tasks.View) string {
+			ps, _ := st.ProjectSettings(v.Project)
+			switch ps.ReviewModel {
+			case "off":
+				return ""
+			case "":
+				return review.AutoModel(v)
+			}
+			return ps.ReviewModel
+		})
 	h.Tasks.AutoApprove = func(project string) bool {
 		ps, err := st.ProjectSettings(project)
 		return err == nil && ps.AutoApprove

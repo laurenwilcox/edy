@@ -118,6 +118,9 @@ type ProjectSettings struct {
 	// AutoApprove — принимать результат без человека, если проверки и
 	// ревью прошли: так очередь задач идёт сама (например, ночью).
 	AutoApprove bool `json:"auto_approve"`
+	// ReviewModel — кто проверяет результат перед Approve: «провайдер/модель»,
+	// пусто — автоматически (резервная модель задачи), off — без ревью.
+	ReviewModel string `json:"review_model"`
 }
 
 // DefaultProjectSettings — как было до настроек: новая ветка, без push.

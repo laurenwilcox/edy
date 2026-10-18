@@ -224,6 +224,15 @@ func (h *Handler) gitSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if ps.ReviewModel != "" && ps.ReviewModel != "off" {
+		if p, _, ok := splitModelName(ps.ReviewModel); !ok {
+			fail(w, http.StatusBadRequest, "ревьюер: модель в виде провайдер/модель")
+			return
+		} else if _, err := h.Store.Provider(p); err != nil {
+			fail(w, http.StatusBadRequest, "ревьюер: неизвестный провайдер "+p)
+			return
+		}
+	}
 	if err := h.Store.SetProjectSettings(req.Path, ps); err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return

@@ -11,6 +11,7 @@ const (
 	RoleOrchestrator = "orchestrator"
 	RoleExecutor     = "executor"
 	RoleMCP          = "mcp" // внешний агент (Claude Code, Gemini CLI…), подключённый по MCP
+	RoleReviewer     = "reviewer"
 )
 
 // Состояния агентов.

@@ -130,3 +130,18 @@ func OpenShadow(ctx context.Context, root string) (Shadow, error) {
 	s := Shadow{Root: root}
 	return s, s.Init(ctx)
 }
+
+// Patch — полный текст изменений относительно снимка (для ревью), не длиннее limit байт.
+func (s Shadow) Patch(ctx context.Context, from string, limit int) (string, error) {
+	if _, err := s.git(ctx, "add", "-A"); err != nil {
+		return "", err
+	}
+	out, err := s.git(ctx, "diff", "--cached", "--no-color", "-U3", from)
+	if err != nil {
+		return "", err
+	}
+	if len(out) > limit {
+		out = out[:limit] + "\n… (изменения обрезаны: показаны первые " + fmt.Sprint(limit/1024) + " КБ)"
+	}
+	return out, nil
+}

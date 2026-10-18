@@ -343,3 +343,41 @@ func TestJournalAndCustomFinalize(t *testing.T) {
 		t.Fatalf("approve: %+v %v %q", a, err, finalized)
 	}
 }
+
+func TestReviewGatesAutoApprove(t *testing.T) {
+	dir := project(t)
+	m, _ := newMgr(t, &fixer{})
+	verdict := "issues"
+	var seenPatch string
+	m.Review = func(ctx context.Context, v View, patch string) (Review, error) {
+		seenPatch = patch
+		return Review{Model: "r/m", Verdict: verdict, Text: "1. calc.go — нет теста на отрицательные"}, nil
+	}
+	m.AutoApprove = func(string) bool { return true }
+	v, _ := m.Start(dir, "Почини Add", []string{"m/m"})
+	wait(t, m, v.ID)
+	m.Wait()
+	v = m.Get(v.ID, 0)
+	if v.State != StateDone || v.Review == nil || v.Review.Verdict != "issues" {
+		t.Fatalf("с замечаниями автопринятия нет: %s %+v", v.State, v.Review)
+	}
+	if !strings.Contains(seenPatch, "-func Add(a, b int) int { return a - b }") || !strings.Contains(seenPatch, "+func Add(a, b int) int { return a + b }") {
+		t.Fatalf("ревьюер получает полный diff:\n%s", seenPatch)
+	}
+	found := false
+	for _, e := range v.Events {
+		found = found || (e.Kind == "review" && strings.Contains(e.Text, "есть замечания"))
+	}
+	if !found {
+		t.Fatal("замечания в истории")
+	}
+	m.Reject(v.ID)
+
+	verdict = "ok"
+	v, _ = m.Start(dir, "Почини Add", []string{"m/m"})
+	wait(t, m, v.ID)
+	m.Wait()
+	if v = m.Get(v.ID, 0); v.State != StateApproved {
+		t.Fatalf("ревью без замечаний — автопринятие: %s", v.State)
+	}
+}

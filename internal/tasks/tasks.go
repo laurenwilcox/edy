@@ -47,9 +47,10 @@ type Outcome struct {
 // FinalizeFunc оформляет результат по настройкам проекта (коммит, push, PR).
 type FinalizeFunc func(ctx context.Context, project, goal, summary, model string) (Outcome, error)
 
-// Reviewer читает изменения готовой задачи и пишет замечания (второй агент
-// на другой модели). nil — ревью не делается.
-type Reviewer func(ctx context.Context, v View) (Review, error)
+// Reviewer читает изменения готовой задачи (patch — полный diff) и пишет
+// замечания: второй агент, по возможности на другой модели. Вернуть пустой
+// Review{} без ошибки — ревью для проекта выключено.
+type Reviewer func(ctx context.Context, v View, patch string) (Review, error)
 
 // Review — итог ревью.
 type Review struct {
@@ -498,33 +499,18 @@ func (m *Manager) work(ctx context.Context, ru *run, r record, given []skills.Sk
 
 // afterDone — ревью и, если включено, автопринятие.
 func (m *Manager) afterDone(r record, agentID string) record {
-	if m.Review != nil {
-		m.event(r.ID, agentID, "review", "Ревьюер читает изменения…")
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		rv, err := m.Review(ctx, r.View)
-		cancel()
-		if err != nil {
-			rv = Review{Verdict: "error", Text: err.Error(), Model: rv.Model}
-		}
-		r, _ = m.update(r.ID, func(x *record) error { x.Review = &rv; return nil })
-		switch rv.Verdict {
-		case "ok":
-			m.event(r.ID, agentID, "review", "Ревью ("+rv.Model+"): замечаний нет")
-		case "issues":
-			m.event(r.ID, agentID, "review", "Ревью ("+rv.Model+"): есть замечания\n"+rv.Text)
-		default:
-			m.event(r.ID, agentID, "review", "Ревью не удалось: "+rv.Text)
-		}
+	if rv := m.review(r, agentID); rv != nil {
+		r, _ = m.update(r.ID, func(x *record) error { x.Review = rv; return nil })
 	}
 	if m.AutoApprove != nil && m.AutoApprove(r.Project) && (r.Review == nil || r.Review.Verdict == "ok") {
 		m.event(r.ID, agentID, "info", "Автопринятие: проверки и ревью прошли")
-		if v, err := m.approve(r.ID, true); err == nil {
+		v, err := m.approve(r.ID, true)
+		if err == nil {
 			m.notify(v, "Готово и принято автоматически: "+v.Note)
 			r.View = v
 			return r
-		} else {
-			m.event(r.ID, agentID, "error", "Автопринятие не удалось: "+err.Error())
 		}
+		m.event(r.ID, agentID, "error", "Автопринятие не удалось: "+err.Error())
 	}
 	msg := "Готово — проверьте и примите (Approve) или отклоните"
 	if r.Review != nil && r.Review.Verdict == "issues" {
@@ -532,6 +518,35 @@ func (m *Manager) afterDone(r record, agentID string) record {
 	}
 	m.notify(r.View, msg)
 	return r
+}
+
+// review запускает ревьюера; nil — ревью нет (не настроено или выключено).
+func (m *Manager) review(r record, agentID string) *Review {
+	if m.Review == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	patch, err := agent.Shadow{Root: r.Project}.Patch(ctx, r.Baseline, 60<<10)
+	var rv Review
+	if err == nil {
+		rv, err = m.Review(ctx, r.View, patch)
+	}
+	switch {
+	case err != nil:
+		rv = Review{Verdict: "error", Text: err.Error(), Model: rv.Model}
+	case rv.Verdict == "":
+		return nil // ревью выключено в настройках проекта
+	}
+	switch rv.Verdict {
+	case "ok":
+		m.event(r.ID, agentID, "review", "Ревью ("+rv.Model+"): замечаний нет")
+	case "issues":
+		m.event(r.ID, agentID, "review", "Ревью ("+rv.Model+"): есть замечания\n"+rv.Text)
+	default:
+		m.event(r.ID, agentID, "review", "Ревью не удалось: "+rv.Text)
+	}
+	return &rv
 }
 
 func (m *Manager) notify(v View, msg string) {
