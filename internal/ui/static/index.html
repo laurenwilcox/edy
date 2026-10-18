@@ -234,7 +234,11 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 @media (max-width: 760px) { .fv { grid-template-columns: 1fr; height: auto; } .fv-files { max-height: 180px; } .fv-view .code { max-height: 60vh; } }
 /* ---- Доска задач ---- */
 .board-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.board-bar { display: flex; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.board-bar { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.board-bar > form { flex: 1 1 360px; min-width: 0; }
+.board-bar > form button { flex: none; }
+.board-bar > form input { min-width: 180px; }
+#mem-add .dd { width: auto; flex: none; }
 .switch-label { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .switch-label input { width: auto; }
 .board-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, minmax(190px, 1fr)); gap: 10px; padding: 14px 16px 16px; overflow-x: auto; }
@@ -317,6 +321,9 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .messages[hidden] { display: none !important; }
 .plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
 .plan.proposal { border-style: dashed; }
+.tpl-pop { margin: 0 18px 4px; padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-strong); display: flex; flex-wrap: wrap; gap: 6px; }
+.tpl-pop .chip { font-size: 12.5px; padding: 5px 11px; }
+.tpl-pop .chip.custom { border-color: color-mix(in srgb, var(--a1) 40%, transparent); }
 .caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
 .cap { border: 1px solid var(--line); background: transparent; color: var(--muted); padding: 3px 10px; border-radius: 99px; font: inherit; font-size: 12px; cursor: pointer; transition: all .15s; }
 .cap.on { background: color-mix(in srgb, var(--a1) 14%, transparent); border-color: color-mix(in srgb, var(--a1) 40%, transparent); color: var(--a1); font-weight: 600; }
@@ -753,10 +760,14 @@ h3.sub:first-child { margin-top: 0; }
     <div class="messages" id="orch-messages" hidden></div>
     <div class="board-wrap" id="board" hidden>
       <div class="board-bar">
-        <form class="row" id="board-new" style="flex:1;flex-wrap:nowrap">
+        <form class="row" id="board-new" style="flex-wrap:nowrap">
           <input name="request" placeholder="Новая задача в пул: опишите, что сделать" autocomplete="off">
           <button class="btn" type="submit">＋ В пул</button>
         </form>
+        <div class="row" style="flex-wrap:nowrap">
+          <button class="btn ghost" type="button" id="tpl-btn" title="Шаблоны частых задач">📋 Шаблоны</button>
+          <button class="btn ghost" type="button" id="issue-btn" title="Задача из issue GitHub, GitLab или Gitea">🔗 Из issue</button>
+        </div>
         <label class="switch-label" title="Принимать результат без вас, если проверки и ревью прошли — очередь идёт сама, например ночью">
           <input type="checkbox" id="board-auto"> Автопринятие
         </label>
@@ -765,6 +776,7 @@ h3.sub:first-child { margin-top: 0; }
         </label>
         <button class="btn ghost icon" type="button" id="notify-test" title="Показать пробное уведомление">Проверить</button>
       </div>
+      <div class="tpl-pop" id="tpl-pop" hidden></div>
       <div class="board-cols" id="board-cols"></div>
     </div>
     <div class="composer" id="composer-wrap">
@@ -1439,8 +1451,8 @@ function showWelcome() {
     msgsBox.replaceChildren(el("div", { class: "welcome" },
       el("h3", {}, "Оркестратор"),
       el("div", { class: "muted" }, "Выберите проект и опишите задачу. Оркестратор посмотрит на структуру проекта, уточнит детали и предложит план. После «Начать работу» агент внесёт правки, Edy прогонит тесты и сохранит снимки, а вы решите — Approve или Reject."),
-      el("div", { class: "chips" }, ...["Добавь функцию и тест к ней", "Найди и исправь падающий тест", "Сделай рефакторинг модуля"].map((t) =>
-        el("button", { class: "chip", onclick: () => { input.value = t; input.focus(); } }, t)))));
+      el("div", { class: "chips" }, ...[...templateList.custom, ...templateList.builtin].slice(0, 5).map((t) =>
+        el("button", { class: "chip", title: t, onclick: () => useTemplate(t) }, t.length > 48 ? t.slice(0, 46) + "…" : t)))));
     return;
   }
   msgsBox.replaceChildren(el("div", { class: "welcome" },
@@ -2085,6 +2097,59 @@ function discuss(t) {
   toast("Обсудите задачу с Оркестратором — план поставит её в очередь");
 }
 
+// ---- шаблоны и issue ----
+let templateList = { builtin: [], custom: [] };
+async function loadTemplates() {
+  try { templateList = await api("GET", "/api/templates"); } catch { /* шаблоны не обязательны */ }
+}
+// useTemplate подставляет шаблон: на доске — в поле новой задачи, в чате
+// Оркестратора — в поле ввода. {файл} выделяется, чтобы сразу заменить.
+function useTemplate(t) {
+  const field = chatMode === "board" ? $("#board-new").request : input;
+  field.value = t;
+  field.focus();
+  const i = t.indexOf("{");
+  if (i >= 0) field.setSelectionRange(i, t.indexOf("}", i) + 1);
+  if (field === input) autosize();
+  $("#tpl-pop").hidden = true;
+}
+function renderTemplates() {
+  const pop = $("#tpl-pop");
+  const save = el("button", { class: "chip", type: "button", onclick: async () => {
+    const text = $("#board-new").request.value.trim();
+    if (!text) return toast("Напишите текст задачи в поле — он станет шаблоном", true);
+    try { templateList = await api("POST", "/api/templates", { text }); renderTemplates(); toast("Шаблон сохранён"); } catch (e) { toast(e.message, true); }
+  } }, "＋ Текст из поля — в шаблоны");
+  pop.replaceChildren(
+    ...templateList.custom.map((t) => {
+      const chip = el("button", { class: "chip custom", type: "button", title: "Ваш шаблон. Правый клик — удалить", onclick: () => useTemplate(t) }, t);
+      chip.addEventListener("contextmenu", async (e) => {
+        e.preventDefault();
+        if (!confirm("Удалить шаблон?\n" + t)) return;
+        templateList = await api("DELETE", "/api/templates?text=" + encodeURIComponent(t)); renderTemplates();
+      });
+      return chip;
+    }),
+    ...templateList.builtin.map((t) => el("button", { class: "chip", type: "button", onclick: () => useTemplate(t) }, t)),
+    save);
+}
+$("#tpl-btn").addEventListener("click", async () => {
+  const pop = $("#tpl-pop");
+  if (!pop.hidden) { pop.hidden = true; return; }
+  await loadTemplates();
+  renderTemplates();
+  pop.hidden = false;
+});
+$("#issue-btn").addEventListener("click", async () => {
+  const link = prompt("Ссылка на issue (GitHub, GitLab или Gitea). Для приватного репозитория нужен аккаунт во вкладке Git:");
+  if (!link) return;
+  try {
+    const v = await api("POST", "/api/board/issue", { project: $("#project").value, url: link.trim() });
+    toast("Issue добавлен в пул: " + v.title);
+    loadBoard();
+  } catch (e) { toast(e.message, true); }
+});
+
 $("#board-new").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target, request = f.request.value.trim();
@@ -2167,6 +2232,7 @@ async function openTask(id) {
       el("button", { class: "btn ghost icon", onclick: closeTask }, "✕")),
     parent ? el("div", { class: "small muted", style: "margin-top:4px" }, "Подзадача к: ", el("a", { href: "#", onclick: (e) => { e.preventDefault(); openTask(parent.id); } }, parent.title)) : "",
     el("div", { class: "row", style: "margin-top:12px" }, ...actions),
+    t.issue_url ? el("div", { class: "small", style: "margin-top:8px" }, "🔗 ", el("a", { href: t.issue_url, target: "_blank", rel: "noopener" }, t.issue_url), el("span", { class: "muted" }, " · после Approve коммит закроет issue (" + t.issue_ref + ")")) : "",
     t.request ? sec("Задача", el("div", { class: "small", style: "white-space:pre-wrap" }, t.request)) : "",
     t.plan ? sec("План Оркестратора", el("div", { class: "plan", style: "margin-top:0" }, t.plan)) : "",
     (t.models?.length || t.mcp?.length || t.skills?.length) ? sec("Исполнитель",
@@ -2584,6 +2650,7 @@ async function showAgent(id) {
     loadBrowsers();
     await refreshProviders();
     await refreshProjectState();
+    await loadTemplates();
   } catch (e) {
     toast(e.message, true);
   }

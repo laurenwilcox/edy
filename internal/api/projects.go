@@ -36,6 +36,10 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/tasks", h.listTasks)
 	m.HandleFunc("POST /api/tasks", h.startTask)
 	m.HandleFunc("POST /api/board", h.createTask)
+	m.HandleFunc("POST /api/board/issue", h.importIssue)
+	m.HandleFunc("GET /api/templates", h.templates)
+	m.HandleFunc("POST /api/templates", h.addTemplate)
+	m.HandleFunc("DELETE /api/templates", h.deleteTemplate)
 	m.HandleFunc("PUT /api/tasks/{id}", h.editTask)
 	m.HandleFunc("DELETE /api/tasks/{id}", h.deleteTask)
 	m.HandleFunc("GET /api/tasks/{id}/patch", h.taskPatch)
@@ -520,6 +524,136 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	replyStatus(w, http.StatusCreated, v)
+}
+
+// importIssue кладёт в пул задачу из issue GitHub, GitLab или Gitea.
+func (h *Handler) importIssue(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Project string `json:"project"`
+		URL     string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	if h.Tasks == nil || !h.knownProject(w, req.Project) {
+		return
+	}
+	accounts, _ := h.Store.GitAccounts()
+	ref, err := gitops.ParseIssueURL(req.URL, accounts)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var acc *store.GitAccount
+	for _, a := range accounts {
+		if strings.TrimRight(a.Host, "/") == ref.Host {
+			if full, err := h.Store.GitAccount(a.ID); err == nil {
+				acc = &full
+				break
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	is, err := gitops.FetchIssue(ctx, ref, acc, nil)
+	if err != nil {
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	body := strings.TrimSpace(is.Body)
+	if rs := []rune(body); len(rs) > 6000 {
+		body = string(rs[:6000]) + "\n…(текст issue обрезан)"
+	}
+	request := "Issue: " + is.URL
+	if len(is.Labels) > 0 {
+		request += "\nМетки: " + strings.Join(is.Labels, ", ")
+	}
+	request += "\n\n" + is.Title + "\n\n" + body
+	closing := fmt.Sprintf("#%d", is.Number)
+	if ref.Kind == store.GitHub {
+		closing = fmt.Sprintf("%s#%d", ref.Repo, is.Number)
+	}
+	v, err := h.Tasks.Create(tasks.Draft{Project: req.Project, Title: fmt.Sprintf("#%d %s", is.Number, is.Title), Request: request, IssueURL: is.URL, IssueRef: closing})
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	replyStatus(w, http.StatusCreated, v)
+}
+
+// Шаблоны частых задач: встроенные и свои.
+var builtinTemplates = []string{
+	"Добавь тесты к {файл}: покрой основные сценарии и крайние случаи",
+	"Найди и исправь падающий тест",
+	"Обнови зависимости до свежих версий и убедись, что тесты проходят",
+	"Отрефактори {файл}: упрости код, не меняя поведения",
+	"Добавь обработку ошибок в {файл}",
+	"Найди и удали мёртвый код",
+	"Проверь проект на секреты в коде и небезопасные места",
+	"Напиши README по текущему коду: что это, как собрать, как запустить тесты",
+}
+
+const settingTemplates = "task_templates"
+
+func (h *Handler) customTemplates() []string {
+	raw, _ := h.Store.Setting(settingTemplates)
+	var list []string
+	json.Unmarshal([]byte(raw), &list)
+	return list
+}
+
+func (h *Handler) templates(w http.ResponseWriter, r *http.Request) {
+	custom := h.customTemplates()
+	if custom == nil {
+		custom = []string{}
+	}
+	reply(w, map[string][]string{"builtin": builtinTemplates, "custom": custom})
+}
+
+func (h *Handler) addTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+		fail(w, http.StatusBadRequest, "пустой шаблон")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if len([]rune(text)) > 1000 {
+		fail(w, http.StatusBadRequest, "шаблон длиннее 1000 символов")
+		return
+	}
+	list := h.customTemplates()
+	for _, t := range list {
+		if t == text {
+			h.templates(w, r)
+			return
+		}
+	}
+	if len(list) >= 50 {
+		fail(w, http.StatusBadRequest, "не больше 50 своих шаблонов")
+		return
+	}
+	b, _ := json.Marshal(append(list, text))
+	if err := h.Store.SetSetting(settingTemplates, string(b)); err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.templates(w, r)
+}
+
+func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
+	text := r.URL.Query().Get("text")
+	var keep []string
+	for _, t := range h.customTemplates() {
+		if t != text {
+			keep = append(keep, t)
+		}
+	}
+	b, _ := json.Marshal(keep)
+	h.Store.SetSetting(settingTemplates, string(b))
+	h.templates(w, r)
 }
 
 func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) {

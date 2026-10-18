@@ -77,13 +77,17 @@ var ErrBusy = errors.New("в этом проекте уже идёт задач�
 
 // View — карточка задачи для интерфейса.
 type View struct {
-	ID       string             `json:"id"`
-	Project  string             `json:"project"`
-	Parent   string             `json:"parent,omitempty"` // подзадача: к какой задаче относится
-	Title    string             `json:"title"`
-	Request  string             `json:"request,omitempty"` // исходная просьба
-	Plan     string             `json:"plan,omitempty"`    // утверждённый план Оркестратора
-	Goal     string             `json:"goal"`              // что получает исполнитель
+	ID       string `json:"id"`
+	Project  string `json:"project"`
+	Parent   string `json:"parent,omitempty"` // подзадача: к какой задаче относится
+	Title    string `json:"title"`
+	Request  string `json:"request,omitempty"`   // исходная просьба
+	IssueURL string `json:"issue_url,omitempty"` // задача импортирована из issue
+	// IssueRef — как сослаться на issue в коммите, чтобы хостинг его закрыл
+	// (owner/repo#12 или #12).
+	IssueRef string             `json:"issue_ref,omitempty"`
+	Plan     string             `json:"plan,omitempty"` // утверждённый план Оркестратора
+	Goal     string             `json:"goal"`           // что получает исполнитель
 	Models   []string           `json:"models"`
 	MCP      []string           `json:"mcp,omitempty"`    // внешние MCP-серверы, выданные Оркестратором
 	Skills   []string           `json:"skills,omitempty"` // скиллы, выданные исполнителю
@@ -216,10 +220,12 @@ func (m *Manager) update(id string, fn func(r *record) error) (record, error) {
 
 // Draft — новая карточка.
 type Draft struct {
-	Project string
-	Parent  string
-	Title   string
-	Request string
+	Project  string
+	Parent   string
+	Title    string
+	Request  string
+	IssueURL string
+	IssueRef string
 }
 
 // Create кладёт задачу в пул (колонка «Пул задач»), без запуска.
@@ -237,7 +243,7 @@ func (m *Manager) Create(d Draft) (View, error) {
 		}
 	}
 	r := record{View: View{ID: newID(), Project: d.Project, Parent: d.Parent, Title: titleOf(d.Title, d.Request),
-		Request: strings.TrimSpace(d.Request), State: StateBacklog, Created: m.Now(), Position: m.Now().UnixMilli(), Agents: []string{}}}
+		Request: strings.TrimSpace(d.Request), IssueURL: d.IssueURL, IssueRef: d.IssueRef, State: StateBacklog, Created: m.Now(), Position: m.Now().UnixMilli(), Agents: []string{}}}
 	m.mu.Lock()
 	err := m.save(&r)
 	m.mu.Unlock()
@@ -247,6 +253,8 @@ func (m *Manager) Create(d Draft) (View, error) {
 	if d.Parent != "" {
 		m.event(d.Parent, "", "subtask", "Добавлена подзадача: "+r.Title)
 		m.event(r.ID, "", "created", "Подзадача к «"+m.titleOf(d.Parent)+"»")
+	} else if d.IssueURL != "" {
+		m.event(r.ID, "", "created", "Импортирована из issue "+d.IssueURL)
 	} else {
 		m.event(r.ID, "", "created", "Задача добавлена в пул")
 	}
@@ -685,7 +693,12 @@ func (m *Manager) approve(id string, auto bool) (View, error) {
 	}
 	var out Outcome
 	if agent.HasChanges(context.Background(), r.Project) {
-		if out, err = finalize(context.Background(), r.Project, r.Goal, r.Summary, r.Model); err != nil {
+		summary := r.Summary
+		if r.IssueRef != "" {
+			// Ключевое слово в коммите или PR закрывает issue на хостинге.
+			summary += "\n\nCloses " + r.IssueRef
+		}
+		if out, err = finalize(context.Background(), r.Project, r.Goal, summary, r.Model); err != nil {
 			return View{}, err
 		}
 	} else {

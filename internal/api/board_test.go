@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -146,5 +149,65 @@ func TestNotifyPrefs(t *testing.T) {
 	call(h, "POST", "/api/notify/test", "")
 	if len(shown) != 1 || !strings.HasPrefix(shown[0], "Edy|") {
 		t.Fatalf("пробное уведомление: %v", shown)
+	}
+}
+
+func TestIssueImportClosesOnApprove(t *testing.T) {
+	h, st := setup(t)
+	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "{prompt}"}, Models: []string{"m"}})
+	b := &brain{}
+	h.LLM = b
+	h.Tasks = tasks.NewManager(b, st)
+	var summary string
+	h.Tasks.Finalize = func(ctx context.Context, project, goal, s, model string) (tasks.Outcome, error) {
+		summary = s
+		return tasks.Outcome{Note: "ok"}, nil
+	}
+	gitea := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/vova/calc/issues/3" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"number":3,"title":"Сложение вычитает","body":"Add(2,3) возвращает -1","html_url":"http://git/vova/calc/issues/3","labels":[{"name":"bug"}]}`))
+	}))
+	defer gitea.Close()
+	dir := gitProject(t)
+	call(h, "POST", "/api/projects", fmt.Sprintf(`{"path":%q}`, dir))
+
+	rec := call(h, "POST", "/api/board/issue", fmt.Sprintf(`{"project":%q,"url":%q}`, dir, gitea.URL+"/vova/calc/issues/3"))
+	var v tasks.View
+	json.Unmarshal(rec.Body.Bytes(), &v)
+	if rec.Code != http.StatusCreated || v.Title != "#3 Сложение вычитает" || !strings.Contains(v.Request, "Метки: bug") || v.IssueRef != "#3" {
+		t.Fatalf("импорт: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/api/board/issue", fmt.Sprintf(`{"project":%q,"url":"https://github.com/x/y/pull/1"}`, dir)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("не issue: %d", rec.Code)
+	}
+	body, _ := json.Marshal(map[string]any{"id": v.ID, "project": dir, "request": v.Request, "models": []string{"agy/m"}})
+	call(h, "POST", "/api/tasks", string(body))
+	deadline := time.Now().Add(time.Minute)
+	for v.State != tasks.StateDone && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		json.Unmarshal(call(h, "GET", "/api/tasks/"+v.ID, "").Body.Bytes(), &v)
+	}
+	call(h, "POST", "/api/tasks/"+v.ID+"/approve", "")
+	if !strings.HasSuffix(summary, "Closes #3") {
+		t.Fatalf("коммит должен закрывать issue: %q", summary)
+	}
+	h.Tasks.Wait()
+}
+
+func TestTemplates(t *testing.T) {
+	h, _ := setup(t)
+	call(h, "POST", "/api/templates", `{"text":"Переведи интерфейс на английский"}`)
+	call(h, "POST", "/api/templates", `{"text":"Переведи интерфейс на английский"}`)
+	var res struct{ Builtin, Custom []string }
+	json.Unmarshal(call(h, "GET", "/api/templates", "").Body.Bytes(), &res)
+	if len(res.Builtin) < 5 || len(res.Custom) != 1 {
+		t.Fatalf("шаблоны: %+v", res)
+	}
+	json.Unmarshal(call(h, "DELETE", "/api/templates?text="+url.QueryEscape("Переведи интерфейс на английский"), "").Body.Bytes(), &res)
+	if len(res.Custom) != 0 {
+		t.Fatalf("удаление: %+v", res.Custom)
 	}
 }
