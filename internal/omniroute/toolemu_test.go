@@ -88,7 +88,7 @@ type promptSpy struct {
 	answer string
 }
 
-func (p promptSpy) Ask(ctx context.Context, c webchat.Conn, prompt string, onText func(string) error) error {
+func (p promptSpy) Ask(ctx context.Context, c webchat.Conn, prompt string, images []string, onText func(string) error) error {
 	*p.got = prompt
 	return onText(p.answer)
 }

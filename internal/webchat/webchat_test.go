@@ -4,9 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -91,7 +94,7 @@ func fakeSite(url string) Site {
 func TestAskStreamsAnswer(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
 	var updates []string
-	err := m.Ask(context.Background(), Conn{Profile: "fake-1", Site: "fake", Browser: BrowserChromium}, "привет", func(full string) error {
+	err := m.Ask(context.Background(), Conn{Profile: "fake-1", Site: "fake", Browser: BrowserChromium}, "привет", nil, func(full string) error {
 		updates = append(updates, full)
 		return nil
 	})
@@ -109,7 +112,7 @@ func TestAskStreamsAnswer(t *testing.T) {
 func TestPolitenessAndWatchdog(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
 	ask := func() error {
-		return m.Ask(context.Background(), Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil })
+		return m.Ask(context.Background(), Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", nil, func(string) error { return nil })
 	}
 	if err := ask(); err != nil {
 		t.Fatal(err)
@@ -143,7 +146,7 @@ func TestLoginRequiredSavesSnapshot(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": s})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err := m.Ask(ctx, Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil })
+	err := m.Ask(ctx, Conn{Profile: "acc", Site: "fake", Browser: BrowserChromium}, "q", nil, func(string) error { return nil })
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("err = %v", err)
 	}
@@ -233,7 +236,7 @@ func TestLoginWindowThenAutoCheck(t *testing.T) {
 		t.Fatalf("статус при открытом окне входа = %+v", st)
 	}
 	// Пока окно входа открыто, управлять профилем нельзя.
-	if err := m.Ask(context.Background(), c, "q", func(string) error { return nil }); !errors.Is(err, ErrLoginOpen) {
+	if err := m.Ask(context.Background(), c, "q", nil, func(string) error { return nil }); !errors.Is(err, ErrLoginOpen) {
 		t.Fatalf("err = %v", err)
 	}
 	// Пользователь закрыл окно — Edy сам проверяет подключение.
@@ -289,7 +292,7 @@ func TestUnzipRejectsPathTraversal(t *testing.T) {
 func TestProfilesAreIsolated(t *testing.T) {
 	m := newTestManager(t, map[string]Site{"fake": fakeSite(fakeServer(t))})
 	for _, profile := range []string{"work", "home"} {
-		if err := m.Ask(context.Background(), Conn{Profile: profile, Site: "fake", Browser: BrowserChromium}, "q", func(string) error { return nil }); err != nil {
+		if err := m.Ask(context.Background(), Conn{Profile: profile, Site: "fake", Browser: BrowserChromium}, "q", nil, func(string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -366,7 +369,7 @@ func TestSendStrategiesAndSingleTab(t *testing.T) {
 	m := newTestManager(t, sites)
 	for site, want := range map[string]string{"enter": "Enter-ответ: привет", "button": "Кнопка-ответ: привет"} {
 		var got string
-		err := m.Ask(context.Background(), Conn{Profile: site, Site: site, Browser: BrowserChromium}, "привет", func(full string) error { got = full; return nil })
+		err := m.Ask(context.Background(), Conn{Profile: site, Site: site, Browser: BrowserChromium}, "привет", nil, func(full string) error { got = full; return nil })
 		if err != nil || got != want {
 			t.Fatalf("%s: got %q, err %v", site, got, err)
 		}
@@ -394,7 +397,7 @@ func TestSendStrategiesAndSingleTab(t *testing.T) {
 func TestStuckSendSavesDiagnostics(t *testing.T) {
 	base := variantServer(t)
 	m := newTestManager(t, map[string]Site{"stuck": {Title: "Stuck", URL: base + "/stuck", Input: "#in", Response: ".answer", DailyLimit: 10}})
-	err := m.Ask(context.Background(), Conn{Profile: "stuck", Site: "stuck", Browser: BrowserChromium}, "привет", func(string) error { return nil })
+	err := m.Ask(context.Background(), Conn{Profile: "stuck", Site: "stuck", Browser: BrowserChromium}, "привет", nil, func(string) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "отправить его не получилось") {
 		t.Fatalf("err = %v", err)
 	}
@@ -405,5 +408,105 @@ func TestStuckSendSavesDiagnostics(t *testing.T) {
 	data, _ := os.ReadFile(files[0])
 	if !strings.Contains(string(data), `"inputs"`) || !strings.Contains(string(data), `"tag": "textarea"`) {
 		t.Fatalf("диагностика:\n%s", data)
+	}
+}
+
+// imageChat — веб-чат с полем выбора файла: отвечает, сколько файлов
+// приложено, и вставляет в ответ «сгенерированную» картинку.
+const imageChat = `<!doctype html><html><body>
+<div id="log"></div>
+<input type="file" id="file" multiple>
+<textarea id="in"></textarea><button id="send">Send</button>
+<script>
+document.getElementById("send").onclick = () => {
+  const f = document.getElementById("file");
+  const n = f.files.length, name = n ? f.files[0].name : "";
+  const q = document.getElementById("in").value.trim();
+  document.getElementById("in").value = ""; f.value = "";
+  const m = document.createElement("div"); m.className = "bot";
+  m.innerText = "Файлов: " + n + " " + name + " вопрос: " + q;
+  const img = document.createElement("img"); img.src = "/gen.png";
+  m.append(img); document.getElementById("log").append(m);
+};
+</script></body></html>`
+
+func testPNG(t *testing.T, size int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	for i := range img.Pix {
+		img.Pix[i] = 0xC0
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestAskWithImages(t *testing.T) {
+	gen := testPNG(t, 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/gen.png" {
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(gen)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, imageChat)
+	}))
+	t.Cleanup(srv.Close)
+	m := newTestManager(t, map[string]Site{"img": fakeSite(srv.URL)})
+
+	file := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(file, testPNG(t, 16), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	err := m.Ask(context.Background(), Conn{Profile: "img", Site: "img", Browser: BrowserChromium}, "что это?", []string{file}, func(full string) error { got = full; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Файлов: 1 photo.png вопрос: что это?") {
+		t.Fatalf("файл не приложен: %q", got)
+	}
+	want := "![image](data:image/png;base64," + base64.StdEncoding.EncodeToString(gen) + ")"
+	if !strings.Contains(got, want) {
+		t.Fatalf("картинка ответа не вернулась: %.300q", got)
+	}
+}
+
+// TestAskPastesImagesWithoutFileInput: поля выбора файла нет — картинка
+// вставляется в поле ввода как из буфера обмена.
+func TestAskPastesImagesWithoutFileInput(t *testing.T) {
+	page := `<!doctype html><html><body><div id="log"></div>
+<textarea id="in"></textarea><button id="send">Send</button>
+<script>
+let pasted = [];
+document.getElementById("in").addEventListener("paste", (e) => {
+  pasted = [...e.clipboardData.files].map((f) => f.name + ":" + f.type);
+});
+document.getElementById("send").onclick = () => {
+  const m = document.createElement("div"); m.className = "bot";
+  m.innerText = "Вставлено: " + pasted.join(","); document.getElementById("log").append(m);
+};
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, page)
+	}))
+	t.Cleanup(srv.Close)
+	m := newTestManager(t, map[string]Site{"paste": fakeSite(srv.URL)})
+
+	file := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(file, testPNG(t, 16), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	err := m.Ask(context.Background(), Conn{Profile: "paste", Site: "paste", Browser: BrowserChromium}, "", []string{file}, func(full string) error { got = full; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Вставлено: shot.png:image/png") {
+		t.Fatalf("картинка не вставлена: %q", got)
 	}
 }

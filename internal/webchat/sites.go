@@ -24,6 +24,12 @@ type Site struct {
 	Response string `json:"response"`
 	// Busy — элемент, видимый, пока модель генерирует ответ (обычно кнопка «Стоп»).
 	Busy string `json:"busy,omitempty"`
+	// Upload — поле выбора файла, через которое прикладываются картинки.
+	// Пусто — первый input[type=file] на странице.
+	Upload string `json:"upload,omitempty"`
+	// Images — картинки в ответе (сгенерированные моделью). Пусто — все
+	// крупные <img> внутри элементов ответа.
+	Images string `json:"images,omitempty"`
 
 	// Вежливость: пауза между запросами и дневной лимит.
 	MinIntervalSec int `json:"min_interval_sec"`
@@ -118,6 +124,8 @@ func merge(base, o Site) Site {
 	set(&base.Send, o.Send)
 	set(&base.Response, o.Response)
 	set(&base.Busy, o.Busy)
+	set(&base.Upload, o.Upload)
+	set(&base.Images, o.Images)
 	if o.MinIntervalSec > 0 {
 		base.MinIntervalSec = o.MinIntervalSec
 	}

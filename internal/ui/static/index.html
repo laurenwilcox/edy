@@ -216,6 +216,7 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .attach button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; font-size: 11px; line-height: 20px; padding: 0; }
 .msg .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg .thumbs img { height: 90px; border-radius: 8px; cursor: zoom-in; }
+.msg .thumbs img.gen { height: auto; max-height: 320px; max-width: 100%; }
 .composer.drop .composer-box { border-color: var(--a1); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 18%, transparent); }
 .gallery { display: flex; flex-wrap: wrap; gap: 8px; }
 .gallery .shot { position: relative; }
@@ -1545,9 +1546,13 @@ function renderText(target, text) {
       target.append(el("pre", {}, el("code", {}, body)));
       return;
     }
-    part.split(/(`[^`\n]+`)/).forEach((chunk) => {
+    part.split(/(`[^`\n]+`|!\[[^\]\n]*\]\((?:data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+|https:\/\/[^\s)]+)\))/).forEach((chunk) => {
       if (/^`[^`\n]+`$/.test(chunk)) target.append(el("code", {}, chunk.slice(1, -1)));
-      else if (chunk) target.append(chunk);
+      else if (chunk.startsWith("![")) {
+        // Картинка в ответе (например, сгенерированная веб-чатом).
+        const src = chunk.slice(chunk.indexOf("](") + 2, -1);
+        target.append(el("div", { class: "thumbs" }, el("img", { class: "gen", src, alt: chunk.slice(2, chunk.indexOf("](")), onclick: () => showImage(src) })));
+      } else if (chunk) target.append(chunk);
     });
   });
 }

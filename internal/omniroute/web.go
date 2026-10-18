@@ -3,6 +3,7 @@ package omniroute
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -11,11 +12,12 @@ import (
 
 // WebAsker — то, что адаптеру нужно от менеджера браузеров (webchat.Manager).
 type WebAsker interface {
-	Ask(ctx context.Context, c webchat.Conn, prompt string, onText func(full string) error) error
+	Ask(ctx context.Context, c webchat.Conn, prompt string, images []string, onText func(full string) error) error
 }
 
-// WebAdapter общается с веб-чатами через браузер. Сайт отвечает только
-// текстом, поэтому tools и картинки пока не поддерживаются.
+// WebAdapter общается с веб-чатами через браузер. Картинки из запроса
+// прикладываются к сообщению файлами, картинки ответа приходят в тексте как
+// ![image](data:...). Tools не поддерживаются.
 type WebAdapter struct {
 	Browser WebAsker
 }
@@ -27,7 +29,14 @@ func (a *WebAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	if len(call.Request.Tools) > 0 {
 		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: "веб-чаты не поддерживают tools"}
 	}
-	prompt, err := renderPrompt(call.Request.Messages)
+	msgs, _, images, cleanup, err := writeImages(call.Request.Messages, func(_ string, n int) string {
+		return fmt.Sprintf("[Изображение %d — во вложении]", n)
+	})
+	if err != nil {
+		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: err.Error()}
+	}
+	defer cleanup()
+	prompt, err := renderPrompt(msgs)
 	if err != nil {
 		return Usage{}, &UpstreamError{Status: http.StatusBadRequest, Message: err.Error()}
 	}
@@ -37,7 +46,7 @@ func (a *WebAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	sent := ""
 	// Профиль браузера — имя провайдера: у каждого подключения своё окружение.
 	conn := webchat.Conn{Profile: call.Provider.Name, Site: call.Provider.Site, Browser: call.Provider.Browser}
-	err = a.Browser.Ask(ctx, conn, prompt, func(full string) error {
+	err = a.Browser.Ask(ctx, conn, prompt, images, func(full string) error {
 		// Отдаём только дописанный хвост. Если сайт переписал начало ответа
 		// (бывает при отрисовке разметки), уже отправленное не трогаем.
 		if !strings.HasPrefix(full, sent) {

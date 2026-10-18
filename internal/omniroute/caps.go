@@ -49,8 +49,8 @@ func CapTitle(id string) string {
 }
 
 // DefaultCaps — возможности по типу провайдера, пока пользователь не задал свои.
-// Учитывается то, что работает через Edy: веб-чаты, например, передают
-// только текст, поэтому картинок у них нет.
+// Учитывается то, что работает через Edy: OpenAI-совместимые API, например,
+// бывают и без картинок, поэтому vision у них по умолчанию выключен.
 func DefaultCaps(p store.Provider) []string {
 	switch p.Kind {
 	case store.KindAnthropic:
@@ -71,7 +71,11 @@ func DefaultCaps(p store.Provider) []string {
 		}
 		return []string{}
 	case store.KindWeb:
-		return []string{CapWeb}
+		// Картинки прикладываются к сообщению; рисовать умеют ChatGPT и Gemini.
+		if p.Site == "chatgpt" || p.Site == "gemini" {
+			return []string{CapVision, CapImageGen, CapWeb}
+		}
+		return []string{CapVision, CapWeb}
 	}
 	return []string{}
 }

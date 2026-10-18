@@ -20,7 +20,18 @@ var imageExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "ima
 // изображения). Возвращает новые сообщения, папку с файлами (пусто — картинок
 // не было) и функцию уборки.
 func materializeImages(msgs []Message) ([]Message, string, func(), error) {
+	msgs, dir, _, cleanup, err := writeImages(msgs, func(path string, _ int) string {
+		return "[Изображение: " + path + " — открой файл, чтобы посмотреть]"
+	})
+	return msgs, dir, cleanup, err
+}
+
+// writeImages сохраняет картинки из сообщений в файлы во временной папке и
+// заменяет каждую текстом label(путь, номер). Возвращает новые сообщения,
+// папку (пусто — картинок не было), пути файлов и функцию уборки.
+func writeImages(msgs []Message, label func(path string, n int) string) ([]Message, string, []string, func(), error) {
 	dir := ""
+	var paths []string
 	cleanup := func() {
 		if dir != "" {
 			os.RemoveAll(dir)
@@ -33,14 +44,14 @@ func materializeImages(msgs []Message) ([]Message, string, func(), error) {
 		parts, err := m.Parts()
 		if err != nil {
 			cleanup()
-			return nil, "", nil, err
+			return nil, "", nil, nil, err
 		}
 		changed := false
 		for j, p := range parts {
 			switch p.Type {
 			case "input_audio":
 				cleanup()
-				return nil, "", nil, errors.New("CLI-утилиты не принимают звук — выберите модель с тегом «Звук»")
+				return nil, "", nil, nil, errors.New("CLI-утилиты и веб-чаты не принимают звук — выберите модель с тегом «Звук»")
 			case "image_url":
 				if p.ImageURL == nil {
 					continue
@@ -57,25 +68,26 @@ func materializeImages(msgs []Message) ([]Message, string, func(), error) {
 				ext, known := imageExt[mediaType]
 				if !isBase64 || !known {
 					cleanup()
-					return nil, "", nil, fmt.Errorf("картинка %q: нужен PNG, JPEG, GIF или WebP в base64", mediaType)
+					return nil, "", nil, nil, fmt.Errorf("картинка %q: нужен PNG, JPEG, GIF или WebP в base64", mediaType)
 				}
 				raw, err := base64.StdEncoding.DecodeString(data)
 				if err != nil {
 					cleanup()
-					return nil, "", nil, errors.New("картинка: испорченный base64")
+					return nil, "", nil, nil, errors.New("картинка: испорченный base64")
 				}
 				if dir == "" {
 					if dir, err = os.MkdirTemp("", "edy-images-"); err != nil {
-						return nil, "", nil, err
+						return nil, "", nil, nil, err
 					}
 				}
 				n++
 				path := filepath.Join(dir, fmt.Sprintf("image-%d%s", n, ext))
 				if err := os.WriteFile(path, raw, 0o600); err != nil {
 					cleanup()
-					return nil, "", nil, err
+					return nil, "", nil, nil, err
 				}
-				parts[j] = ContentPart{Type: "text", Text: "[Изображение: " + path + " — открой файл, чтобы посмотреть]"}
+				paths = append(paths, path)
+				parts[j] = ContentPart{Type: "text", Text: label(path, n)}
 			}
 		}
 		if changed {
@@ -89,5 +101,5 @@ func materializeImages(msgs []Message) ([]Message, string, func(), error) {
 			out[i].Content, _ = json.Marshal(strings.TrimSpace(b.String()))
 		}
 	}
-	return out, dir, cleanup, nil
+	return out, dir, paths, cleanup, nil
 }

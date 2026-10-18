@@ -178,7 +178,7 @@ func TestAPIPresetsAreConsistent(t *testing.T) {
 
 type fakeBrowser struct{ chunks []string }
 
-func (f fakeBrowser) Ask(ctx context.Context, c webchat.Conn, prompt string, onText func(string) error) error {
+func (f fakeBrowser) Ask(ctx context.Context, c webchat.Conn, prompt string, images []string, onText func(string) error) error {
 	if c.Profile != "gpt" || c.Site != "chatgpt" || c.Browser != "chromium" {
 		return fmt.Errorf("подключение = %+v", c)
 	}
@@ -201,5 +201,39 @@ func TestWebAdapterThroughServer(t *testing.T) {
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"content":"вет"`) || !strings.Contains(body, `"finish_reason":"stop"`) {
 		t.Fatalf("code = %d body = %s", rec.Code, body)
+	}
+}
+
+// imageBrowser запоминает, что адаптер передал веб-чату.
+type imageBrowser struct {
+	prompt string
+	sizes  []int
+}
+
+func (b *imageBrowser) Ask(ctx context.Context, c webchat.Conn, prompt string, images []string, onText func(string) error) error {
+	b.prompt = prompt
+	for _, p := range images {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		b.sizes = append(b.sizes, len(data))
+	}
+	return onText("Кот. ![image](data:image/png;base64,iVBORw0KGgo=)")
+}
+
+func TestWebAdapterPassesImages(t *testing.T) {
+	st := newTestStore(t)
+	st.AddProvider(store.Provider{Name: "gpt", Kind: store.KindWeb, Site: "chatgpt", Browser: "chromium"})
+	srv := NewServer(st, testToken, nil)
+	b := &imageBrowser{}
+	srv.RegisterAdapter(store.KindWeb, &WebAdapter{Browser: b})
+	body := `{"model":"gpt/default","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"Кто это?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]}`
+	rec := serve(srv, newAuthedRequest(http.MethodPost, "/v1/chat/completions", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `![image](data:image/png;base64,iVBORw0KGgo=)`) {
+		t.Fatalf("code = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(b.prompt, "Кто это?") || !strings.Contains(b.prompt, "[Изображение 1 — во вложении]") || len(b.sizes) != 1 || b.sizes[0] != 8 {
+		t.Fatalf("prompt = %q sizes = %v", b.prompt, b.sizes)
 	}
 }

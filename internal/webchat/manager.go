@@ -3,6 +3,7 @@ package webchat
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -582,6 +584,8 @@ type pageState struct {
 	Count int    `json:"count"`
 	Text  string `json:"text"`
 	Busy  bool   `json:"busy"`
+	// Images — адреса крупных картинок в ответах (сгенерированных моделью).
+	Images []string `json:"images"`
 }
 
 // pageJS — общие функции для скриптов на странице. Селекторы сайтов могут
@@ -602,7 +606,72 @@ const stateJS = `(() => {` + pageJS + `
   const last = all[all.length - 1];
   const busySel = %q;
   const busy = busySel !== "" && [...document.querySelectorAll(busySel)].some(vis);
-  return { count: all.length, text: last ? last.innerText.trim() : "", busy };
+  const imgSel = %q;
+  const pool = [...document.querySelectorAll(imgSel || %q)].flatMap((el) => el.tagName === "IMG" ? [el] : [...el.querySelectorAll("img")]);
+  const big = (i) => vis(i) && Math.max(i.naturalWidth, i.width) >= 128 && (i.currentSrc || i.src);
+  const images = [...new Set(pool.filter(big).map((i) => i.currentSrc || i.src))];
+  return { count: all.length, text: last ? last.innerText.trim() : "", busy, images };
+})()`
+
+// pickUploadJS помечает поле выбора файла для картинок атрибутом
+// data-edy-upload: из нескольких полей предпочитается то, что принимает image/*.
+const pickUploadJS = `(() => {
+  document.querySelectorAll("[data-edy-upload]").forEach((o) => o.removeAttribute("data-edy-upload"));
+  const all = [...document.querySelectorAll(%q)].filter((el) => el.tagName === "INPUT" && el.type === "file" && !el.disabled);
+  const el = all.find((el) => /image/.test(el.accept)) || all.find((el) => !el.accept) || all[0];
+  if (!el) return false;
+  el.setAttribute("data-edy-upload", "1");
+  return true;
+})()`
+
+// pasteFilesJS — запасной способ приложить картинки: событие «вставить»
+// с файлами в поле ввода, как при Cmd+V скриншота.
+const pasteFilesJS = `(async () => {` + pageJS + `
+  const el = findInput(%q);
+  if (!el) return false;
+  const dt = new DataTransfer();
+  for (const [name, url] of %s) {
+    // atob вместо fetch(data:): строгий CSP сайта может запрещать fetch.
+    const [head, body] = url.split(",");
+    const bytes = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+    dt.items.add(new File([bytes], name, { type: head.slice(5, head.indexOf(";")) }));
+  }
+  el.focus();
+  el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  return true;
+})()`
+
+// uploadingJS — идёт ли ещё загрузка вложений (виден индикатор прогресса).
+const uploadingJS = `(() => {` + pageJS + `
+  return [...document.querySelectorAll("[role='progressbar'], progress")].some(vis);
+})()`
+
+// fetchImagesJS скачивает картинки ответа в data URL с куками сайта. Не
+// получилось — пустая строка, тогда картинка снимается скриншотом.
+const fetchImagesJS = `(async () => {
+  const out = [];
+  for (const src of %s) {
+    try {
+      const r = await fetch(src, { credentials: "include" });
+      if (!r.ok) throw new Error(r.status);
+      const b = await r.blob();
+      if (!b.type.startsWith("image/")) throw new Error(b.type);
+      out.push(await new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(b); }));
+    } catch (e) {
+      out.push("");
+    }
+  }
+  return out;
+})()`
+
+// markImageJS помечает картинку с адресом src атрибутом data-edy-img.
+const markImageJS = `(() => {
+  document.querySelectorAll("[data-edy-img]").forEach((o) => o.removeAttribute("data-edy-img"));
+  const el = [...document.querySelectorAll("img")].find((i) => (i.currentSrc || i.src) === %q);
+  if (!el) return false;
+  el.setAttribute("data-edy-img", "1");
+  el.scrollIntoView({ block: "center" });
+  return true;
 })()`
 
 // inputJS возвращает текст в поле ввода или null, если поля нет.
@@ -669,9 +738,10 @@ const dumpJS = `(() => {` + pageJS + `
   };
 })()`
 
-// Ask отправляет prompt в веб-чат подключения и вызывает onText с полным
-// текстом ответа по мере его появления.
-func (m *Manager) Ask(ctx context.Context, c Conn, prompt string, onText func(full string) error) error {
+// Ask отправляет prompt и картинки (пути к файлам) в веб-чат подключения и
+// вызывает onText с полным текстом ответа по мере его появления. Картинки из
+// ответа дописываются в конец текста как ![image](data:...).
+func (m *Manager) Ask(ctx context.Context, c Conn, prompt string, images []string, onText func(full string) error) error {
 	if err := validProfile(c.Profile); err != nil {
 		return err
 	}
@@ -685,17 +755,17 @@ func (m *Manager) Ask(ctx context.Context, c Conn, prompt string, onText func(fu
 	}
 	defer release()
 	err = m.withTab(ctx, c, func(tab context.Context, s Site, run runFunc) error {
-		return m.ask(ctx, tab, c.Profile, s, run, prompt, onText)
+		return m.ask(ctx, tab, c.Profile, s, run, prompt, images, onText)
 	})
 	m.record(c.Profile, err)
 	return err
 }
 
-func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, s Site, run runFunc, prompt string, onText func(string) error) error {
+func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, s Site, run runFunc, prompt string, images []string, onText func(string) error) error {
 	eval := func(js string, out any) error { return run(10*time.Second, chromedp.Evaluate(js, out)) }
 	state := func() (pageState, error) {
 		var st pageState
-		err := eval(fmt.Sprintf(stateJS, s.Response, s.Busy), &st)
+		err := eval(fmt.Sprintf(stateJS, s.Response, s.Busy, s.Images, s.Response), &st)
 		return st, err
 	}
 	inputValue := func() (*string, error) {
@@ -733,48 +803,83 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 	if err != nil {
 		return err
 	}
+	seen := map[string]bool{}
+	for _, src := range before.Images {
+		seen[src] = true
+	}
+	newImages := func(st pageState) []string {
+		var out []string
+		for _, src := range st.Images {
+			if !seen[src] {
+				out = append(out, src)
+			}
+		}
+		return out
+	}
 
-	// 1. Вставляем текст целиком, как из буфера обмена.
+	// 1. Прикладываем картинки и ждём, пока они загрузятся.
+	if len(images) > 0 {
+		if err := m.attach(tab, profile, s, run, eval, sleep, images); err != nil {
+			return err
+		}
+	}
+
+	// 2. Вставляем текст целиком, как из буфера обмена.
 	var focused bool
 	if err := eval(fmt.Sprintf(focusJS, s.Input), &focused); err != nil || !focused {
 		return m.fail(tab, profile, errors.New("не удалось поставить курсор в поле ввода"))
 	}
-	if err := run(30*time.Second, chromedp.ActionFunc(func(c context.Context) error { return input.InsertText(prompt).Do(c) })); err != nil {
-		return m.fail(tab, profile, fmt.Errorf("не удалось ввести текст: %w", err))
-	}
-	sleep(300 * time.Millisecond)
-	if v, _ := inputValue(); v == nil || *v == "" {
-		var ok bool
-		eval(fmt.Sprintf(insertFallbackJS, s.Input, prompt), &ok)
+	if prompt != "" {
+		if err := run(30*time.Second, chromedp.ActionFunc(func(c context.Context) error { return input.InsertText(prompt).Do(c) })); err != nil {
+			return m.fail(tab, profile, fmt.Errorf("не удалось ввести текст: %w", err))
+		}
 		sleep(300 * time.Millisecond)
 		if v, _ := inputValue(); v == nil || *v == "" {
-			return m.fail(tab, profile, errors.New("текст не вставился в поле ввода"))
+			var ok bool
+			eval(fmt.Sprintf(insertFallbackJS, s.Input, prompt), &ok)
+			sleep(300 * time.Millisecond)
+			if v, _ := inputValue(); v == nil || *v == "" {
+				return m.fail(tab, profile, errors.New("текст не вставился в поле ввода"))
+			}
 		}
 	}
 
-	// 2. Отправляем: сначала Enter, как человек; если текст остался в поле —
+	// 3. Отправляем: сначала Enter, как человек; если текст остался в поле —
 	// нажимаем кнопку отправки (по селектору сайта или по общим признакам).
+	// С картинками кнопка может быть неактивна, пока они загружаются, поэтому
+	// нажатие повторяется до 20 секунд.
 	sent := func() bool {
-		if v, err := inputValue(); err == nil && v != nil && *v == "" {
+		if v, err := inputValue(); prompt != "" && err == nil && v != nil && *v == "" {
 			return true
 		}
 		st, err := state()
-		return err == nil && (st.Count > before.Count || st.Busy)
+		return err == nil && (st.Count > before.Count || st.Busy || len(newImages(st)) > 0)
 	}
-	if err := run(10*time.Second, chromedp.KeyEvent(kb.Enter)); err != nil {
-		return m.fail(tab, profile, fmt.Errorf("не удалось нажать Enter: %w", err))
-	}
-	if err := sleep(1200 * time.Millisecond); err != nil {
-		return err
+	if prompt != "" {
+		if err := run(10*time.Second, chromedp.KeyEvent(kb.Enter)); err != nil {
+			return m.fail(tab, profile, fmt.Errorf("не удалось нажать Enter: %w", err))
+		}
+		if err := sleep(1200 * time.Millisecond); err != nil {
+			return err
+		}
 	}
 	if !sent() {
 		var clicked string
-		eval(fmt.Sprintf(clickSendJS, s.Send, genericSend), &clicked)
-		if err := sleep(1500 * time.Millisecond); err != nil {
-			return err
+		retryUntil := time.Now()
+		if len(images) > 0 {
+			retryUntil = retryUntil.Add(20 * time.Second)
+		}
+		for {
+			eval(fmt.Sprintf(clickSendJS, s.Send, genericSend), &clicked)
+			if err := sleep(1500 * time.Millisecond); err != nil {
+				return err
+			}
+			if sent() || time.Now().After(retryUntil) {
+				break
+			}
 		}
 		if !sent() {
-			msg := "текст в поле, но отправить его не получилось: Enter не сработал"
+			msg := "сообщение подготовлено, но отправить его не получилось: Enter не сработал"
 			if clicked == "" {
 				msg += ", кнопка отправки не найдена"
 			} else {
@@ -784,10 +889,10 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 		}
 	}
 
-	// 3. Ждём новый ответ и отдаём его по мере появления, пока он не перестанет меняться.
+	// 4. Ждём новый ответ и отдаём его по мере появления, пока он не перестанет меняться.
 	const poll = 400 * time.Millisecond
 	started := time.Now()
-	var last string
+	var last, lastImages string
 	var lastChange time.Time
 	for {
 		if err := sleep(poll); err != nil {
@@ -797,11 +902,15 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 		if err != nil {
 			return err
 		}
-		if st.Count <= before.Count && st.Text == before.Text {
+		fresh := newImages(st)
+		if st.Count <= before.Count && st.Text == before.Text && len(fresh) == 0 {
 			if time.Since(started) > 90*time.Second {
 				return m.fail(tab, profile, fmt.Errorf("сообщение отправлено, но ответ %s не найден на странице за 90 секунд — селектор ответа (response) устарел", s.Title))
 			}
 			continue
+		}
+		if imgs := strings.Join(fresh, "\n"); imgs != lastImages {
+			lastImages, lastChange = imgs, time.Now()
 		}
 		if st.Text != last {
 			last, lastChange = st.Text, time.Now()
@@ -810,14 +919,96 @@ func (m *Manager) ask(ctx context.Context, tab context.Context, profile string, 
 			}
 			continue
 		}
-		if !st.Busy && st.Text != "" && time.Since(lastChange) > 1500*time.Millisecond {
-			return nil
+		if !st.Busy && (st.Text != "" || len(fresh) > 0) && time.Since(lastChange) > 1500*time.Millisecond {
+			if len(fresh) == 0 {
+				return nil
+			}
+			full := last
+			for _, data := range m.grabImages(tab, run, fresh) {
+				full += "\n\n![image](" + data + ")"
+			}
+			if full == last {
+				return nil
+			}
+			return onText(strings.TrimLeft(full, "\n"))
 		}
 		if time.Since(started) > 15*time.Minute {
 			return fmt.Errorf("%s отвечает дольше 15 минут", s.Title)
 		}
 	}
 }
+
+// attach прикладывает картинки к сообщению: через поле выбора файла, а если
+// его нет — событием «вставить» в поле ввода. Затем ждёт конца загрузки.
+func (m *Manager) attach(tab context.Context, profile string, s Site, run runFunc, eval func(string, any) error, sleep func(time.Duration) error, images []string) error {
+	upload := s.Upload
+	if upload == "" {
+		upload = "input[type='file']"
+	}
+	var picked bool
+	eval(fmt.Sprintf(pickUploadJS, upload), &picked)
+	if picked {
+		if err := run(30*time.Second, chromedp.SetUploadFiles("[data-edy-upload]", images, chromedp.ByQuery)); err != nil {
+			return m.fail(tab, profile, fmt.Errorf("не удалось приложить картинку: %w", err))
+		}
+	} else {
+		var files [][2]string
+		for _, path := range images {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			mime := http.DetectContentType(data)
+			files = append(files, [2]string{filepath.Base(path), "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)})
+		}
+		list, _ := json.Marshal(files)
+		var ok bool
+		err := run(30*time.Second, chromedp.Evaluate(fmt.Sprintf(pasteFilesJS, s.Input, list), &ok, awaitPromise))
+		if err != nil || !ok {
+			return m.fail(tab, profile, fmt.Errorf("на странице %s не найдено, куда приложить картинку — задайте селектор upload", s.Title))
+		}
+	}
+	if err := sleep(2 * time.Second); err != nil {
+		return err
+	}
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
+		var busy bool
+		if eval(uploadingJS, &busy) != nil || !busy {
+			break
+		}
+		if err := sleep(500 * time.Millisecond); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// grabImages возвращает картинки ответа как data URL: скачивает их с куками
+// сайта, а если не вышло (CORS) — делает снимок элемента на странице.
+func (m *Manager) grabImages(tab context.Context, run runFunc, srcs []string) []string {
+	list, _ := json.Marshal(srcs)
+	var data []string
+	run(60*time.Second, chromedp.Evaluate(fmt.Sprintf(fetchImagesJS, list), &data, awaitPromise))
+	out := make([]string, 0, len(srcs))
+	for i, src := range srcs {
+		if i < len(data) && strings.HasPrefix(data[i], "data:image/") {
+			out = append(out, data[i])
+			continue
+		}
+		var ok bool
+		var buf []byte
+		if run(10*time.Second, chromedp.Evaluate(fmt.Sprintf(markImageJS, src), &ok)) != nil || !ok {
+			continue
+		}
+		if run(20*time.Second, chromedp.Screenshot("[data-edy-img]", &buf, chromedp.ByQuery)) == nil && len(buf) > 0 {
+			out = append(out, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(buf))
+		}
+	}
+	return out
+}
+
+// awaitPromise заставляет Evaluate дождаться результата async-функции.
+func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
 
 // fail сохраняет снимок страницы и список её полей и кнопок для диагностики
 // и дописывает пути к ошибке.
