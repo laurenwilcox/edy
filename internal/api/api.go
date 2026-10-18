@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/notify"
 	"github.com/laurenwilcox/name/internal/omniroute"
 	"github.com/laurenwilcox/name/internal/store"
 	"github.com/laurenwilcox/name/internal/tasks"
@@ -63,6 +64,8 @@ type Handler struct {
 	ReposDir string
 	// Home — папка данных Edy (общие скиллы в Home/skills).
 	Home string
+	// Notify показывает системное уведомление; подменяется в тестах.
+	Notify notify.Notifier
 
 	mux  *http.ServeMux
 	mcpM sync.Mutex
@@ -71,7 +74,7 @@ type Handler struct {
 }
 
 func New(st *store.Store, token, addr string) *Handler {
-	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels, OpenURL: openInBrowser}
+	h := &Handler{Store: st, Token: token, Addr: addr, FindExecutable: omniroute.FindExecutable, Install: runInstall, ListModels: omniroute.ListModels, OpenURL: openInBrowser, Notify: notify.System}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/info", h.info)
 	m.HandleFunc("GET /api/presets", h.presets)
@@ -83,6 +86,9 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
 	m.HandleFunc("PUT /api/providers/{name}/caps", h.setCaps)
 	m.HandleFunc("GET /api/caps", h.capsCatalog)
+	m.HandleFunc("GET /api/prefs", h.prefs)
+	m.HandleFunc("PUT /api/prefs", h.setPrefs)
+	m.HandleFunc("POST /api/notify/test", h.testNotify)
 	m.HandleFunc("DELETE /api/keys/{id}", h.deleteKey)
 	m.HandleFunc("POST /api/install", h.install)
 	m.HandleFunc("POST /api/web/login", h.webLogin)
@@ -256,6 +262,43 @@ type providerJSON struct {
 	CapsAuto bool     `json:"caps_auto"`
 	// CanMCP — утилита технически умеет подключать MCP (тег можно включить).
 	CanMCP bool `json:"can_mcp"`
+}
+
+// SettingNotifyOff — «1», если уведомления выключены.
+const SettingNotifyOff = "notify_off"
+
+func (h *Handler) prefs(w http.ResponseWriter, r *http.Request) {
+	off, _ := h.Store.Setting(SettingNotifyOff)
+	reply(w, map[string]bool{"notify": off != "1"})
+}
+
+func (h *Handler) setPrefs(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Notify *bool `json:"notify"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	if req.Notify != nil {
+		v := "0"
+		if !*req.Notify {
+			v = "1"
+		}
+		if err := h.Store.SetSetting(SettingNotifyOff, v); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	h.prefs(w, r)
+}
+
+func (h *Handler) testNotify(w http.ResponseWriter, r *http.Request) {
+	if err := h.Notify("Edy", "Уведомления работают: так Edy сообщит, что задача готова или нужна помощь"); err != nil {
+		fail(w, http.StatusBadGateway, "macOS не показал уведомление: "+err.Error())
+		return
+	}
+	reply(w, map[string]bool{"ok": true})
 }
 
 func (h *Handler) capsCatalog(w http.ResponseWriter, r *http.Request) {

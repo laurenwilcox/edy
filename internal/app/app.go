@@ -125,6 +125,14 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 			}
 			return ps.ReviewModel
 		})
+	h.Tasks.Notify = func(v tasks.View, msg string) {
+		if off, _ := st.Setting(api.SettingNotifyOff); off == "1" {
+			return
+		}
+		if err := h.Notify("Edy · "+filepath.Base(v.Project), v.Title+"\n"+msg); err != nil {
+			log.Warn("уведомление не показано", "err", err)
+		}
+	}
 	h.Tasks.AutoApprove = func(project string) bool {
 		ps, err := st.ProjectSettings(project)
 		return err == nil && ps.AutoApprove

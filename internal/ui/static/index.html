@@ -746,6 +746,10 @@ h3.sub:first-child { margin-top: 0; }
         <label class="switch-label" title="Принимать результат без вас, если проверки и ревью прошли — очередь идёт сама, например ночью">
           <input type="checkbox" id="board-auto"> Автопринятие
         </label>
+        <label class="switch-label" title="Уведомление macOS, когда задача готова, нужна помощь или ошибка">
+          <input type="checkbox" id="board-notify"> 🔔 Уведомления
+        </label>
+        <button class="btn ghost icon" type="button" id="notify-test" title="Показать пробное уведомление">Проверить</button>
       </div>
       <div class="board-cols" id="board-cols"></div>
     </div>
@@ -1951,6 +1955,8 @@ async function loadBoard() {
     boardTasks = await api("GET", "/api/tasks?project=" + encodeURIComponent(project));
     const gs = await api("GET", "/api/git/info?path=" + encodeURIComponent(project)).catch(() => null);
     if (gs) $("#board-auto").checked = !!gs.settings.auto_approve;
+    const prefs = await api("GET", "/api/prefs").catch(() => null);
+    if (prefs) $("#board-notify").checked = prefs.notify;
   } catch (e) { toast(e.message, true); return; }
   renderBoard();
   if (chatMode === "board") boardTimer = setTimeout(loadBoard, boardTasks.some((t) => t.state === "running" || t.state === "queued") ? 2000 : 6000);
@@ -2071,6 +2077,15 @@ $("#board-new").addEventListener("submit", async (e) => {
   if (!request) return;
   try { await api("POST", "/api/board", { project: $("#project").value, request }); f.request.value = ""; loadBoard(); }
   catch (err) { toast(err.message, true); }
+});
+
+$("#board-notify").addEventListener("change", async (e) => {
+  try { await api("PUT", "/api/prefs", { notify: e.target.checked }); toast(e.target.checked ? "Уведомления включены" : "Уведомления выключены"); }
+  catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+});
+$("#notify-test").addEventListener("click", async () => {
+  try { await api("POST", "/api/notify/test"); toast("Уведомление отправлено — если его не видно, разрешите уведомления для «Редактора скриптов» в Системных настройках"); }
+  catch (e) { toast(e.message, true); }
 });
 
 $("#board-auto").addEventListener("change", async (e) => {

@@ -129,3 +129,22 @@ func TestPatchRevertAndFileViewer(t *testing.T) {
 	h.Tasks.Reject(v.ID)
 	h.Tasks.Wait()
 }
+
+func TestNotifyPrefs(t *testing.T) {
+	h, _ := setup(t)
+	var shown []string
+	h.Notify = func(title, msg string) error { shown = append(shown, title+"|"+msg); return nil }
+	if rec := call(h, "GET", "/api/prefs", ""); !strings.Contains(rec.Body.String(), `"notify":true`) {
+		t.Fatalf("по умолчанию уведомления включены: %s", rec.Body)
+	}
+	if rec := call(h, "PUT", "/api/prefs", `{"notify":false}`); !strings.Contains(rec.Body.String(), `"notify":false`) {
+		t.Fatalf("выключить: %s", rec.Body)
+	}
+	if off, _ := h.Store.Setting(SettingNotifyOff); off != "1" {
+		t.Fatal("настройка не сохранена")
+	}
+	call(h, "POST", "/api/notify/test", "")
+	if len(shown) != 1 || !strings.HasPrefix(shown[0], "Edy|") {
+		t.Fatalf("пробное уведомление: %v", shown)
+	}
+}
