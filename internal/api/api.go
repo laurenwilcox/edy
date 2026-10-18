@@ -93,6 +93,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	h.registerProjectRoutes(m)
 	h.registerGitRoutes(m)
 	h.registerSkillRoutes(m)
+	h.registerMCPCatalogRoutes(m)
 	h.mux = m
 	return h
 }

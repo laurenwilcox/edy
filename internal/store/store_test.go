@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -153,5 +154,48 @@ func TestKeyInfosDeleteKeyAndUsageSince(t *testing.T) {
 	}
 	if sum[0].Client != "backend" || sum[0].Requests != 2 || sum[0].InputTokens != 15 {
 		t.Fatalf("sum[0] = %+v", sum[0])
+	}
+}
+
+func TestMCPServersAreEncrypted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "edy.db")
+	v, _ := vault.New(bytes.Repeat([]byte{9}, 32))
+	st, err := Open(path, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, bad := range []MCPServer{
+		{Name: "edy", MCPConfig: MCPConfig{Type: MCPStdio, Command: "x"}},
+		{Name: "Bad Name", MCPConfig: MCPConfig{Type: MCPStdio, Command: "x"}},
+		{Name: "gh", MCPConfig: MCPConfig{Type: MCPHTTP, URL: "ftp://x"}},
+		{Name: "pw", MCPConfig: MCPConfig{Type: MCPStdio}},
+	} {
+		if st.SaveMCPServer(bad) == nil {
+			t.Fatalf("должно отклоняться: %+v", bad)
+		}
+	}
+	gh := MCPServer{Name: "github", Description: "Issues и PR", Enabled: true,
+		MCPConfig: MCPConfig{Type: MCPHTTP, URL: "https://api.githubcopilot.com/mcp/", Headers: map[string]string{"Authorization": "Bearer ghs_supersecret"}}}
+	if err := st.SaveMCPServer(gh); err != nil {
+		t.Fatal(err)
+	}
+	pw := MCPServer{Name: "playwright", Enabled: true, MCPConfig: MCPConfig{Type: MCPStdio, Command: "npx", Args: []string{"@playwright/mcp@latest"}}}
+	if err := st.SaveMCPServer(pw); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetMCPServerEnabled("playwright", false); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.MCPServers()
+	if err != nil || len(list) != 2 || list[0].Headers["Authorization"] != "Bearer ghs_supersecret" || list[1].Enabled || list[1].Args[0] != "@playwright/mcp@latest" {
+		t.Fatalf("каталог: %+v %v", list, err)
+	}
+	raw, _ := os.ReadFile(path)
+	if bytes.Contains(raw, []byte("ghs_supersecret")) || bytes.Contains(raw, []byte("githubcopilot")) {
+		t.Fatal("настройки MCP-сервера лежат в базе открытым текстом")
+	}
+	if err := st.DeleteMCPServer("github"); err != nil || st.DeleteMCPServer("github") != ErrNotFound {
+		t.Fatal("удаление")
 	}
 }

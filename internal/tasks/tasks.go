@@ -53,6 +53,7 @@ type View struct {
 	Project  string        `json:"project"`
 	Goal     string        `json:"goal"`
 	Models   []string      `json:"models"`
+	MCP      []string      `json:"mcp,omitempty"` // внешние MCP-серверы, выданные Оркестратором
 	State    string        `json:"state"`
 	Error    string        `json:"error,omitempty"`
 	Summary  string        `json:"summary,omitempty"`
@@ -101,6 +102,12 @@ func NewManager(llm agent.LLM) *Manager {
 // Start запускает агента в фоне. Проверка «чистого» git делается сразу,
 // чтобы ошибка вернулась пользователю, а не потерялась в ленте.
 func (m *Manager) Start(project, goal string, models []string) (View, error) {
+	return m.StartWithMCP(project, goal, models, nil)
+}
+
+// StartWithMCP — как Start, но исполнитель с поддержкой MCP получает ещё и
+// внешние MCP-серверы mcp (их выбрал Оркестратор в плане).
+func (m *Manager) StartWithMCP(project, goal string, models, mcp []string) (View, error) {
 	if goal == "" || len(models) == 0 {
 		return View{}, errors.New("нужны задача и хотя бы одна модель")
 	}
@@ -118,7 +125,7 @@ func (m *Manager) Start(project, goal string, models []string) (View, error) {
 		return View{}, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, State: StateRunning, Created: m.Now(), Events: []agent.Event{}, Agents: []string{}}, skills: list}
+	r := &run{cancel: cancel, view: View{ID: newID(), Project: project, Goal: goal, Models: models, MCP: mcp, State: StateRunning, Created: m.Now(), Events: []agent.Event{}, Agents: []string{}}, skills: list}
 	m.runs[r.view.ID] = r
 	m.byProj[project] = r.view.ID
 	m.mu.Unlock()
@@ -138,6 +145,7 @@ func (m *Manager) work(ctx context.Context, r *run) {
 		LLM:    m.LLM,
 		Skills: r.skills,
 		MCP:    m.MCP,
+		Extra:  r.view.MCP,
 		OnEvent: func(e agent.Event) {
 			m.mu.Lock()
 			r.view.Events = append(r.view.Events, e)

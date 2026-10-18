@@ -46,6 +46,8 @@ type ToolDef struct {
 type CallOptions struct {
 	Workdir string
 	MCP     string
+	// MCPServers — имена внешних MCP-серверов из каталога Edy в дополнение к MCP Edy.
+	MCPServers []string
 }
 
 type callOptionsKey struct{}
@@ -98,6 +100,9 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 		}
 		if opt.MCP != "" {
 			req.Header.Set("X-Edy-MCP", opt.MCP)
+			if len(opt.MCPServers) > 0 {
+				req.Header.Set("X-Edy-MCP-Servers", strings.Join(opt.MCPServers, ","))
+			}
 		}
 	}
 	client := o.HTTP

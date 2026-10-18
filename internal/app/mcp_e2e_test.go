@@ -56,6 +56,12 @@ func fakeClaude(args []string) error {
 	}
 	json.Unmarshal(data, &cfg)
 	edy := cfg.MCPServers["edy"]
+	// Сервер из каталога, который Оркестратор выдал в плане.
+	if want := os.Getenv("EDY_FAKE_WANT_MCP"); want != "" {
+		if _, ok := cfg.MCPServers[want]; !ok || !strings.Contains(joined, "mcp__"+want) {
+			return fmt.Errorf("нет выданного MCP %s: %s | %s", want, data, joined)
+		}
+	}
 	session := ""
 	rpc := func(body string) (string, error) {
 		req, _ := http.NewRequest(http.MethodPost, edy.URL, strings.NewReader(body))
@@ -105,6 +111,7 @@ func TestOrchestratorGivesMCPToClaude(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("EDY_FAKE_CLAUDE", "1")
+	t.Setenv("EDY_FAKE_WANT_MCP", "docs")
 
 	proj := t.TempDir()
 	os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0o644)
@@ -123,6 +130,8 @@ func TestOrchestratorGivesMCPToClaude(t *testing.T) {
 	}
 	defer st.Close()
 	st.AddProvider(store.Provider{Name: "cc", Kind: store.KindCLI, Command: []string{"claude", "-p", "--model", "{model}", "{prompt}"}, Models: []string{"sonnet"}})
+	st.SaveMCPServer(store.MCPServer{Name: "docs", Description: "документация", Enabled: true,
+		MCPConfig: store.MCPConfig{Type: store.MCPHTTP, URL: "https://docs.example/mcp", Headers: map[string]string{"Authorization": "Bearer docs-token"}}})
 	srv, err := Start(st, home, "127.0.0.1:0", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +164,7 @@ func TestOrchestratorGivesMCPToClaude(t *testing.T) {
 			Kind, Text string
 		} `json:"events"`
 	}
-	api("POST", "/api/tasks", `{"project":"`+proj+`","request":"Добавь Sub","models":["cc/sonnet"]}`, &task)
+	api("POST", "/api/tasks", `{"project":"`+proj+`","request":"Добавь Sub","plan":"1. sub.go\nMCP: docs","models":["cc/sonnet"]}`, &task)
 	deadline := time.Now().Add(90 * time.Second)
 	for task.State == "running" && time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
@@ -168,7 +177,7 @@ func TestOrchestratorGivesMCPToClaude(t *testing.T) {
 	if task.State != "done" || task.Model != "cc/sonnet" {
 		t.Fatalf("задача: %s\n%s", task.State, feed.String())
 	}
-	for _, want := range []string{"получает MCP Edy", "Снимок №1 — write_file sub.go", "write_file sub.go → ", "Добавил функцию Sub", "✓ go test"} {
+	for _, want := range []string{"получает MCP: Edy, docs (выдал Оркестратор)", "Снимок №1 — write_file sub.go", "write_file sub.go → ", "Добавил функцию Sub", "✓ go test"} {
 		if !strings.Contains(feed.String(), want) {
 			t.Fatalf("в ленте нет %q:\n%s", want, feed.String())
 		}

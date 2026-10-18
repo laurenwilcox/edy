@@ -51,6 +51,9 @@ type Task struct {
 	// (Claude Code): они правят проект инструментами Edy сами, без пошаговой
 	// эмуляции. nil — все модели работают через инструменты в промпте.
 	MCP MCPBridge
+	// Extra — внешние MCP-серверы из каталога Edy, которые Оркестратор выдал
+	// исполнителю вместе с MCP Edy (только исполнителям с поддержкой MCP).
+	Extra []string
 }
 
 // MCPBridge выдаёт исполнителю адрес MCP-сервера Edy, привязанный к задаче.
@@ -162,6 +165,9 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 		if t.MCP != nil && t.MCP.Supports(model) {
 			summary, ok, err = t.attemptMCP(ctx, model, hooks, &step)
 		} else {
+			if len(t.Extra) > 0 {
+				t.emit("info", "%s не умеет MCP: серверы %s не выданы, работает через инструменты Edy в промпте", model, strings.Join(t.Extra, ", "))
+			}
 			summary, ok, err = t.attempt(ctx, model, ws, shadow, hooks, &step)
 		}
 		if t.OnAttemptEnd != nil {
@@ -307,10 +313,19 @@ func (t *Task) attemptMCP(ctx context.Context, model string, hooks []Hook, step 
 		},
 	})
 	defer release()
-	t.emit("info", "%s получает MCP Edy: правит проект инструментами Edy, каждая правка — снимок", model)
-	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root, MCP: url})
+	if len(t.Extra) > 0 {
+		t.emit("info", "%s получает MCP: Edy, %s (выдал Оркестратор). Правки через Edy — снимки", model, strings.Join(t.Extra, ", "))
+	} else {
+		t.emit("info", "%s получает MCP Edy: правит проект инструментами Edy, каждая правка — снимок", model)
+	}
+	ctx = WithCallOptions(ctx, CallOptions{Workdir: t.Root, MCP: url, MCPServers: t.Extra})
 
 	base := strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)) + "\n\nЗадача:\n" + t.Goal
+	if len(t.Extra) > 0 {
+		base = strings.TrimSpace(mcpPrompt+"\n\n"+skills.Catalog(t.Skills)) +
+			"\n\nДля этой задачи тебе также выданы MCP-серверы: " + strings.Join(t.Extra, ", ") +
+			". Пользуйся ими, когда они нужны (например, проверить результат), но правь файлы проекта только через edy.\n\nЗадача:\n" + t.Goal
+	}
 	prompt := base
 	failures := 0
 	for {

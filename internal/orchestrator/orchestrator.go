@@ -37,12 +37,31 @@ var planRe = regexp.MustCompile(`(?s)<plan>\s*(.*?)\s*</plan>`)
 
 // Reply — ответ Оркестратора.
 type Reply struct {
-	Text string `json:"text"`           // ответ без блока плана
-	Plan string `json:"plan,omitempty"` // план, если Оркестратор его составил
+	Text string   `json:"text"`           // ответ без блока плана
+	Plan string   `json:"plan,omitempty"` // план, если Оркестратор его составил
+	MCP  []string `json:"mcp,omitempty"`  // внешние MCP-серверы, которые он выдаёт исполнителю
 }
 
+// Server — внешний MCP-сервер, который Оркестратор может выдать исполнителю.
+type Server struct {
+	Name        string
+	Description string
+}
+
+const mcpPrompt = `
+
+Внешние MCP-серверы. Исполнитель всегда получает MCP Edy (файлы проекта, поиск, проверки, скиллы).
+Дополнительно ты можешь выдать ему серверы из списка ниже — только те, без которых задачу не сделать
+или не проверить. Для этого добавь в план отдельную строку:
+MCP: имя1, имя2
+Если дополнительные серверы не нужны, строку не пиши. Серверы получает только исполнитель с поддержкой MCP
+(Claude Code); остальным они не передаются.
+Доступные серверы:
+%s`
+
 // Chat отправляет историю диалога Оркестратору и возвращает его ответ.
-func Chat(ctx context.Context, llm agent.LLM, model, project string, history []agent.Msg) (Reply, error) {
+// servers — каталог внешних MCP-серверов, из которых он выбирает нужные.
+func Chat(ctx context.Context, llm agent.LLM, model, project string, history []agent.Msg, servers []Server) (Reply, error) {
 	if model == "" {
 		return Reply{}, errors.New("выберите модель для Оркестратора")
 	}
@@ -51,13 +70,46 @@ func Chat(ctx context.Context, llm agent.LLM, model, project string, history []a
 		return Reply{}, fmt.Errorf("не удалось прочитать проект: %w", err)
 	}
 	files := idx.Skeleton(15000)
-	msgs := append([]agent.Msg{{Role: "system", Content: fmt.Sprintf(systemPrompt, project, files)}}, history...)
+	system := fmt.Sprintf(systemPrompt, project, files)
+	if len(servers) > 0 {
+		var list strings.Builder
+		for _, sv := range servers {
+			fmt.Fprintf(&list, "- %s — %s\n", sv.Name, sv.Description)
+		}
+		system += fmt.Sprintf(mcpPrompt, list.String())
+	}
+	msgs := append([]agent.Msg{{Role: "system", Content: system}}, history...)
 	// Оркестратору инструменты не нужны: он только планирует.
 	reply, err := llm.Chat(ctx, model, msgs, nil)
 	if err != nil {
 		return Reply{}, err
 	}
-	return parse(reply.Content), nil
+	out := parse(reply.Content)
+	out.MCP = PlanMCP(out.Plan, servers)
+	return out, nil
+}
+
+var mcpLineRe = regexp.MustCompile(`(?mi)^\s*[-*]?\s*MCP\s*:\s*(.+)$`)
+
+// PlanMCP достаёт из плана строку «MCP: …» и оставляет только серверы из
+// каталога: выдумать сервер или выдать выключенный Оркестратор не может.
+func PlanMCP(plan string, servers []Server) []string {
+	known := map[string]bool{}
+	for _, sv := range servers {
+		known[sv.Name] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range mcpLineRe.FindAllStringSubmatch(plan, -1) {
+		for _, name := range strings.FieldsFunc(m[1], func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+			name = strings.ToLower(strings.Trim(name, "`*.\"'"))
+			if known[name] && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 func parse(content string) Reply {

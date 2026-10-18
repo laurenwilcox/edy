@@ -242,6 +242,11 @@ pre.log { white-space: pre-wrap; max-height: 220px; overflow: auto; background: 
 .dd-empty { padding: 8px 10px; color: var(--muted); }
 .messages[hidden] { display: none !important; }
 .plan { margin-top: 10px; border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent); background: color-mix(in srgb, var(--a1) 6%, transparent); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
+.plan-mcp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; white-space: normal; font-size: 13px; }
+#mcp-presets { justify-content: flex-start; margin: 0 0 12px; }
+.mcp-row { display: flex; gap: 12px; align-items: flex-start; }
+.mcp-row .grow { flex: 1; min-width: 0; }
+.mcp-row .switch { flex: none; }
 .plan-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; white-space: normal; }
 .msg.task { max-width: min(820px, 94%); width: 100%; white-space: normal; }
 .task-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
@@ -326,6 +331,7 @@ h3.sub:first-child { margin-top: 0; }
     </div>
     <button class="menu-item" data-open="p-project"><span class="ico">🗂</span>Проект</button>
     <button class="menu-item" data-open="p-git"><span class="ico">🔀</span>Git</button>
+    <button class="menu-item" data-open="p-mcp"><span class="ico">🧩</span>MCP-серверы</button>
     <button class="menu-item" data-open="p-agents"><span class="ico">🤖</span>Агенты<span class="soon" id="agents-running" hidden></span></button>
     <div class="side-foot"><span class="dot"></span>OmniRoute работает<br><span id="foot-providers">—</span></div>
   </nav>
@@ -541,6 +547,37 @@ h3.sub:first-child { margin-top: 0; }
           </form>
         </section>
 
+        <section id="p-mcp">
+          <div class="hint-box small">Каталог внешних MCP-серверов. Оркестратор видит их описания и сам решает, какие выдать исполнителю под задачу: в плане появляется строка «MCP: …». Исполнитель с поддержкой MCP (Claude Code) получает их вместе с MCP Edy. Файлы проекта он всё равно правит только через Edy.</div>
+          <div id="mcp-list" style="margin-top:12px"></div>
+          <h3 class="sub">Добавить сервер</h3>
+          <div class="chips" id="mcp-presets"></div>
+          <form class="card form-grid" id="mcp-form">
+            <label>Имя <input name="name" placeholder="playwright" autocomplete="off" required></label>
+            <label>Тип
+              <select name="type">
+                <option value="stdio">Программа на Mac (stdio)</option>
+                <option value="http">Удалённый сервер (HTTP)</option>
+              </select>
+            </label>
+            <label class="wide">Для чего (Оркестратор выбирает по этому описанию)
+              <input name="description" placeholder="Браузер: открыть страницу, кликнуть, скриншот" autocomplete="off" required>
+            </label>
+            <label class="wide" data-mcp="http">Адрес <input name="url" placeholder="https://…/mcp" autocomplete="off"></label>
+            <label class="wide" data-mcp="http">Заголовки — по одному в строке, «Имя: значение»
+              <textarea name="headers" rows="2" placeholder="Authorization: Bearer …"></textarea>
+            </label>
+            <label data-mcp="stdio">Команда <input name="command" placeholder="npx" autocomplete="off"></label>
+            <label data-mcp="stdio">Аргументы — по одному в строке
+              <textarea name="args" rows="2" placeholder="@playwright/mcp@latest"></textarea>
+            </label>
+            <label class="wide" data-mcp="stdio">Переменные окружения — «ИМЯ=значение» в строке
+              <textarea name="env" rows="2" placeholder="API_KEY=…"></textarea>
+            </label>
+            <div class="row wide"><button class="btn" type="submit">Сохранить</button><span class="small muted" id="mcp-note">Заголовки и переменные хранятся зашифрованными. Сохранение с тем же именем заменяет сервер.</span></div>
+          </form>
+        </section>
+
         <section id="p-agents">
           <div id="agents-list"></div>
           <div id="agent-detail" hidden></div>
@@ -687,8 +724,8 @@ if (inApp) {
 }
 
 // ============ Меню и панель ============
-const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-agents": "Агенты" };
-const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-agents": loadAgents };
+const titles = { "p-list": "Подключённые провайдеры", "p-add": "Добавить провайдера", "p-usage": "Расходы", "p-connect": "Подключение", "p-project": "Проект", "p-git": "Git", "p-mcp": "MCP-серверы", "p-agents": "Агенты" };
+const loaders = { "p-list": loadProviders, "p-add": () => {}, "p-usage": loadUsage, "p-connect": loadConnect, "p-project": loadProjects, "p-git": loadGit, "p-mcp": loadMCPServers, "p-agents": loadAgents };
 
 function openPanel(id) {
   for (const s of document.querySelectorAll(".panel-body > section")) s.hidden = s.id !== id;
@@ -1127,6 +1164,61 @@ for (const b of document.querySelectorAll("[data-copy]")) {
   });
 }
 
+// ============ MCP-серверы ============
+let mcpPresets = [];
+async function loadMCPServers() {
+  let r;
+  try { r = await api("GET", "/api/mcp-servers"); } catch (e) { return toast(e.message, true); }
+  mcpPresets = r.presets;
+  const box = $("#mcp-list");
+  box.replaceChildren(...(r.servers.length ? r.servers.map((m) => el("div", { class: "card" },
+    el("div", { class: "mcp-row" },
+      el("div", { class: "grow" },
+        el("div", { class: "row" }, el("strong", {}, m.name), el("span", { class: "badge" + (m.type === "http" ? "" : " cli") }, m.type === "http" ? "HTTP" : "stdio"),
+          m.enabled ? "" : el("span", { class: "badge off" }, "выключен")),
+        el("div", { class: "small", style: "margin-top:4px" }, m.description),
+        el("div", { class: "small muted mono", style: "margin-top:6px;display:inline-block" },
+          m.type === "http" ? m.url : [m.command, ...(m.args || [])].join(" ")),
+        (m.headers?.length || m.env?.length) ? el("div", { class: "small muted", style: "margin-top:4px" },
+          "🔒 " + [...(m.headers || []), ...(m.env || [])].join(", ") + " — значения скрыты") : ""),
+      el("div", { class: "row" },
+        el("button", { class: "btn ghost icon", onclick: async () => {
+          try { await api("PUT", `/api/mcp-servers/${encodeURIComponent(m.name)}/enabled`, { enabled: !m.enabled }); loadMCPServers(); } catch (e) { toast(e.message, true); }
+        } }, m.enabled ? "Выключить" : "Включить"),
+        el("button", { class: "btn danger icon", onclick: async () => {
+          if (!confirm(`Удалить MCP-сервер «${m.name}»?`)) return;
+          try { await api("DELETE", "/api/mcp-servers/" + encodeURIComponent(m.name)); toast("Сервер удалён"); loadMCPServers(); } catch (e) { toast(e.message, true); }
+        } }, "Удалить")))))
+    : [el("div", { class: "card muted small" }, "Серверов пока нет. Выберите шаблон ниже или добавьте свой.")]));
+  $("#mcp-presets").replaceChildren(...mcpPresets.map((p) => el("button", { class: "chip", type: "button", onclick: () => fillMCPPreset(p) }, p.title)));
+  syncMCPForm();
+}
+
+function fillMCPPreset(p) {
+  const f = $("#mcp-form");
+  f.name.value = p.name; f.type.value = p.type; f.description.value = p.description;
+  f.url.value = p.url || ""; f.command.value = p.command || ""; f.args.value = (p.args || []).join("\n");
+  f.headers.value = p.secret && p.type === "http" ? p.secret : ""; f.env.value = "";
+  $("#mcp-note").textContent = p.note ? p.note + " Заголовки и переменные хранятся зашифрованными." : "Заголовки и переменные хранятся зашифрованными.";
+  syncMCPForm();
+}
+
+function syncMCPForm() {
+  const type = $("#mcp-form").type.value;
+  for (const l of document.querySelectorAll("#mcp-form [data-mcp]")) l.hidden = l.dataset.mcp !== type;
+}
+$("#mcp-form").type.addEventListener("change", syncMCPForm);
+$("#mcp-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("POST", "/api/mcp-servers", { name: f.name.value.trim(), type: f.type.value, description: f.description.value.trim(),
+      url: f.url.value, headers: f.headers.value, command: f.command.value, args: f.args.value, env: f.env.value });
+    toast("Сервер сохранён — Оркестратор увидит его в следующем ответе");
+    f.reset(); syncMCPForm(); loadMCPServers();
+  } catch (err) { toast(err.message, true); }
+});
+
 // ============ Чат ============
 let msgsBox = $("#messages");
 const input = $("#input");
@@ -1334,7 +1426,7 @@ async function sendOrch() {
     const r = await api("POST", "/api/orchestrator", { project, model, messages: orchHistory, conversation: orchConversation });
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
-    if (r.plan) m.append(planCard(r.plan, project));
+    if (r.plan) m.append(planCard(r.plan, project, r.mcp || []));
   } catch (e) {
     orchHistory.pop();
     m.classList.add("error");
@@ -1345,9 +1437,11 @@ async function sendOrch() {
   }
 }
 
-function planCard(plan, project) {
+function planCard(plan, project, mcp) {
   const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
-  const box = el("div", { class: "plan" }, plan, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
+  const tools = mcp && mcp.length ? el("div", { class: "plan-mcp" }, "🧩 Оркестратор выдаёт исполнителю MCP: ",
+    ...mcp.map((n) => el("span", { class: "badge" }, n)), el("span", { class: "small muted" }, " (только исполнителю с пометкой «· MCP»)")) : "";
+  const box = el("div", { class: "plan" }, plan, tools, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
   start.addEventListener("click", async () => {
     const worker = $("#worker").value;
     const fallback = $("#fallback").value;

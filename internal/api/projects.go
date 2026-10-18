@@ -238,7 +238,7 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	agentID := h.journalOrchestrator(req.Conversation, req.Model, req.Project, history)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history)
+	out, err := orchestrator.Chat(ctx, h.LLM, req.Model, req.Project, history, h.orchestratorServers())
 	if agentID != "" {
 		switch {
 		case err != nil:
@@ -247,6 +247,9 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		case out.Plan != "":
 			h.Store.AddAgentEvent(agentID, "model", out.Text, time.Now())
 			h.Store.AddAgentEvent(agentID, "plan", out.Plan, time.Now())
+			if len(out.MCP) > 0 {
+				h.Store.AddAgentEvent(agentID, "info", "Выдаёт исполнителю MCP: "+strings.Join(out.MCP, ", "), time.Now())
+			}
 			h.Store.TouchAgent(agentID, store.AgentDone, "Предложен план")
 		default:
 			h.Store.AddAgentEvent(agentID, "model", out.Text, time.Now())
@@ -258,6 +261,25 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, out)
+}
+
+// orchestratorServers — включённые серверы каталога MCP для инструкций Оркестратора.
+func (h *Handler) orchestratorServers() []orchestrator.Server {
+	list, err := h.Store.MCPServers()
+	if err != nil {
+		return nil
+	}
+	var out []orchestrator.Server
+	for _, m := range list {
+		if m.Enabled {
+			desc := m.Description
+			if desc == "" {
+				desc = "без описания"
+			}
+			out = append(out, orchestrator.Server{Name: m.Name, Description: desc})
+		}
+	}
+	return out
 }
 
 // journalOrchestrator ведёт Оркестратора в журнале: агент создаётся на
@@ -317,7 +339,9 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "неизвестная модель "+m)
 		return
 	}
-	v, err := h.Tasks.Start(req.Project, orchestrator.Goal(req.Request, req.Plan), models)
+	// Внешние MCP-серверы берутся из утверждённого плана: их выбрал Оркестратор.
+	mcpServers := orchestrator.PlanMCP(req.Plan, h.orchestratorServers())
+	v, err := h.Tasks.StartWithMCP(req.Project, orchestrator.Goal(req.Request, req.Plan), models, mcpServers)
 	if errors.Is(err, tasks.ErrBusy) {
 		fail(w, http.StatusConflict, err.Error())
 		return

@@ -177,7 +177,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("провайдер %s не умеет подключать MCP Edy", provider.Name))
 			return
 		}
-		call.MCP = &MCPAttach{URL: mcpURL, Token: s.token}
+		extra, err := s.extraMCP(r.Header.Get(MCPServersHeader))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		call.MCP = &MCPAttach{URL: mcpURL, Token: s.token, Extra: extra}
 	}
 	out := newResponder(w, req.Stream, req.Model, s.now())
 	usage, err := s.callWithRotation(r.Context(), adapter, call, out.emit)
