@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -177,5 +178,68 @@ func (s *Store) AgentEvents(agentID string, afterID int64) ([]AgentEvent, error)
 		e.At = time.UnixMilli(ts)
 		out = append(out, e)
 	}
+	return out, rows.Err()
+}
+
+// ModelStat — как модель справляется с задачами и сколько стоит.
+type ModelStat struct {
+	Model     string  `json:"model"`     // «провайдер/модель»
+	Attempts  int64   `json:"attempts"`  // сколько раз брала задачу исполнителем
+	Successes int64   `json:"successes"` // сколько раз прошла проверки
+	CostUSD   float64 `json:"cost_usd"`  // расходы модели за период (все роли)
+	Tokens    int64   `json:"tokens"`
+}
+
+// ModelStats собирает успехи исполнителей из журнала агентов и расходы из
+// учёта токенов с момента since.
+func (s *Store) ModelStats(since time.Time) ([]ModelStat, error) {
+	stats := map[string]*ModelStat{}
+	get := func(m string) *ModelStat {
+		if stats[m] == nil {
+			stats[m] = &ModelStat{Model: m}
+		}
+		return stats[m]
+	}
+	rows, err := s.db.Query(`SELECT model, COUNT(*), SUM(CASE WHEN state = ? THEN 1 ELSE 0 END) FROM agents
+		WHERE role = ? AND created >= ? AND state != ? GROUP BY model`, AgentDone, RoleExecutor, since.UnixMilli(), AgentRunning)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var m string
+		var a, ok int64
+		if err := rows.Scan(&m, &a, &ok); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		st := get(m)
+		st.Attempts, st.Successes = a, ok
+	}
+	rows.Close()
+	rows, err = s.db.Query(`SELECT provider || '/' || model, SUM(cost_usd), SUM(input_tokens + output_tokens) FROM usage WHERE ts >= ? GROUP BY provider, model`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m string
+		var cost float64
+		var tok int64
+		if err := rows.Scan(&m, &cost, &tok); err != nil {
+			return nil, err
+		}
+		st := get(m)
+		st.CostUSD, st.Tokens = cost, tok
+	}
+	out := make([]ModelStat, 0, len(stats))
+	for _, st := range stats {
+		out = append(out, *st)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Attempts != out[j].Attempts {
+			return out[i].Attempts > out[j].Attempts
+		}
+		return out[i].Model < out[j].Model
+	})
 	return out, rows.Err()
 }

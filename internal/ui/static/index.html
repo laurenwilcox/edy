@@ -506,6 +506,14 @@ h3.sub:first-child { margin-top: 0; }
             </table>
           </div>
           <p class="muted small">Для CLI-утилит токены оцениваются примерно.</p>
+          <h3 class="sub">Модели за 30 дней: успех и цена</h3>
+          <div class="card" style="padding:6px 8px; overflow-x:auto">
+            <table>
+              <thead><tr><th>Модель</th><th class="num">Успех</th><th class="num">За задачу</th><th class="num">Всего</th></tr></thead>
+              <tbody id="model-stats"></tbody>
+            </table>
+          </div>
+          <p class="muted small">Успех — исполнитель прошёл проверки (тесты и линтеры). Оркестратор видит эту таблицу и может посоветовать модель дешевле, которая обычно справляется.</p>
         </section>
 
         <section id="p-project">
@@ -1244,7 +1252,24 @@ async function loadUsage() {
       el("td", { class: "num" }, num(i.requests)),
       el("td", { class: "num" }, money(i.cost_usd))));
   }
+  loadModelStats();
 }
+async function loadModelStats() {
+  let stats;
+  try { stats = await api("GET", "/api/stats/models?days=30"); } catch { return; }
+  const rows = $("#model-stats");
+  if (!stats.length) { rows.replaceChildren(el("tr", {}, el("td", { colspan: "4", class: "empty" }, "Статистики пока нет — она появится после задач"))); return; }
+  rows.replaceChildren(...stats.map((st) => {
+    const rate = st.attempts ? Math.round(st.successes / st.attempts * 100) : null;
+    const color = rate === null ? "" : rate >= 70 ? "var(--ok)" : rate >= 40 ? "var(--warn)" : "var(--danger)";
+    return el("tr", { title: `Токены: ${num(st.tokens)}` },
+      el("td", {}, el("code", {}, st.model)),
+      el("td", { class: "num", style: color ? "color:" + color + ";font-weight:600" : "" }, rate === null ? "—" : `${rate}% (${st.successes}/${st.attempts})`),
+      el("td", { class: "num" }, st.successes && st.cost_usd ? money(st.cost_usd / st.successes) : st.cost_usd ? "—" : "подписка"),
+      el("td", { class: "num" }, money(st.cost_usd)));
+  }));
+}
+
 $("#budget-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {

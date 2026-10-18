@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ func (h *Handler) registerProjectRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/tasks/{id}/patch", h.taskPatch)
 	m.HandleFunc("POST /api/tasks/{id}/revert-file", h.revertFile)
 	m.HandleFunc("GET /api/projects/files", h.projectFiles)
+	m.HandleFunc("GET /api/stats/models", h.modelStats)
 	m.HandleFunc("GET /api/projects/file", h.projectFile)
 	m.HandleFunc("GET /api/tasks/{id}", h.getTask)
 	m.HandleFunc("POST /api/tasks/{id}/{action}", h.taskAction)
@@ -285,13 +287,19 @@ func (h *Handler) orchestratorContext(project string, executors []string) orches
 	for _, p := range providers {
 		byName[p.Name] = p
 	}
+	statByModel := map[string]string{}
+	if stats, err := h.Store.ModelStats(time.Now().AddDate(0, 0, -30)); err == nil {
+		for _, st := range stats {
+			statByModel[st.Model] = statLine(st)
+		}
+	}
 	describe := func(model string) (orchestrator.Executor, bool) {
 		name, _, ok := splitModelName(model)
 		p, found := byName[name]
 		if !ok || !found {
 			return orchestrator.Executor{}, false
 		}
-		e := orchestrator.Executor{Model: model, MCP: omniroute.HasCap(p, omniroute.CapMCP)}
+		e := orchestrator.Executor{Model: model, MCP: omniroute.HasCap(p, omniroute.CapMCP), Stats: statByModel[model]}
 		for _, cp := range omniroute.Caps(p) {
 			e.Caps = append(e.Caps, omniroute.CapTitle(cp))
 		}
@@ -319,6 +327,35 @@ func (h *Handler) orchestratorContext(project string, executors []string) orches
 	}
 	c.Servers = h.orchestratorServers()
 	return c
+}
+
+// statLine — статистика модели одной строкой для Оркестратора.
+func statLine(st store.ModelStat) string {
+	if st.Attempts == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("за 30 дней прошла проверки в %d из %d задач", st.Successes, st.Attempts)
+	switch {
+	case st.CostUSD > 0 && st.Successes > 0:
+		line += fmt.Sprintf(", ≈$%.2f за успешную задачу", st.CostUSD/float64(st.Successes))
+	case st.CostUSD == 0:
+		line += ", без оплаты за токены (подписка или локальная)"
+	}
+	return line
+}
+
+// modelStats — статистика моделей для экрана «Расходы».
+func (h *Handler) modelStats(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	stats, err := h.Store.ModelStats(time.Now().AddDate(0, 0, -days))
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	reply(w, stats)
 }
 
 // orchestratorServers — включённые серверы каталога MCP для инструкций Оркестратора.

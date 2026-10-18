@@ -108,3 +108,14 @@ func TestPlanParsers(t *testing.T) {
 		t.Fatalf("PlanSkills: %v", got)
 	}
 }
+
+func TestExecutorStatsInInstructions(t *testing.T) {
+	llm := &fakeLLM{reply: "ok"}
+	c := Context{Executors: []Executor{{Model: "smart/m", Stats: "за 30 дней прошла проверки в 9 из 10 задач, ≈$0.40 за успешную задачу"}},
+		Others: []Executor{{Model: "cheap/m", Stats: "за 30 дней прошла проверки в 8 из 10 задач, ≈$0.03 за успешную задачу"}}}
+	Chat(context.Background(), llm, "m", t.TempDir(), nil, c)
+	sys := llm.got[0].Content
+	if !strings.Contains(sys, "- cheap/m: без особых возможностей; скиллы получает в промпте; за 30 дней прошла проверки в 8 из 10") || !strings.Contains(sys, "посоветуй замену") {
+		t.Fatalf("статистика в инструкциях:\n%s", sys)
+	}
+}

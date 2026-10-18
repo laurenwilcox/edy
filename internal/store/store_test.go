@@ -199,3 +199,29 @@ func TestMCPServersAreEncrypted(t *testing.T) {
 		t.Fatal("удаление")
 	}
 }
+
+func TestModelStats(t *testing.T) {
+	v, _ := vault.New(bytes.Repeat([]byte{9}, 32))
+	st, err := Open(filepath.Join(t.TempDir(), "edy.db"), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for i, state := range []string{AgentDone, AgentDone, AgentFailed, AgentRunning} {
+		st.CreateAgent(Agent{ID: "a" + string(rune('0'+i)), Role: RoleExecutor, Model: "cheap/m", State: state})
+	}
+	st.CreateAgent(Agent{ID: "o1", Role: RoleOrchestrator, Model: "cheap/m"})
+	st.CreateAgent(Agent{ID: "b1", Role: RoleExecutor, Model: "smart/m", State: AgentDone})
+	st.RecordUsage(Usage{Provider: "smart", Model: "m", InputTokens: 1000, OutputTokens: 500, CostUSD: 0.3})
+	st.RecordUsage(Usage{Provider: "smart", Model: "m", InputTokens: 10, OutputTokens: 5, CostUSD: 0.1})
+	stats, err := st.ModelStats(time.Now().Add(-time.Hour))
+	if err != nil || len(stats) != 2 {
+		t.Fatalf("stats: %+v %v", stats, err)
+	}
+	if c := stats[0]; c.Model != "cheap/m" || c.Attempts != 3 || c.Successes != 2 {
+		t.Fatalf("cheap: %+v", c)
+	}
+	if s := stats[1]; s.Model != "smart/m" || s.Successes != 1 || s.Tokens != 1515 || s.CostUSD < 0.39 {
+		t.Fatalf("smart: %+v", s)
+	}
+}
