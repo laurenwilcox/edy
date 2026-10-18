@@ -140,7 +140,8 @@ body {
 .chip { border: 1px solid var(--line); background: var(--field); color: var(--text); padding: 7px 13px; border-radius: 99px; font: inherit; font-size: 13px; cursor: pointer; transition: transform .2s, border-color .2s; }
 .chip:hover { border-color: var(--a1); }
 
-.composer { padding: 12px 16px 16px; }
+/* справа место под плавающую кнопку помощника ✦, чтобы она не закрывала ➤ */
+.composer { padding: 12px 88px 16px 16px; }
 .composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 18px; background: var(--field); border: 1px solid var(--line); transition: border-color .25s, box-shadow .25s; }
 .composer-box:focus-within { border-color: color-mix(in srgb, var(--a1) 60%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--a1) 15%, transparent); }
 .composer textarea { flex: 1; resize: none; border: 0; background: none; color: var(--text); font: inherit; max-height: 180px; padding: 6px 0; outline: none; }
@@ -478,7 +479,7 @@ h3.sub:first-child { margin-top: 0; }
 .asst-acts { align-self: flex-start; font-size: 11.5px; color: var(--muted); font-family: ui-monospace, monospace; }
 .asst-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
 .asst-form textarea { flex: 1; resize: none; min-height: 38px; max-height: 120px; }
-@media (max-width: 760px) { .asst-fab { right: 14px; bottom: 14px; } .asst { right: 16px; bottom: 76px; } }
+@media (max-width: 760px) { .composer { padding-right: 76px; } .asst-fab { right: 14px; bottom: 14px; } .asst { right: 16px; bottom: 76px; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -492,7 +493,7 @@ h3.sub:first-child { margin-top: 0; }
 <div class="app">
   <!-- Слева: меню -->
   <nav class="side glass" id="side">
-    <div class="brand"><div class="logo"><img src="logo.jpg" alt="Edy"></div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
+    <div class="brand"><div class="logo"><img src="logo.png" alt="Edy"></div><div><b>Edy</b><small>ИИ-IDE</small></div></div>
     <button class="menu-item" id="go-chat"><span class="ico">💬</span>Чат</button>
     <div class="menu-group open" id="grp-providers">
       <button type="button"><span class="ico">🔌</span>Провайдеры<span class="chev">›</span></button>
@@ -2887,7 +2888,7 @@ $("#board-notify").addEventListener("change", async (e) => {
   catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
 });
 $("#notify-test").addEventListener("click", async () => {
-  try { await api("POST", "/api/notify/test"); toast("Уведомление отправлено — если его не видно, разрешите уведомления для «Редактора скриптов» в Системных настройках"); }
+  try { await api("POST", "/api/notify/test"); toast("Уведомление отправлено — если его не видно, разрешите уведомления для Edy в Системных настройках → Уведомления"); }
   catch (e) { toast(e.message, true); }
 });
 

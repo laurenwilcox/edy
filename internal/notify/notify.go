@@ -23,10 +23,20 @@ const script = `on run argv
 display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"
 end run`
 
+// Native — нативные уведомления окна Edy (Wails). Окно подставляет их при
+// запуске: из .app уведомления osascript macOS часто молча не показывает.
+// nil — только osascript (edy serve в терминале).
+var Native Notifier
+
 // System показывает уведомление macOS; на других системах ничего не делает.
 func System(title, message string) error {
 	if runtime.GOOS != "darwin" {
 		return nil
+	}
+	if n := Native; n != nil {
+		if err := n(Clip(title, 120), Clip(message, 400)); err == nil {
+			return nil
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

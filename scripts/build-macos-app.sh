@@ -40,8 +40,8 @@ fi
 ICONSET="$(mktemp -d)/edy.iconset"
 mkdir -p "$ICONSET"
 for sz in 16 32 128 256 512; do
-  sips -s format png -z $sz $sz assets/logo.jpg --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
-  sips -s format png -z $((sz*2)) $((sz*2)) assets/logo.jpg --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+  sips -z $sz $sz assets/logo.png --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+  sips -z $((sz*2)) $((sz*2)) assets/logo.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/edy.icns"
 rm -rf "$(dirname "$ICONSET")"

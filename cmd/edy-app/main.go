@@ -14,13 +14,16 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/laurenwilcox/name/internal/app"
+	"github.com/laurenwilcox/name/internal/notify"
 	"github.com/laurenwilcox/name/internal/omniroute"
 )
 
@@ -38,6 +41,7 @@ func main() {
 		AssetServer:      &assetserver.Options{Handler: bootstrap(target, startErr)},
 		// Второй запуск приложения просто показывает уже открытое окно.
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "dev.edy.ide"},
+		OnStartup:          func(ctx context.Context) { go nativeNotifications(ctx, log) },
 		OnShutdown: func(ctx context.Context) {
 			if srv != nil {
 				srv.Close()
@@ -51,6 +55,28 @@ func main() {
 	if err != nil {
 		log.Error("окно Edy не запустилось", "err", err)
 		os.Exit(1)
+	}
+}
+
+// nativeNotifications включает уведомления macOS от имени Edy (а не
+// «Редактора скриптов», как у osascript). При первом запуске macOS спросит
+// разрешение. Если что-то не так — остаётся osascript.
+func nativeNotifications(ctx context.Context, log *slog.Logger) {
+	if err := runtime.InitializeNotifications(ctx); err != nil {
+		log.Warn("нативные уведомления недоступны", "err", err)
+		return
+	}
+	ok, err := runtime.RequestNotificationAuthorization(ctx)
+	if err != nil || !ok {
+		log.Warn("уведомления не разрешены", "err", err)
+		return
+	}
+	notify.Native = func(title, message string) error {
+		return runtime.SendNotification(ctx, runtime.NotificationOptions{
+			ID:    fmt.Sprintf("edy-%d", time.Now().UnixNano()),
+			Title: title,
+			Body:  message,
+		})
 	}
 }
 
