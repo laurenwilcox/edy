@@ -906,6 +906,10 @@ h3.sub:first-child { margin-top: 0; }
   <div class="modal-box glass" style="width:min(1200px,100%)" id="file-modal-box"></div>
 </div>
 
+<div class="modal" id="ask-modal" hidden style="z-index:980">
+  <div class="modal-box glass" style="width:min(460px,100%)" id="ask-modal-box"></div>
+</div>
+
 <div class="modal" id="task-modal" hidden>
   <div class="modal-box glass" id="task-modal-box"></div>
 </div>
@@ -954,6 +958,35 @@ function toast(msg, isError) {
   document.body.append(t);
   setTimeout(() => t.remove(), isError ? 6000 : 2500);
 }
+
+// askConfirm и askPrompt — свои диалоги вместо confirm() и prompt():
+// встроенное окно Wails на macOS (WKWebView) их не показывает и сразу
+// возвращает false/null, из-за чего кнопки удаления молча не работали.
+function askDialog(text, { ok = "Да", danger = false, input = null } = {}) {
+  return new Promise((resolve) => {
+    const modal = $("#ask-modal"), box = $("#ask-modal-box");
+    const field = input === null ? null : el("input", { type: "text", value: input, style: "width:100%;margin-top:12px" });
+    const done = (v) => { modal.hidden = true; box.replaceChildren(); document.removeEventListener("keydown", onKey, true); resolve(v); };
+    const yes = () => done(field ? field.value : true);
+    const no = () => done(field ? null : false);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); no(); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); yes(); }
+    };
+    box.replaceChildren(
+      el("div", { style: "white-space:pre-wrap;line-height:1.45" }, text),
+      ...(field ? [field] : []),
+      el("div", { class: "row", style: "justify-content:flex-end;margin-top:16px;gap:8px" },
+        el("button", { class: "btn ghost", onclick: no }, "Отмена"),
+        el("button", { class: "btn" + (danger ? " danger" : ""), onclick: yes }, ok)));
+    modal.onclick = (e) => { if (e.target === modal) no(); };
+    document.addEventListener("keydown", onKey, true);
+    modal.hidden = false;
+    (field || box.querySelector("button:last-child")).focus();
+  });
+}
+const askConfirm = (text, ok = "Удалить") => askDialog(text, { ok, danger: true });
+const askPrompt = (text, value = "") => askDialog(text, { ok: "OK", input: value });
 
 async function api(method, path, body) {
   const res = await fetch(path, {
@@ -1050,6 +1083,8 @@ const stateText = {
   ok: "работает", login_required: "нужно войти", error: "ошибка",
 };
 let statusTimer = null;
+// Имя Google-аккаунта каждого веб-провайдера (пусто — без аккаунта).
+const webAccounts = {};
 
 async function refreshWebStatus() {
   clearTimeout(statusTimer);
@@ -1057,6 +1092,9 @@ async function refreshWebStatus() {
   try { all = await api("GET", "/api/web/status"); } catch { return; }
   let pending = false;
   for (const [name, st] of Object.entries(all)) {
+    webAccounts[name] = st.account || "";
+    const acc = document.querySelector(`[data-account="${CSS.escape(name)}"]`);
+    if (acc) acc.textContent = st.account ? "👤 " + st.account : "используем без аккаунта";
     const badge = document.querySelector(`[data-status="${CSS.escape(name)}"]`);
     if (!badge) continue;
     badge.className = "status " + st.state;
@@ -1103,7 +1141,7 @@ function providerCard(p) {
           ? [el("button", { class: "btn ghost icon", onclick: (e) => webLogin(p.name, p.browser, e.currentTarget) }, "Войти"),
              el("button", { class: "btn ghost icon", onclick: (e) => webCheck(p.name, e.currentTarget) }, "Проверить")]
           : [el("button", { class: "btn ghost icon", onclick: () => openModelEditor(p.name, false) }, "Модели")]),
-        el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p.name) }, "Удалить"))),
+        el("button", { class: "btn danger icon", title: "Удалить", onclick: () => removeProvider(p) }, "Удалить"))),
     el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "mono muted" }, target)),
     el("div", { class: "row small", style: "margin-top:8px" },
       ...(p.models.length
@@ -1121,6 +1159,7 @@ function providerCard(p) {
     };
     card.append(el("div", { class: "row", style: "margin-top:10px" },
       el("span", { class: "status", "data-status": p.name }, "…"),
+      el("span", { class: "small muted", "data-account": p.name, title: "Google-аккаунт в профиле браузера" }, ""),
       el("label", { class: "switch-label small", title: "Без галочки браузер работает скрыто; окно входа показывается всегда" }, box, " показывать окно браузера")));
   }
   return card;
@@ -1233,13 +1272,24 @@ async function webCheck(provider, btn) {
   refreshWebStatus();
 }
 
-async function removeProvider(name) {
-  if (!confirm(`Удалить провайдера «${name}» вместе с его ключами и окружением браузера?`)) return;
-  try { await api("DELETE", `/api/providers/${encodeURIComponent(name)}`); loadProviders(); }
-  catch (e) { toast(e.message, true); }
+async function removeProvider(p) {
+  // API-провайдер удаляется сразу вместе с ключами; CLI и веб — после вопроса.
+  // У веб-провайдера вместе с ним удаляется профиль браузера (вход в аккаунт).
+  if (p.kind === "cli") {
+    if (!(await askConfirm(`Удалить CLI-провайдера «${p.name}»?\nСама программа на компьютере останется.`))) return;
+  } else if (p.kind === "web") {
+    const acc = webAccounts[p.name];
+    const who = acc ? `аккаунт Google: ${acc}` : "используем без аккаунта";
+    if (!(await askConfirm(`Удалить веб-провайдера «${p.name}» вместе с профилем браузера?\n(${who})\nВход на сайт придётся пройти заново.`))) return;
+  }
+  try {
+    await api("DELETE", `/api/providers/${encodeURIComponent(p.name)}`);
+    toast(`Провайдер «${p.name}» удалён`);
+    loadProviders();
+  } catch (e) { toast(e.message, true); }
 }
 async function removeKey(id) {
-  if (!confirm("Удалить ключ?")) return;
+  if (!(await askConfirm("Удалить ключ?", "Удалить"))) return;
   try { await api("DELETE", `/api/keys/${id}`); loadProviders(); }
   catch (e) { toast(e.message, true); }
 }
@@ -1503,7 +1553,7 @@ async function loadMCPServers() {
           try { await api("PUT", `/api/mcp-servers/${encodeURIComponent(m.name)}/enabled`, { enabled: !m.enabled }); loadMCPServers(); } catch (e) { toast(e.message, true); }
         } }, m.enabled ? "Выключить" : "Включить"),
         el("button", { class: "btn danger icon", onclick: async () => {
-          if (!confirm(`Удалить MCP-сервер «${m.name}»?`)) return;
+          if (!(await askConfirm(`Удалить MCP-сервер «${m.name}»?`, "Удалить"))) return;
           try { await api("DELETE", "/api/mcp-servers/" + encodeURIComponent(m.name)); toast("Сервер удалён"); loadMCPServers(); } catch (e) { toast(e.message, true); }
         } }, "Удалить")))))
     : [el("div", { class: "card muted small" }, "Серверов пока нет. Выберите шаблон ниже или добавьте свой.")]));
@@ -1956,7 +2006,7 @@ async function loadTeam() {
         el("button", { class: "btn ghost icon", onclick: () => editAgent(a) }, "Изменить"),
         el("button", { class: "btn ghost icon", onclick: () => agentMemory(a) }, "🧠 Память"),
         el("button", { class: "btn danger icon", onclick: async () => {
-          if (!confirm(`Удалить агента «${a.name}» и его память?`)) return;
+          if (!(await askConfirm(`Удалить агента «${a.name}» и его память?`, "Удалить"))) return;
           try { await api("DELETE", "/api/team/" + a.id); loadTeam(); } catch (e) { toast(e.message, true); }
         } }, "Удалить"))))) : [el("div", { class: "card muted small" }, "В команде пока никого. Добавьте агента под часть проекта — например «Фронтенд» с зоной web/ или «Тесты».")]));
   fillAgentForm(null);
@@ -2606,7 +2656,7 @@ function renderTemplates() {
       const chip = el("button", { class: "chip custom", type: "button", title: "Ваш шаблон. Правый клик — удалить", onclick: () => useTemplate(t) }, t);
       chip.addEventListener("contextmenu", async (e) => {
         e.preventDefault();
-        if (!confirm("Удалить шаблон?\n" + t)) return;
+        if (!(await askConfirm("Удалить шаблон?\n" + t, "Удалить"))) return;
         templateList = await api("DELETE", "/api/templates?text=" + encodeURIComponent(t)); renderTemplates();
       });
       return chip;
@@ -2622,7 +2672,7 @@ $("#tpl-btn").addEventListener("click", async () => {
   pop.hidden = false;
 });
 $("#issue-btn").addEventListener("click", async () => {
-  const link = prompt("Ссылка на issue (GitHub, GitLab или Gitea). Для приватного репозитория нужен аккаунт во вкладке Git:");
+  const link = await askPrompt("Ссылка на issue (GitHub, GitLab или Gitea). Для приватного репозитория нужен аккаунт во вкладке Git:");
   if (!link) return;
   try {
     const v = await api("POST", "/api/board/issue", { project: $("#project").value, url: link.trim() });
@@ -2690,7 +2740,7 @@ async function openTask(id) {
     actions.push(el("button", { class: "btn danger", onclick: () => taskAction(id, "reject") }, "✕ Reject — откатить"));
   }
   if (!["running", "done"].includes(t.state)) actions.push(el("button", { class: "btn danger icon", onclick: async () => {
-    if (!confirm("Удалить задачу с доски?")) return;
+    if (!(await askConfirm("Удалить задачу с доски?", "Удалить"))) return;
     try { await api("DELETE", "/api/tasks/" + id); closeTask(); loadBoard(); } catch (e) { toast(e.message, true); }
   } }, "Удалить"));
 
@@ -2761,7 +2811,7 @@ function diffView(t) {
     box.replaceChildren(r.patch ? diffViewer(r.patch, {
       project: t.project,
       onRevert: t.state === "done" ? async (file) => {
-        if (!confirm(`Откатить ${file} к состоянию до задачи? Остальные изменения останутся.`)) return;
+        if (!(await askConfirm(`Откатить ${file} к состоянию до задачи? Остальные изменения останутся.`, "Откатить"))) return;
         try { await api("POST", `/api/tasks/${t.id}/revert-file`, { file }); toast("Файл откачен"); openTask(t.id); } catch (e) { toast(e.message, true); }
       } : null,
     }) : el("pre", { class: "log" }, t.diff));
@@ -2862,7 +2912,7 @@ async function loadSkills(path) {
       el("div", { class: "small muted" }, sk.description || ""),
       el("details", {}, el("summary", { class: "small" }, "текст"), el("pre", { class: "log" }, sk.body))),
     el("button", { class: "btn danger icon", onclick: async () => {
-      if (!confirm(`Удалить скилл «${sk.name}»?`)) return;
+      if (!(await askConfirm(`Удалить скилл «${sk.name}»?`, "Удалить"))) return;
       try {
         await api("DELETE", `/api/skills?scope=${sk.scope}&name=${encodeURIComponent(sk.name)}` + (sk.scope === "project" ? "&project=" + encodeURIComponent(path) : ""));
         toast("Скилл удалён"); loadSkills(path);
@@ -2950,7 +3000,7 @@ async function loadCheckpoints(path) {
 }
 
 async function restoreCheckpoint(path, c, n) {
-  if (!confirm(`Вернуть проект к снимку №${n} «${c.message}»? Изменения после него будут потеряны.`)) return;
+  if (!(await askConfirm(`Вернуть проект к снимку №${n} «${c.message}»? Изменения после него будут потеряны.`, "Вернуть"))) return;
   try {
     await api("POST", "/api/projects/restore", { path, id: c.id });
     toast(`Проект возвращён к снимку №${n}`);
@@ -2959,7 +3009,7 @@ async function restoreCheckpoint(path, c, n) {
 }
 
 async function removeProject(path) {
-  if (!confirm("Убрать проект из списка? Файлы не удаляются.")) return;
+  if (!(await askConfirm("Убрать проект из списка? Файлы не удаляются.", "Убрать"))) return;
   try { await api("DELETE", "/api/projects?path=" + encodeURIComponent(path)); refreshProjectState(); } catch (e) { toast(e.message, true); }
 }
 
@@ -3001,7 +3051,7 @@ async function loadGit() {
     el("div", { class: "row spread" },
       el("div", { class: "row" }, el("strong", {}, a.label), el("span", { class: "badge" }, a.kind)),
       el("button", { class: "btn danger icon", onclick: async () => {
-        if (!confirm(`Удалить аккаунт «${a.label}»?`)) return;
+        if (!(await askConfirm(`Удалить аккаунт «${a.label}»?`, "Удалить"))) return;
         try { await api("DELETE", "/api/git/accounts/" + a.id); loadGit(); } catch (e) { toast(e.message, true); }
       } }, "Удалить")),
     el("div", { class: "small muted", style: "margin-top:4px" }, a.host + (a.username ? " · " + a.username : "")))));

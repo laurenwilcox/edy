@@ -57,6 +57,9 @@ type Status struct {
 	State   string    `json:"state"`
 	Message string    `json:"message,omitempty"`
 	At      time.Time `json:"at,omitzero"`
+	// Account — Google-аккаунт (email), под которым выполнен вход в профиле;
+	// пусто — аккаунт не найден, провайдер работает без него.
+	Account string `json:"account,omitempty"`
 }
 
 // Manager держит отдельное окружение браузера на каждое подключение: свою
@@ -148,13 +151,49 @@ func (m *Manager) EnsureBrowser(ctx context.Context, kind string) (string, error
 func (m *Manager) Status(profile string) Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	st, ok := m.statuses[profile]
+	if !ok {
+		st = Status{State: StateUnknown}
+	}
 	if _, ok := m.logins[profile]; ok {
-		return Status{State: StateLoginOpen, Message: "Войдите в аккаунт в открытом окне и закройте его — Edy проверит подключение"}
+		st = Status{State: StateLoginOpen, Message: "Войдите в аккаунт в открытом окне и закройте его — Edy проверит подключение"}
 	}
-	if st, ok := m.statuses[profile]; ok {
-		return st
+	st.Account = m.account(profile)
+	return st
+}
+
+// accountFile лежит внутри папки профиля и удаляется вместе с ним.
+const accountFile = "edy-account.json"
+
+// account возвращает сохранённый аккаунт профиля или пустую строку.
+func (m *Manager) account(profile string) string {
+	if validProfile(profile) != nil {
+		return ""
 	}
-	return Status{State: StateUnknown}
+	data, err := os.ReadFile(filepath.Join(m.profileDir(profile), accountFile))
+	if err != nil {
+		return ""
+	}
+	var v struct {
+		Account string `json:"account"`
+	}
+	if json.Unmarshal(data, &v) != nil {
+		return ""
+	}
+	return v.Account
+}
+
+// saveAccount запоминает аккаунт профиля; пустой — стирает запись.
+func (m *Manager) saveAccount(profile, account string) error {
+	path := filepath.Join(m.profileDir(profile), accountFile)
+	if account == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	data, _ := json.Marshal(map[string]string{"account": account})
+	return os.WriteFile(path, data, 0o600)
 }
 
 func (m *Manager) setStatus(profile, state, msg string) {
@@ -259,6 +298,13 @@ func (m *Manager) Check(ctx context.Context, c Conn) Status {
 		for {
 			var v *string
 			if err := run(10*time.Second, chromedp.Evaluate(fmt.Sprintf(inputJS, s.Input), &v)); err == nil && v != nil {
+				// Вход выполнен — заодно узнаём, под каким аккаунтом.
+				var acc string
+				if err := run(15*time.Second, chromedp.Evaluate(accountJS, &acc, awaitPromise)); err == nil {
+					if err := m.saveAccount(c.Profile, acc); err != nil && m.Log != nil {
+						fmt.Fprintf(m.Log, "webchat: не удалось сохранить аккаунт %s: %v\n", c.Profile, err)
+					}
+				}
 				return nil
 			}
 			if time.Now().After(deadline) {
@@ -688,6 +734,28 @@ const markImageJS = `(() => {
   el.setAttribute("data-edy-img", "1");
   el.scrollIntoView({ block: "center" });
   return true;
+})()`
+
+// accountJS ищет email аккаунта, под которым выполнен вход: в подписях
+// аватара Google (Gemini: «Аккаунт Google: Имя (email)»), затем в сессии
+// ChatGPT и в аккаунте Claude.ai. Возвращает пустую строку, если не нашёл.
+const accountJS = `(async () => {
+  const re = /[\w.+-]+@[\w-]+(\.[\w-]+)+/;
+  for (const el of document.querySelectorAll('[aria-label*="@"], [title*="@"], a[href*="accounts.google.com/SignOutOptions"]')) {
+    const m = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("title") || "")).match(re);
+    if (m) return m[0];
+  }
+  const tryJSON = async (url, pick) => {
+    try {
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) return "";
+      const v = pick(await r.json());
+      return typeof v === "string" && re.test(v) ? v : "";
+    } catch { return ""; }
+  };
+  if (location.host.includes("chatgpt.com")) return await tryJSON("/api/auth/session", (j) => j && j.user && j.user.email);
+  if (location.host.includes("claude.ai")) return await tryJSON("/api/account", (j) => j && (j.email_address || (j.account && j.account.email_address)));
+  return "";
 })()`
 
 // inputJS возвращает текст в поле ввода или null, если поля нет.
