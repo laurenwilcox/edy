@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/creack/pty"
@@ -109,12 +110,24 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 
 	var san TermSanitizer
 	var output strings.Builder
-	send := func(text string) error {
+	// В режиме JSON-вывода (codex --json, claude stream-json) клиенту уходит
+	// только текст ответа, а квоты подписки — в лимиты провайдера.
+	var jf *cliJSONFilter
+	if jsonOutputCommand(args) {
+		jf = &cliJSONFilter{onQuota: call.OnQuota, now: time.Now}
+	}
+	emitText := func(text string) error {
 		if text == "" {
 			return nil
 		}
 		output.WriteString(text)
 		return emit(Event{Delta: Delta{Content: text}})
+	}
+	send := func(text string) error {
+		if jf != nil {
+			text = jf.Write(text)
+		}
+		return emitText(text)
 	}
 
 	if err := emit(Event{Delta: Delta{Role: "assistant"}}); err != nil {
@@ -143,20 +156,49 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	pending := san.Pending()
 	if emitErr == nil && ctx.Err() == nil {
 		emitErr = send(san.Flush())
+		if jf != nil && emitErr == nil {
+			pending = jf.Pending()
+			emitErr = emitText(jf.Flush())
+		}
 	}
 	waitErr := cmd.Wait()
 
 	usage := Usage{PromptTokens: estimateTokens(prompt), CompletionTokens: estimateTokens(output.String())}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	tail := lastRunes(strings.TrimSpace(output.String()+pending), 500)
+	failed := waitErr != nil
+	var resetAt time.Time
+	if jf != nil {
+		if jf.usage.TotalTokens > 0 {
+			usage = jf.usage
+		}
+		if jf.errMsg != "" {
+			tail = lastRunes(jf.errMsg, 500)
+		}
+		// Некоторые CLI выходят с кодом 0, хотя ответа нет, а в JSON — ошибка.
+		failed = failed || (jf.texts == 0 && (jf.errMsg != "" || jf.limited))
+		if jf.limited {
+			resetAt = jf.resetAt
+		}
+		if failed && waitErr == nil {
+			waitErr = errors.New("ошибка в JSON-выводе")
+		}
+	}
 	if emitErr != nil {
 		return usage, emitErr
 	}
 	if ctx.Err() != nil {
 		return usage, fmt.Errorf("%s остановлена (%w), последний вывод: %q", args[0], ctx.Err(), tail)
 	}
-	if waitErr != nil {
+	if failed {
 		// Сообщение о лимите подписки превращаем в 429: ротация уведёт провайдера на перерыв.
+		if jf != nil && jf.limited {
+			var wait time.Duration
+			if !resetAt.IsZero() {
+				wait = max(time.Until(resetAt), 0)
+			}
+			return usage, &UpstreamError{Status: http.StatusTooManyRequests, RetryAfter: wait, Message: fmt.Sprintf("%s упёрлась в лимит: %s", args[0], tail)}
+		}
 		if hit, wait := DetectCLILimit(tail); hit {
 			return usage, &UpstreamError{Status: http.StatusTooManyRequests, RetryAfter: wait, Message: fmt.Sprintf("%s упёрлась в лимит: %s", args[0], tail)}
 		}

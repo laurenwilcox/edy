@@ -300,6 +300,7 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 	}
 
 	call.OnHeaders = func(status int, h http.Header) { s.limits.Observe(p.Name, h, status, s.now()) }
+	call.OnQuota = func(q Quota) { s.limits.ObserveQuota(p.Name, q, s.now()) }
 
 	var lastErr error
 	for _, k := range keys {

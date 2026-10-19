@@ -28,6 +28,8 @@ type Call struct {
 	MCP *MCPAttach
 	// OnHeaders получает заголовки ответа провайдера — из них читаются лимиты (nil — не нужно).
 	OnHeaders func(status int, h http.Header)
+	// OnQuota получает квоты подписки из JSON-вывода CLI (nil — не нужно).
+	OnQuota func(q Quota)
 }
 
 func (c Call) observe(status int, h http.Header) {

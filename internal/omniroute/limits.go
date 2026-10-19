@@ -3,6 +3,7 @@ package omniroute
 import (
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,10 @@ type RateLimit struct {
 	LastError     string    `json:"last_error,omitempty"`
 	CooldownUntil time.Time `json:"cooldown_until,omitempty"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// Квоты подписки CLI из JSON-вывода (codex --json, claude stream-json).
+	Windows []QuotaWindow `json:"quota_windows,omitempty"`
+	Plan    string        `json:"plan,omitempty"`
+	Credits string        `json:"credits,omitempty"`
 }
 
 // LimitTracker хранит последние известные лимиты по провайдерам.
@@ -52,6 +57,35 @@ func (t *LimitTracker) Fail(provider string, status int, msg string, until, now 
 	rl.LastStatus, rl.LastError, rl.UpdatedAt = status, msg, now
 	if until.After(rl.CooldownUntil) {
 		rl.CooldownUntil = until
+	}
+	t.m[provider] = rl
+}
+
+// ObserveQuota запоминает квоты подписки CLI. Окна сливаются по имени:
+// claude присылает их по одному событию на окно.
+func (t *LimitTracker) ObserveQuota(provider string, q Quota, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rl := t.m[provider]
+	// Новый срез, а не правка старого: Snapshot отдаёт его наружу без копии.
+	windows := append([]QuotaWindow(nil), rl.Windows...)
+	for _, w := range q.Windows {
+		i := slices.IndexFunc(windows, func(o QuotaWindow) bool { return o.Name == w.Name })
+		if i < 0 {
+			windows = append(windows, w)
+			continue
+		}
+		if w.UsedPercent == nil { // claude не всегда сообщает процент — оставляем прежний
+			w.UsedPercent = windows[i].UsedPercent
+		}
+		windows[i] = w
+	}
+	rl.Windows, rl.UpdatedAt = windows, now
+	if q.Plan != "" {
+		rl.Plan = q.Plan
+	}
+	if q.Credits != "" {
+		rl.Credits = q.Credits
 	}
 	t.m[provider] = rl
 }

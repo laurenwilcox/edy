@@ -1300,6 +1300,15 @@ function untilText(t) {
   return s < 90 ? `${s} с` : s < 5400 ? `${Math.round(s / 60)} мин` : `${Math.round(s / 3600)} ч`;
 }
 
+// quotaName — понятное имя окна квоты CLI.
+function quotaName(w) {
+  const names = { five_hour: "5 ч", seven_day: "неделя", seven_day_opus: "неделя Opus", seven_day_sonnet: "неделя Sonnet" };
+  if (names[w.name]) return names[w.name];
+  const m = w.window_minutes;
+  if (m) return m % 1440 === 0 ? `${m / 1440} дн` : m % 60 === 0 ? `${m / 60} ч` : `${m} мин`;
+  return w.name;
+}
+
 function limitsBlock(p) {
   const box = el("div", { class: "limits small", style: "margin-top:10px" });
   const render = (l) => {
@@ -1314,9 +1323,21 @@ function limitsBlock(p) {
       };
       lines.push(el("div", {}, el("span", { class: "muted" }, "У провайдера: "),
         [part(u.req_remaining, u.req_limit, u.req_reset, "запросы"), part(u.tok_remaining, u.tok_limit, u.tok_reset, "токены")].filter(Boolean).join(" · ")));
-    } else if (p.kind !== "web") {
+    }
+    if (u && u.quota_windows && u.quota_windows.length) {
+      for (const w of u.quota_windows) {
+        const r = untilText(w.resets_at);
+        const pct = w.used_percent != null ? `использовано ${Math.round(w.used_percent)}%` : "";
+        const st = w.status === "rejected" ? "лимит исчерпан" : w.status === "allowed_warning" ? "близко к лимиту" : "";
+        lines.push(el("div", w.status === "rejected" ? { class: "err" } : {},
+          el("span", { class: "muted" }, `Квота ${quotaName(w)}: `),
+          [pct, st, r ? `сброс через ${r}` : ""].filter(Boolean).join(" · ") || "данных нет"));
+      }
+      const extra = [u.plan && `план ${u.plan}`, u.credits && `кредиты: ${u.credits}`].filter(Boolean).join(" · ");
+      if (extra) lines.push(el("div", { class: "muted" }, extra));
+    } else if (p.kind !== "web" && !(u && (u.req_limit || u.tok_limit))) {
       lines.push(el("div", { class: "muted" }, p.kind === "cli"
-        ? "У провайдера: CLI не сообщает остаток, лимит виден только при ошибке"
+        ? "У провайдера: квоты видны, если CLI запущен с JSON-выводом (codex exec --json, claude -p --output-format stream-json --verbose)"
         : "У провайдера: данных пока нет — сделайте запрос или нажмите «Проверить лимиты»"));
     }
     const cd = u && untilText(u.cooldown_until);
