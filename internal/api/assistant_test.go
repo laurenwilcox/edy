@@ -156,3 +156,39 @@ func TestUICSSLimits(t *testing.T) {
 		t.Fatalf("размер: %d", rec.Code)
 	}
 }
+
+// refusingLLM: CLI-модель agy отказывает 422, остальные отвечают текстом.
+type refusingLLM struct{ used []string }
+
+func (r *refusingLLM) Chat(_ context.Context, model string, _ []agent.Msg, _ []agent.ToolDef) (agent.Msg, error) {
+	r.used = append(r.used, model)
+	if strings.HasPrefix(model, "agy/") {
+		return agent.Msg{}, &agent.StatusError{Status: http.StatusUnprocessableEntity, Message: "модель " + model + ": agy не может работать в фоне"}
+	}
+	return agent.Msg{Role: "assistant", Content: "Ответ от " + model}, nil
+}
+
+func TestAssistantSkipsRefusingModel(t *testing.T) {
+	h, st := setup(t)
+	st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{"agy", "-p", "{prompt}"}, Models: []string{"gemini-flash"}})
+	st.AddProvider(store.Provider{Name: "google", Kind: store.KindOpenAI, Models: []string{"gemini-2.5-flash"}, PriceIn: 0.3, PriceOut: 2.5})
+	// Без настроек помощник сам берёт модель с родным вызовом функций.
+	if list := h.assistantModels("", nil); len(list) == 0 || list[0] != "google/gemini-2.5-flash" {
+		t.Fatalf("очередь моделей: %v", list)
+	}
+	// Пользователь выбрал agy, но agy отказывается — отвечает следующая модель.
+	st.SetSetting(SettingAssistantModel, "agy/gemini-flash")
+	llm := &refusingLLM{}
+	h.LLM = llm
+	rec := call(h, "POST", "/api/assistant", `{"message":"проверь модели"}`)
+	r := decodeReply(t, rec.Code, rec.Body.Bytes())
+	if !strings.HasSuffix(r.Reply, "Ответ от google/gemini-2.5-flash") || !strings.Contains(r.Reply, "agy/gemini-flash не подходит помощнику") {
+		t.Fatalf("ответ: %q, модели: %v", r.Reply, llm.used)
+	}
+	// Во второй реплике сессии agy уже не спрашиваем.
+	llm.used = nil
+	call(h, "POST", "/api/assistant", `{"message":"ещё","session":"`+r.Session+`"}`)
+	if len(llm.used) != 1 || llm.used[0] != "google/gemini-2.5-flash" {
+		t.Fatalf("вторая реплика: %v", llm.used)
+	}
+}

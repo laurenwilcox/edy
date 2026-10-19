@@ -11,12 +11,15 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/laurenwilcox/name/internal/agent"
+	"github.com/laurenwilcox/name/internal/omniroute"
+	"github.com/laurenwilcox/name/internal/store"
 )
 
 // ИИ-помощник: плавающий чат интерфейса. Знает все маршруты API (каталог
@@ -24,7 +27,7 @@ import (
 // свой CSS. Опасные вызовы (удаление, ключи, установка, push…) ждут
 // подтверждения пользователя в окне.
 
-// SettingAssistantModel — модель помощника; пусто — модель микро-агентов.
+// SettingAssistantModel — модель помощника; пусто — выбор Edy (см. assistantModels).
 const SettingAssistantModel = "assistant.model"
 
 // SettingUICSS — пользовательский CSS поверх стилей интерфейса.
@@ -111,6 +114,9 @@ type asstSession struct {
 	msgs  []agent.Msg      // переписка без системного промпта
 	queue []agent.ToolCall // вызовы, которые ещё не выполнены
 	seen  time.Time
+	// bad — модели, которые отказались работать помощником (например, CLI
+	// без прав на свои инструменты): в этой сессии к ним не возвращаемся.
+	bad map[string]bool
 }
 
 type asstSessions struct {
@@ -282,9 +288,9 @@ func (h *Handler) assistantSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	chosen, _ := h.Store.Setting(SettingAssistantModel)
-	effective := strings.TrimSpace(chosen)
-	if effective == "" {
-		effective = h.microModel("")
+	effective := ""
+	if list := h.assistantModels("", nil); len(list) > 0 {
+		effective = list[0]
 	}
 	reply(w, map[string]string{"model": chosen, "effective": effective})
 }
@@ -303,18 +309,12 @@ func (h *Handler) assistantRun(w http.ResponseWriter, r *http.Request, id string
 func (h *Handler) assistantLoop(w http.ResponseWriter, r *http.Request, ss *asstSession, screen, explicit string, out asstReply) {
 	ctx, cancel := context.WithTimeout(r.Context(), assistantTimeout)
 	defer cancel()
-	model := strings.TrimSpace(explicit)
-	if model == "" {
-		model, _ = h.Store.Setting(SettingAssistantModel)
-		model = strings.TrimSpace(model)
-	}
-	if model == "" {
-		model = h.microModel("")
-	}
-	if model == "" {
+	models := h.assistantModels(explicit, ss.bad)
+	if len(models) == 0 {
 		fail(w, http.StatusServiceUnavailable, "нет модели для помощника: подключите провайдера")
 		return
 	}
+	model, notice := models[0], ""
 	for step := 0; step < assistantSteps; step++ {
 		for len(ss.queue) > 0 {
 			call := ss.queue[0]
@@ -328,13 +328,25 @@ func (h *Handler) assistantLoop(w http.ResponseWriter, r *http.Request, ss *asst
 		}
 		msgs := append([]agent.Msg{{Role: "system", Content: h.assistantPrompt(screen)}}, ss.msgs...)
 		res, err := h.LLM.Chat(ctx, model, msgs, []agent.ToolDef{apiCallTool})
+		if err != nil && agent.Hopeless(err) && len(models) > 1 {
+			// Модель отказалась работать — переходим к следующей, шаг не тратим.
+			if ss.bad == nil {
+				ss.bad = map[string]bool{}
+			}
+			ss.bad[model] = true
+			models = models[1:]
+			notice = fmt.Sprintf("ℹ️ %s не подходит помощнику: вместо ответа CLI отказалась работать без подтверждений. Отвечает %s.\n\n", ss.badList(), models[0])
+			model = models[0]
+			step--
+			continue
+		}
 		if err != nil {
 			fail(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		ss.msgs = append(ss.msgs, agent.Msg{Role: "assistant", Content: res.Content, ToolCalls: res.ToolCalls})
 		if len(res.ToolCalls) == 0 {
-			out.Reply = res.Content
+			out.Reply = notice + res.Content
 			reply(w, out)
 			return
 		}
@@ -347,6 +359,61 @@ func (h *Handler) assistantLoop(w http.ResponseWriter, r *http.Request, ss *asst
 	ss.queue = nil
 	out.Reply = "Остановился: слишком много шагов подряд. Напишите, продолжать ли."
 	reply(w, out)
+}
+
+// assistantModels — очередь моделей помощника. Первыми — выбранная явно и
+// модель из настроек помощника. Дальше — модели с родным вызовом функций
+// (API-провайдеры), от дешёвых к дорогим: помощник только и делает, что
+// вызывает api_call, а CLI-агенты норовят запускать свои инструменты.
+// В конце — модель микро-агентов и остальные CLI. Веб-чаты не годятся.
+func (h *Handler) assistantModels(explicit string, bad map[string]bool) []string {
+	var out []string
+	add := func(m string) {
+		if m = strings.TrimSpace(m); m != "" && !bad[m] && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	add(explicit)
+	chosen, _ := h.Store.Setting(SettingAssistantModel)
+	add(chosen)
+	providers, _ := h.Store.Providers()
+	sort.SliceStable(providers, func(i, j int) bool {
+		return providers[i].PriceIn+providers[i].PriceOut < providers[j].PriceIn+providers[j].PriceOut
+	})
+	first := func(p store.Provider) string {
+		for _, m := range p.Models {
+			if !strings.Contains(strings.ToLower(m), "embed") {
+				return p.Name + "/" + m
+			}
+		}
+		return ""
+	}
+	for _, p := range providers {
+		// У CLI «инструменты» — свои, а не api_call Edy, поэтому только API.
+		if (p.Kind == store.KindOpenAI || p.Kind == store.KindAnthropic) && omniroute.HasCap(p, omniroute.CapTools) {
+			if m := first(p); m != "" {
+				add(m)
+			}
+		}
+	}
+	add(h.microModel(""))
+	for _, p := range providers {
+		if p.Kind == store.KindCLI {
+			if m := first(p); m != "" {
+				add(m)
+			}
+		}
+	}
+	return out
+}
+
+func (ss *asstSession) badList() string {
+	var list []string
+	for m := range ss.bad {
+		list = append(list, m)
+	}
+	sort.Strings(list)
+	return strings.Join(list, ", ")
 }
 
 // parseCall разбирает аргументы api_call и проверяет путь.
