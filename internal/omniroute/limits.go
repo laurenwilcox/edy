@@ -186,6 +186,22 @@ func DeadQuota(msg string) bool { return deadQuotaRe.MatchString(msg) }
 
 var deadQuotaRe = regexp.MustCompile(`(?i)\blimit:\s*0\b`)
 
+// overLimitRe — Groq и OpenAI пишут лимит токенов в минуту и размер запроса:
+// «Limit 7000, Used 6143, Requested 5537».
+var overLimitRe = regexp.MustCompile(`(?i)limit:?\s*(\d+)[^0-9]+used:?\s*\d+[^0-9]+requested:?\s*(\d+)`)
+
+// OverMinuteLimit сообщает, что один запрос больше минутного лимита модели:
+// такой запрос не пройдёт никогда, сколько ни жди.
+func OverMinuteLimit(msg string) (requested, limit int, ok bool) {
+	m := overLimitRe.FindStringSubmatch(msg)
+	if m == nil {
+		return 0, 0, false
+	}
+	limit, _ = strconv.Atoi(m[1])
+	requested, _ = strconv.Atoi(m[2])
+	return requested, limit, limit > 0 && requested > limit
+}
+
 // DetectCLILimit ищет в выводе CLI сообщение о лимите и, если есть, время ожидания.
 func DetectCLILimit(out string) (bool, time.Duration) {
 	if !cliLimitRe.MatchString(out) {

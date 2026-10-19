@@ -66,7 +66,16 @@ type Task struct {
 	// Extra — внешние MCP-серверы из каталога Edy, которые Оркестратор выдал
 	// исполнителю вместе с MCP Edy (только исполнителям с поддержкой MCP).
 	Extra []string
+	// MaxWait — сколько всего одна модель может ждать сброса минутного лимита
+	// (429 с коротким Retry-After), прежде чем задача уйдёт дальше; по умолчанию 5 минут.
+	MaxWait time.Duration
+
+	// refused — почему последняя модель отказалась работать (для журнала).
+	refused string
 }
+
+// maxRetryAfter — дольше этого лимит не ждём: значит, квота кончилась надолго.
+const maxRetryAfter = 2 * time.Minute
 
 // MCPBridge выдаёт исполнителю адрес MCP-сервера Edy, привязанный к задаче.
 type MCPBridge interface {
@@ -192,9 +201,12 @@ func (t *Task) Run(ctx context.Context) (Result, error) {
 			switch {
 			case err != nil:
 				note = err.Error()
+			case t.refused != "":
+				note = "отказалась работать: " + t.refused
 			case !ok:
 				note = "не прошла проверки — задача передана дальше"
 			}
+			t.refused = ""
 			t.OnAttemptEnd(model, ok && err == nil, note)
 		}
 		if err != nil {
@@ -229,6 +241,11 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 	tools := ws.Tools()
 	failures := 0
 	steps := 0
+	maxWait := t.MaxWait
+	if maxWait == 0 {
+		maxWait = 5 * time.Minute
+	}
+	var waited time.Duration
 	for {
 		if err := ctx.Err(); err != nil {
 			return "", false, err
@@ -240,8 +257,21 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 		steps++
 		reply, err := t.LLM.Chat(ctx, model, msgs, tools)
 		if err != nil {
+			if wait, limited := RateLimited(err); limited && wait > 0 && wait <= maxRetryAfter && waited+wait <= maxWait {
+				// Минутный лимит: ждём сброса и повторяем тот же шаг, попытку не тратим.
+				t.emit("info", "%s упёрлась в лимит в минуту — жду %s и продолжаю", model, wait.Round(time.Second))
+				select {
+				case <-ctx.Done():
+					return "", false, ctx.Err()
+				case <-time.After(wait):
+				}
+				waited += wait
+				steps--
+				continue
+			}
 			t.emit("error", "%v", err)
 			if Hopeless(err) {
+				t.refused = err.Error()
 				return "", false, nil // сразу к резервной модели
 			}
 			failures++

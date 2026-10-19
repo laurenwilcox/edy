@@ -315,9 +315,12 @@ func (h *Handler) orchestratorContext(project string, executors []string) orches
 		byName[p.Name] = p
 	}
 	statByModel := map[string]string{}
+	refused := map[string]bool{}
 	if stats, err := h.Store.ModelStats(time.Now().AddDate(0, 0, -30)); err == nil {
 		for _, st := range stats {
 			statByModel[st.Model] = statLine(st)
+			// Отказывалась и ни разу не справилась — исполнителем не годится.
+			refused[st.Model] = st.Refused > 0 && st.Successes == 0
 		}
 	}
 	describe := func(model string) (orchestrator.Executor, bool) {
@@ -326,7 +329,7 @@ func (h *Handler) orchestratorContext(project string, executors []string) orches
 		if !ok || !found {
 			return orchestrator.Executor{}, false
 		}
-		e := orchestrator.Executor{Model: model, MCP: omniroute.HasCap(p, omniroute.CapMCP), Stats: statByModel[model]}
+		e := orchestrator.Executor{Model: model, MCP: omniroute.HasCap(p, omniroute.CapMCP), Stats: statByModel[model], Refused: refused[model]}
 		for _, cp := range omniroute.Caps(p) {
 			e.Caps = append(e.Caps, omniroute.CapTitle(cp))
 		}
@@ -362,6 +365,9 @@ func statLine(st store.ModelStat) string {
 		return ""
 	}
 	line := fmt.Sprintf("за 30 дней прошла проверки в %d из %d задач", st.Successes, st.Attempts)
+	if st.Refused > 0 {
+		line += fmt.Sprintf(", %d раз отказалась работать исполнителем", st.Refused)
+	}
 	switch {
 	case st.CostUSD > 0 && st.Successes > 0:
 		line += fmt.Sprintf(", ≈$%.2f за успешную задачу", st.CostUSD/float64(st.Successes))

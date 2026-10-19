@@ -458,3 +458,23 @@ func TestModelLimitDoesNotCoolWholeKey(t *testing.T) {
 		t.Fatal("распознавание лимитов модели")
 	}
 }
+
+func TestOverMinuteLimit(t *testing.T) {
+	groq := "Rate limit reached for model `qwen/qwen3.8-27b` on input tokens per minute (ITPM): Limit 7000, Used 6143, Requested 5537. Please try again in 40.1s."
+	if _, _, ok := OverMinuteLimit(groq); ok {
+		t.Fatal("5537 < 7000: запрос пройдёт после ожидания")
+	}
+	if r, l, ok := OverMinuteLimit("Limit 7000, Used 100, Requested 9100"); !ok || r != 9100 || l != 7000 {
+		t.Fatalf("r=%d l=%d ok=%v", r, l, ok)
+	}
+}
+
+func TestCooldownTellsRetryAfter(t *testing.T) {
+	srv, _, _ := setupOpenAI(t, "sk-limited")
+	body := `{"model":"oa/gpt-x","messages":[{"role":"user","content":"hi"}]}`
+	do(t, srv, http.MethodPost, "/v1/chat/completions", body)
+	rec := do(t, srv, http.MethodPost, "/v1/chat/completions", body)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("code = %d, Retry-After = %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+}

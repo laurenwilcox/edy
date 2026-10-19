@@ -180,3 +180,14 @@ func TestAutoPicksModels(t *testing.T) {
 		t.Fatalf("models = %v reviewer = %q", models, reviewer)
 	}
 }
+
+func TestAutoSkipsRefusedModels(t *testing.T) {
+	c := Context{Auto: true, Others: []Executor{{Model: "groq/qwen"}, {Model: "agy/gemini", Refused: true}, {Model: "claude/sonnet"}}}
+	models, _ := PlanModels("Исполнитель: groq/qwen\nРезерв: agy/gemini\nРевьюер: нет", c)
+	if strings.Join(models, ",") != "groq/qwen" {
+		t.Fatalf("models = %v", models)
+	}
+	if !strings.Contains(instructions(c), "agy/gemini: без особых возможностей; скиллы получает в промпте; НЕ ГОДИТСЯ исполнителем") {
+		t.Fatal("в инструкциях нет пометки об отказавшей модели")
+	}
+}

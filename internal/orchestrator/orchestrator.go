@@ -74,6 +74,9 @@ type Executor struct {
 	MCP   bool // умеет MCP: получает MCP-серверы, а скиллы — через MCP Edy
 	// Stats — как модель справлялась с задачами и сколько стоила (за 30 дней).
 	Stats string
+	// Refused — модель отказывалась работать исполнителем и ни разу не
+	// справилась (например, CLI без прав на свои инструменты): не назначать.
+	Refused bool
 }
 
 // Context — что Оркестратор знает кроме проекта: кто будет исполнять,
@@ -139,6 +142,9 @@ func capsLine(e Executor) string {
 	line := fmt.Sprintf("- %s: %s; %s", e.Model, caps, how)
 	if e.Stats != "" {
 		line += "; " + e.Stats
+	}
+	if e.Refused {
+		line += "; НЕ ГОДИТСЯ исполнителем — отказывается работать в фоне, не назначай её ни исполнителем, ни резервом"
 	}
 	return line + "\n"
 }
@@ -273,7 +279,7 @@ var (
 func PlanModels(plan string, c Context) (models []string, reviewer string) {
 	known := map[string]bool{}
 	for _, e := range append(append([]Executor{}, c.Executors...), c.Others...) {
-		known[e.Model] = true
+		known[e.Model] = !e.Refused
 	}
 	line := func(re *regexp.Regexp) string {
 		m := re.FindStringSubmatch(plan)
@@ -340,8 +346,8 @@ func checkSubtasks(list []Subtask, c Context) []Subtask {
 	known := map[string]bool{}
 	fallback := ""
 	for _, e := range append(append([]Executor{}, c.Executors...), c.Others...) {
-		known[e.Model] = true
-		if fallback == "" {
+		known[e.Model] = !e.Refused
+		if fallback == "" && !e.Refused {
 			fallback = e.Model
 		}
 	}

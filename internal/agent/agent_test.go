@@ -408,3 +408,31 @@ func TestHopelessModelGoesStraightToFallback(t *testing.T) {
 		t.Fatalf("res = %+v, вызовов agy: %d", res, llm.calls)
 	}
 }
+
+// limitedOnce: первый вызов — 429 «подождите секунду», дальше — по сценарию.
+type limitedOnce struct {
+	scripted
+	hit bool
+}
+
+func (l *limitedOnce) Chat(ctx context.Context, model string, msgs []Msg, tools []ToolDef) (Msg, error) {
+	if !l.hit {
+		l.hit = true
+		return Msg{}, &StatusError{Status: 429, Message: "модель " + model + ": лимит в минуту", RetryAfter: time.Second}
+	}
+	return l.scripted.Chat(ctx, model, msgs, tools)
+}
+
+func TestShortRateLimitWaitsInsteadOfGivingUp(t *testing.T) {
+	dir := newProject(t)
+	llm := &limitedOnce{scripted: scripted{steps: map[string][]Msg{"groq/m": fixSteps()}}}
+	var log strings.Builder
+	res, err := (&Task{Root: dir, Goal: "Почини сложение", Models: []string{"groq/m"}, LLM: llm,
+		OnEvent: func(e Event) { log.WriteString(e.Kind + ": " + e.Text + "\n") }}).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusDone || !strings.Contains(log.String(), "жду 1s и продолжаю") {
+		t.Fatalf("res = %+v\n%s", res, log.String())
+	}
+}

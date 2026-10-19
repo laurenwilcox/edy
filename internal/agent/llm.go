@@ -12,7 +12,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Msg — сообщение в формате OpenAI chat.completions.
@@ -144,7 +146,11 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 		if e.Error.Message == "" {
 			e.Error.Message = strings.TrimSpace(string(data))
 		}
-		return Msg{}, &StatusError{Status: resp.StatusCode, Message: fmt.Sprintf("модель %s: %s", model, e.Error.Message)}
+		se := &StatusError{Status: resp.StatusCode, Message: fmt.Sprintf("модель %s: %s", model, e.Error.Message)}
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+			se.RetryAfter = time.Duration(secs) * time.Second
+		}
+		return Msg{}, se
 	}
 	var out struct {
 		Choices []struct {
@@ -168,6 +174,8 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 type StatusError struct {
 	Status  int
 	Message string
+	// RetryAfter — когда можно повторить (из Retry-After при 429).
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string { return e.Message }
@@ -177,6 +185,15 @@ func (e *StatusError) Error() string { return e.Message }
 func Hopeless(err error) bool {
 	var se *StatusError
 	return errors.As(err, &se) && se.Status == http.StatusUnprocessableEntity
+}
+
+// RateLimited сообщает, что модель упёрлась в лимит, и сколько подождать.
+func RateLimited(err error) (time.Duration, bool) {
+	var se *StatusError
+	if errors.As(err, &se) && se.Status == http.StatusTooManyRequests {
+		return se.RetryAfter, true
+	}
+	return 0, false
 }
 
 func unmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }

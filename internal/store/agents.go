@@ -184,11 +184,13 @@ func (s *Store) AgentEvents(agentID string, afterID int64) ([]AgentEvent, error)
 
 // ModelStat — как модель справляется с задачами и сколько стоит.
 type ModelStat struct {
-	Model     string  `json:"model"`     // «провайдер/модель»
-	Attempts  int64   `json:"attempts"`  // сколько раз брала задачу исполнителем
-	Successes int64   `json:"successes"` // сколько раз прошла проверки
-	CostUSD   float64 `json:"cost_usd"`  // расходы модели за период (все роли)
-	Tokens    int64   `json:"tokens"`
+	Model     string `json:"model"`     // «провайдер/модель»
+	Attempts  int64  `json:"attempts"`  // сколько раз брала задачу исполнителем
+	Successes int64  `json:"successes"` // сколько раз прошла проверки
+	// Refused — сколько раз отказалась работать (CLI без прав, запрос больше лимита).
+	Refused int64   `json:"refused"`
+	CostUSD float64 `json:"cost_usd"` // расходы модели за период (все роли)
+	Tokens  int64   `json:"tokens"`
 }
 
 // ModelStats собирает успехи исполнителей из журнала агентов и расходы из
@@ -201,20 +203,21 @@ func (s *Store) ModelStats(since time.Time) ([]ModelStat, error) {
 		}
 		return stats[m]
 	}
-	rows, err := s.db.Query(`SELECT model, COUNT(*), SUM(CASE WHEN state = ? THEN 1 ELSE 0 END) FROM agents
+	rows, err := s.db.Query(`SELECT model, COUNT(*), SUM(CASE WHEN state = ? THEN 1 ELSE 0 END),
+		SUM(CASE WHEN error LIKE 'отказалась работать%' THEN 1 ELSE 0 END) FROM agents
 		WHERE role = ? AND created >= ? AND state != ? GROUP BY model`, AgentDone, RoleExecutor, since.UnixMilli(), AgentRunning)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var m string
-		var a, ok int64
-		if err := rows.Scan(&m, &a, &ok); err != nil {
+		var a, ok, refused int64
+		if err := rows.Scan(&m, &a, &ok, &refused); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		st := get(m)
-		st.Attempts, st.Successes = a, ok
+		st.Attempts, st.Successes, st.Refused = a, ok, refused
 	}
 	rows.Close()
 	rows, err = s.db.Query(`SELECT provider || '/' || model, SUM(cost_usd), SUM(input_tokens + output_tokens) FROM usage WHERE ts >= ? GROUP BY provider, model`, since.Unix())

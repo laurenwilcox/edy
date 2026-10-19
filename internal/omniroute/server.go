@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -316,6 +317,13 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 		if err == nil || emitted || !errors.As(err, &ue) {
 			return usage, err
 		}
+		if ue.Status == http.StatusTooManyRequests {
+			if requested, limit, ok := OverMinuteLimit(ue.Message); ok {
+				// Один запрос больше, чем модель принимает за минуту: ждать бесполезно.
+				return usage, &UpstreamError{Status: http.StatusUnprocessableEntity, Message: fmt.Sprintf(
+					"запрос (%d токенов) больше лимита модели %s в минуту (%d) — на этом тарифе она не потянет задачу, нужна другая модель", requested, call.Model, limit)}
+			}
+		}
 		lastErr = err
 		switch {
 		case ue.Status == http.StatusTooManyRequests && ModelScopedLimit(ue.Message):
@@ -337,9 +345,25 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 		}
 	}
 	if lastErr == nil {
-		return Usage{}, &UpstreamError{Status: http.StatusTooManyRequests, Message: "все ключи провайдера " + p.Name + " временно на перерыве после лимита"}
+		// Подсказываем клиенту, когда ближайший ключ вернётся с перерыва.
+		var wait time.Duration
+		for _, k := range keys {
+			ck := fmt.Sprintf("%s/%d", p.Name, k.ID)
+			left := max(s.cooldownLeft(ck), s.cooldownLeft(ck+"/"+call.Model))
+			if wait == 0 || left < wait {
+				wait = left
+			}
+		}
+		return Usage{}, &UpstreamError{Status: http.StatusTooManyRequests, RetryAfter: wait, Message: "все ключи провайдера " + p.Name + " временно на перерыве после лимита"}
 	}
 	return Usage{}, lastErr
+}
+
+// cooldownLeft — сколько ещё длится перерыв (0 — его нет).
+func (s *Server) cooldownLeft(id string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return max(s.cooldowns[id].Sub(s.now()), 0)
 }
 
 func (s *Server) coolingDown(id string) bool {
@@ -477,6 +501,9 @@ func (o *responder) fail(err error) {
 		status = ue.Status
 		if status == http.StatusTooManyRequests {
 			kind = "rate_limit_error"
+		}
+		if ue.RetryAfter > 0 && !(o.stream && o.started) {
+			o.w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(ue.RetryAfter.Seconds()))))
 		}
 	}
 	if o.stream && o.started {
