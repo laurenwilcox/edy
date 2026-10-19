@@ -382,3 +382,29 @@ func TestWorkspaceSkills(t *testing.T) {
 		t.Fatal("несуществующий скилл должен давать ошибку")
 	}
 }
+
+// hopeless отвечает отказом 422 за модель cli/agy, остальное — по сценарию.
+type hopeless struct {
+	scripted
+	calls int
+}
+
+func (h *hopeless) Chat(ctx context.Context, model string, msgs []Msg, tools []ToolDef) (Msg, error) {
+	if model == "cli/agy" {
+		h.calls++
+		return Msg{}, &StatusError{Status: 422, Message: "модель cli/agy: agy не может работать в фоне"}
+	}
+	return h.scripted.Chat(ctx, model, msgs, tools)
+}
+
+func TestHopelessModelGoesStraightToFallback(t *testing.T) {
+	dir := newProject(t)
+	llm := &hopeless{scripted: scripted{steps: map[string][]Msg{"smart/m": fixSteps()}}}
+	res, err := (&Task{Root: dir, Goal: "Почини сложение", Models: []string{"cli/agy", "smart/m"}, LLM: llm}).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusDone || res.Model != "smart/m" || llm.calls != 1 {
+		t.Fatalf("res = %+v, вызовов agy: %d", res, llm.calls)
+	}
+}

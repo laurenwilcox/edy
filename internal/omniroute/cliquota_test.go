@@ -182,3 +182,30 @@ func TestCLIQuotaLimitGives429(t *testing.T) {
 		t.Fatalf("code = %d body = %s", rec.Code, rec.Body)
 	}
 }
+
+const agyDenied = `jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. command(<target>)).`
+
+func TestDetectCLIToolDenied(t *testing.T) {
+	if !DetectCLIToolDenied(agyDenied) {
+		t.Fatal("отказ agy не распознан")
+	}
+	if DetectCLIToolDenied("Готово: поправил permission check в auth.go") {
+		t.Fatal("обычный ответ принят за отказ")
+	}
+}
+
+func TestCLIToolDeniedGives422(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "agy")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho '"+agyDenied+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := newTestStore(t)
+	if _, err := st.AddProvider(store.Provider{Name: "agy", Kind: store.KindCLI, Command: []string{script, "-p", "{prompt}"}}); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(st, testToken, nil)
+	rec := serve(srv, newAuthedRequest(http.MethodPost, "/v1/chat/completions", `{"model":"agy/gemini","messages":[{"role":"user","content":"сделай"}]}`))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "не может работать в фоне") {
+		t.Fatalf("code = %d body = %s", rec.Code, rec.Body)
+	}
+}

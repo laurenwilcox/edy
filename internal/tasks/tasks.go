@@ -100,6 +100,9 @@ type View struct {
 	Models   []string `json:"models"`
 	MCP      []string `json:"mcp,omitempty"`    // внешние MCP-серверы, выданные Оркестратором
 	Skills   []string `json:"skills,omitempty"` // скиллы, выданные исполнителю
+	// Reviewer — ревьюер, выбранный Оркестратором под задачу: «провайдер/модель»,
+	// off — без ревью, пусто — как в настройках проекта.
+	Reviewer string   `json:"reviewer,omitempty"`
 	State    string   `json:"state"`
 	Error    string   `json:"error,omitempty"`
 	Summary  string   `json:"summary,omitempty"`
@@ -308,6 +311,8 @@ type Options struct {
 	// Skills — выданные скиллы: nil — все скиллы (задача без Оркестратора),
 	// пустой список — никаких.
 	Skills []string
+	// Reviewer — ревьюер под задачу (см. View.Reviewer).
+	Reviewer string
 }
 
 // Plan — что нужно, чтобы поставить задачу в очередь.
@@ -350,6 +355,7 @@ func (m *Manager) enqueue(id string, d Draft, p Plan, start bool) (View, error) 
 		}
 		r.Plan = p.Plan
 		r.Skills, r.AllSkills = p.Skills, p.Skills == nil
+		r.Reviewer = p.Reviewer
 		r.Error, r.Summary, r.Diff, r.Review, r.Model = "", "", "", nil, ""
 		r.Position = m.Now().UnixMilli()
 		return nil

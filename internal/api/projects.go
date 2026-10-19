@@ -241,6 +241,7 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 		Messages     []agent.Msg `json:"messages"`
 		Conversation string      `json:"conversation"` // id разговора: один разговор — один агент в журнале
 		Executors    []string    `json:"executors"`    // выбранные исполнитель и резерв
+		Auto         bool        `json:"auto"`         // модели выбирает сам Оркестратор
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -259,7 +260,11 @@ func (h *Handler) orchestrate(w http.ResponseWriter, r *http.Request) {
 	agentID := h.journalOrchestrator(req.Conversation, req.Model, req.Project, history)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
+	if req.Auto {
+		req.Executors = nil
+	}
 	oc := h.orchestratorContext(req.Project, req.Executors)
+	oc.Auto = req.Auto
 	oc.Git = gitops.IsRepo(req.Project)
 	oc.Team = h.teamMembers(req.Project)
 	if ps, err := h.Store.ProjectSettings(req.Project); err == nil {
@@ -467,6 +472,8 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 		Subtasks []orchestrator.Subtask `json:"subtasks"`
 		// Agent — постоянный агент команды (id), выбранный исполнителем вручную.
 		Agent string `json:"agent"`
+		// Reviewer — ревьюер, выбранный Оркестратором: «провайдер/модель» или off.
+		Reviewer string `json:"reviewer"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "некорректный JSON")
@@ -479,9 +486,18 @@ func (h *Handler) startTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var opts tasks.Options
+	if req.Reviewer != "" && req.Reviewer != "off" {
+		rv, ok := h.checkModels(w, []string{req.Reviewer})
+		if !ok {
+			return
+		}
+		opts.Reviewer = rv[0]
+	} else {
+		opts.Reviewer = req.Reviewer
+	}
 	// Скиллы и внешние MCP-серверы берутся из утверждённого плана: их выдал
 	// Оркестратор. Без плана (задача поставлена напрямую) — все скиллы.
-	var opts tasks.Options
 	if strings.TrimSpace(req.Plan) != "" {
 		oc := h.orchestratorContext(req.Project, models)
 		opts.MCP = orchestrator.PlanMCP(req.Plan, oc.Servers)

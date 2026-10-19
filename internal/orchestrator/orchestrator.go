@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/laurenwilcox/name/internal/agent"
@@ -47,6 +48,10 @@ type Reply struct {
 	Subtasks []Subtask `json:"subtasks,omitempty"`
 	// Agent — постоянный агент, которому Оркестратор отдаёт задачу целиком.
 	Agent string `json:"agent,omitempty"`
+	// Models — исполнитель и резерв, которых Оркестратор выбрал сам (режим «Авто»).
+	Models []string `json:"models,omitempty"`
+	// Reviewer — ревьюер, выбранный Оркестратором: «провайдер/модель» или off.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // Server — внешний MCP-сервер из каталога.
@@ -87,6 +92,9 @@ type Context struct {
 	Parallel int
 	// Team — постоянные агенты проекта.
 	Team []Member
+	// Auto — исполнителя, резерв и ревьюера Оркестратор выбирает сам по
+	// сложности задачи (тогда Executors пуст, а все модели — в Others).
+	Auto bool
 }
 
 // Member — постоянный агент команды проекта.
@@ -143,7 +151,12 @@ func instructions(c Context) string {
 		b.WriteString("\n\nПамять проекта (закреплённое и похожее на эту задачу) — учитывай в плане:\n" + c.Memory)
 	}
 	b.WriteString("\n\nИсполнитель и его возможности.\n")
-	if len(c.Executors) == 0 {
+	if c.Auto {
+		b.WriteString(autoRules)
+		for _, e := range c.Others {
+			mcpOK = mcpOK || e.MCP
+		}
+	} else if len(c.Executors) == 0 {
 		b.WriteString("Исполнитель ещё не выбран: не выдавай MCP-серверы, скиллы выдавать можно.\n")
 	} else {
 		b.WriteString("Задачу выполнит (первый — основной, дальше — резерв Circuit Breaker):\n")
@@ -153,7 +166,11 @@ func instructions(c Context) string {
 		mcpOK = c.Executors[0].MCP
 	}
 	if len(c.Others) > 0 {
-		b.WriteString("Другие доступные модели:\n")
+		if c.Auto {
+			b.WriteString("Модели, из которых выбирать:\n")
+		} else {
+			b.WriteString("Другие доступные модели:\n")
+		}
 		for _, e := range c.Others {
 			b.WriteString(capsLine(e))
 		}
@@ -202,6 +219,9 @@ func instructions(c Context) string {
 		b.WriteString("\nПроект без git: задачу на подзадачи для нескольких агентов не дели.\n")
 	}
 	b.WriteString("\nMCP-серверы. ")
+	if c.Auto && mcpOK {
+		b.WriteString("Выдавай их, только если выбранный тобой исполнитель умеет MCP (см. «скиллы получает через MCP Edy»). ")
+	}
 	if !mcpOK {
 		b.WriteString("Основной исполнитель не умеет MCP: строку MCP не пиши.\n")
 		return b.String()
@@ -226,6 +246,56 @@ func instructions(c Context) string {
 	return b.String()
 }
 
+// autoRules — как Оркестратору выбирать модели самому (режим «Авто»).
+const autoRules = `Исполнителя выбираешь ты сам — пользователь доверил это тебе. Оцени сложность задачи и выбери из списка ниже:
+- простая (опечатка, текст, мелкая правка в одном файле, конфиг) — быстрая и дешёвая модель (flash, mini, haiku, lite и т.п.);
+- средняя (новая функция, правка в нескольких файлах, тесты) — модель среднего уровня;
+- сложная (архитектура, много модулей, трудная отладка, безопасность, параллелизм) — самая сильная модель.
+Учитывай возможности (картинки, MCP) и статистику: модель, которая часто проваливается на таких задачах, не бери.
+Резерв (Circuit Breaker) — другая модель, не слабее исполнителя, лучше у другого провайдера.
+Ревьюер — другая модель, чем исполнитель, сильная в чтении кода; для совсем простой задачи ревью не нужно — пиши «нет».
+Если задачу отдаёшь агенту команды, его модель подставится сама, но строки всё равно напиши.
+Выбор напиши в плане отдельными строками, имена моделей — точно как в списке:
+Исполнитель: провайдер/модель
+Резерв: провайдер/модель
+Ревьюер: провайдер/модель или нет
+И одной фразой в ответе объясни выбор (почему такая модель хватит или нужна).
+`
+
+var (
+	executorLineRe = regexp.MustCompile(`(?mi)^[\s>*_-]*Исполнитель\s*\**\s*:\s*\**\s*(.+?)\s*$`)
+	fallbackLineRe = regexp.MustCompile(`(?mi)^[\s>*_-]*Резерв\s*\**\s*:\s*\**\s*(.+?)\s*$`)
+	reviewerLineRe = regexp.MustCompile(`(?mi)^[\s>*_-]*Ревьюер\s*\**\s*:\s*\**\s*(.+?)\s*$`)
+)
+
+// PlanModels достаёт из плана выбор Оркестратора: исполнителя с резервом и
+// ревьюера. Берутся только известные модели; ревьюер «нет» — off.
+func PlanModels(plan string, c Context) (models []string, reviewer string) {
+	known := map[string]bool{}
+	for _, e := range append(append([]Executor{}, c.Executors...), c.Others...) {
+		known[e.Model] = true
+	}
+	line := func(re *regexp.Regexp) string {
+		m := re.FindStringSubmatch(plan)
+		if m == nil {
+			return ""
+		}
+		return strings.Trim(m[1], "`*_ .")
+	}
+	for _, m := range []string{line(executorLineRe), line(fallbackLineRe)} {
+		if known[m] && !slices.Contains(models, m) {
+			models = append(models, m)
+		}
+	}
+	switch r := line(reviewerLineRe); {
+	case known[r]:
+		reviewer = r
+	case strings.HasPrefix(strings.ToLower(r), "нет"), strings.HasPrefix(strings.ToLower(r), "не нуж"), strings.EqualFold(r, "off"):
+		reviewer = "off"
+	}
+	return models, reviewer
+}
+
 // Chat отправляет историю диалога Оркестратору и возвращает его ответ.
 func Chat(ctx context.Context, llm agent.LLM, model, project string, history []agent.Msg, c Context) (Reply, error) {
 	if model == "" {
@@ -244,7 +314,14 @@ func Chat(ctx context.Context, llm agent.LLM, model, project string, history []a
 		return Reply{}, err
 	}
 	out := parse(reply.Content)
-	if len(c.Executors) > 0 && c.Executors[0].MCP {
+	mcp := len(c.Executors) > 0 && c.Executors[0].MCP
+	if c.Auto {
+		out.Models, out.Reviewer = PlanModels(out.Plan, c)
+		for _, e := range c.Others {
+			mcp = mcp || len(out.Models) > 0 && e.Model == out.Models[0] && e.MCP
+		}
+	}
+	if mcp {
 		out.MCP = PlanMCP(out.Plan, c.Servers)
 	}
 	out.Skills = PlanSkills(out.Plan, c.Skills)

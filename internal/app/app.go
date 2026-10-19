@@ -135,6 +135,13 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h.Tasks.Review = review.New(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "reviewer", HTTP: agent.InProcess(router)}, st,
 		func(v tasks.View) string {
 			ps, _ := st.ProjectSettings(v.Project)
+			// Явное «без ревью» в проекте важнее; иначе — выбор Оркестратора под задачу.
+			switch {
+			case ps.ReviewModel == "off" || v.Reviewer == "off":
+				return ""
+			case v.Reviewer != "":
+				return v.Reviewer
+			}
 			switch ps.ReviewModel {
 			case "off":
 				return ""

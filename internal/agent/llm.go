@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -143,7 +144,7 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 		if e.Error.Message == "" {
 			e.Error.Message = strings.TrimSpace(string(data))
 		}
-		return Msg{}, fmt.Errorf("модель %s: %s", model, e.Error.Message)
+		return Msg{}, &StatusError{Status: resp.StatusCode, Message: fmt.Sprintf("модель %s: %s", model, e.Error.Message)}
 	}
 	var out struct {
 		Choices []struct {
@@ -161,6 +162,21 @@ func (o *OmniRoute) Chat(ctx context.Context, model string, msgs []Msg, tools []
 		m.Content = *c
 	}
 	return m, nil
+}
+
+// StatusError — OmniRoute ответил ошибкой с HTTP-статусом.
+type StatusError struct {
+	Status  int
+	Message string
+}
+
+func (e *StatusError) Error() string { return e.Message }
+
+// Hopeless сообщает, что повторять запрос к этой модели бесполезно: она
+// отвечает отказом вместо работы (например, CLI без прав на свои инструменты).
+func Hopeless(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status == http.StatusUnprocessableEntity
 }
 
 func unmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }

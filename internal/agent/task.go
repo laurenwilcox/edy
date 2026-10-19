@@ -241,6 +241,9 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 		reply, err := t.LLM.Chat(ctx, model, msgs, tools)
 		if err != nil {
 			t.emit("error", "%v", err)
+			if Hopeless(err) {
+				return "", false, nil // сразу к резервной модели
+			}
 			failures++
 			if failures >= t.MaxAttempts {
 				return "", false, nil

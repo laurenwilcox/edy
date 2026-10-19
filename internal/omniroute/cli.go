@@ -187,6 +187,14 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 	if emitErr != nil {
 		return usage, emitErr
 	}
+	// Отказ в правах вместо ответа: повтор даст то же самое, поэтому 422 —
+	// исполнитель задачи сразу передаёт работу резервной модели.
+	if ctx.Err() == nil && jf == nil && len(output.String()) < 4000 && DetectCLIToolDenied(output.String()) || jf != nil && jf.texts == 0 && DetectCLIToolDenied(tail) {
+		return usage, &UpstreamError{Status: http.StatusUnprocessableEntity, Message: fmt.Sprintf(
+			"%s не может работать в фоне: она хотела сама запустить свой инструмент, а без подтверждения это запрещено. "+
+				"Edy правит проект своими инструментами — выберите другого исполнителя или разрешите утилите команды в её настройках. Вывод: %s",
+			filepath.Base(args[0]), tail)}
+	}
 	if ctx.Err() != nil {
 		return usage, fmt.Errorf("%s остановлена (%w), последний вывод: %q", args[0], ctx.Err(), tail)
 	}

@@ -159,3 +159,24 @@ func TestTeamAssignment(t *testing.T) {
 		t.Fatalf("назначения: %q %+v", r.Agent, r.Subtasks)
 	}
 }
+
+func TestAutoPicksModels(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644)
+	c := Context{Auto: true, Others: []Executor{{Model: "agy/gemini-flash"}, {Model: "claude/opus", MCP: true}, {Model: "codex/gpt-6"}}}
+	llm := &fakeLLM{reply: "Задача простая — хватит быстрой модели.\n<plan>\nЗадача: опечатка.\n1. a.go — исправить.\n**Исполнитель:** `agy/gemini-flash`\nРезерв: codex/gpt-6\nРевьюер: нет\n</plan>"}
+	r, err := Chat(context.Background(), llm, "claude/opus", dir, []agent.Msg{{Role: "user", Content: "Исправь опечатку"}}, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.Models, ",") != "agy/gemini-flash,codex/gpt-6" || r.Reviewer != "off" {
+		t.Fatalf("r = %+v", r)
+	}
+	if !strings.Contains(llm.got[0].Content, "Исполнителя выбираешь ты сам") || !strings.Contains(llm.got[0].Content, "Модели, из которых выбирать") {
+		t.Fatal("в инструкциях нет правил автовыбора")
+	}
+	models, reviewer := PlanModels("Исполнитель: claude/opus\nРезерв: выдуманная/модель\nРевьюер: codex/gpt-6", c)
+	if strings.Join(models, ",") != "claude/opus" || reviewer != "codex/gpt-6" {
+		t.Fatalf("models = %v reviewer = %q", models, reviewer)
+	}
+}

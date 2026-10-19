@@ -162,6 +162,17 @@ var (
 	cliRetryRe = regexp.MustCompile(`(?i)try again in\s+(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hours?)`)
 )
 
+// cliToolDeniedRe — CLI-агент хотел сам запустить инструмент (команду,
+// правку файла), а в неинтерактивном режиме спросить разрешения некого:
+// так отвечает, например, agy («headless mode cannot prompt … auto-denied»).
+var cliToolDeniedRe = regexp.MustCompile(`(?i)headless mode cannot prompt|permission[^.\n]{0,80}auto-denied|auto-denied[^.\n]{0,80}permission`)
+
+// DetectCLIToolDenied сообщает, что вместо ответа CLI вывела отказ в правах
+// на свой инструмент. Повторять такой запрос бесполезно: ответ будет тем же.
+func DetectCLIToolDenied(out string) bool {
+	return cliToolDeniedRe.MatchString(out)
+}
+
 // DetectCLILimit ищет в выводе CLI сообщение о лимите и, если есть, время ожидания.
 func DetectCLILimit(out string) (bool, time.Duration) {
 	if !cliLimitRe.MatchString(out) {

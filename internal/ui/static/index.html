@@ -127,6 +127,28 @@ body {
 .msg pre { white-space: pre-wrap; background: var(--code); padding: 10px 12px; border-radius: 10px; margin: 8px 0; font-size: 12.5px; overflow-x: auto; }
 .msg pre code { background: none; padding: 0; border-radius: 0; }
 .msg code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.md { white-space: normal; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 8px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; line-height: 1.3; }
+.md h1 { font-size: 1.35em; } .md h2 { font-size: 1.22em; } .md h3 { font-size: 1.1em; } .md h4, .md h5, .md h6 { font-size: 1em; }
+.md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; } .md li { margin: 2px 0; } .md li > ul, .md li > ol { margin: 2px 0; }
+.md li > input[type=checkbox] { width: auto; height: auto; display: inline-block; padding: 0; margin: 0 4px 0 -2px; vertical-align: -1px; }
+.md blockquote { margin: 6px 0 8px; padding: 2px 12px; border-left: 3px solid var(--line); opacity: .85; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+.md a { color: var(--a1); text-decoration: underline; text-underline-offset: 2px; } .msg.user .md a { color: inherit; }
+.md :not(pre) > code { background: var(--code); padding: 1px 5px; border-radius: 5px; }
+.md .table-wrap { overflow-x: auto; margin: 6px 0 10px; }
+.md table { border-collapse: collapse; font-size: .95em; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; vertical-align: top; }
+.md th { background: var(--code); font-weight: 600; }
+.md img { max-width: 100%; border-radius: 8px; cursor: zoom-in; }
+.md details { margin: 6px 0; } .md summary { cursor: pointer; }
+.md .code-bar { display: flex; align-items: center; gap: 6px; margin: 8px 0 -8px; padding: 4px 8px 0 12px; font-size: 11.5px; opacity: .75; }
+.md .code-bar span { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.md .code-btn { font: inherit; font-size: 11.5px; border: 0; background: none; color: inherit; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.md .code-btn:hover { background: var(--code); }
+.md .html-preview { width: 100%; height: 360px; border: 1px solid var(--line); border-radius: 10px; background: #fff; margin: 4px 0 8px; }
 .msg :not(pre) > code { background: var(--code); padding: 1px 5px; border-radius: 5px; }
 .msg.user :not(pre) > code { background: rgba(255,255,255,.2); }
 .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
@@ -1898,14 +1920,24 @@ function fillModels() {
     const opts = all.map((m) => el("option", { value: m }, markMCP && mcp.has(m) ? m + " · MCP" : m));
     if (empty) opts.unshift(el("option", { value: "" }, empty));
     const agents = markMCP && !empty ? teamOptions() : [];
-    sel.replaceChildren(...(opts.length ? [...agents, ...(agents.length ? [el("optgroup", { label: "Модели" }, ...opts)] : opts)] : [el("option", { value: "" }, "нет моделей")]));
+    // «Авто»: исполнителя, резерв и ревьюера Оркестратор выбирает сам по сложности задачи.
+    const auto = markMCP && !empty && opts.length ? [el("option", { value: "auto" }, "🤖 Авто — выберет Оркестратор")] : [];
+    sel.replaceChildren(...(opts.length ? [...auto, ...agents, ...(agents.length || auto.length ? [el("optgroup", { label: "Модели" }, ...opts)] : opts)] : [el("option", { value: "" }, "нет моделей")]));
     if (all.includes(current) || (empty && current === "") || (current?.startsWith("agent:") && agentOf(current.slice(6)))) sel.value = current;
+    else if (auto.length && (current === "auto" || !current)) sel.value = "auto";
+    if (sel.id === "fallback") syncFallback();
   };
   fill($("#model"), "edy-model");
   fill($("#worker"), "edy-worker", "", true);
   fill($("#fallback"), "edy-fallback", "— нет", true);
 }
-$("#worker").addEventListener("change", (e) => store.set("edy-worker", e.target.value));
+$("#worker").addEventListener("change", (e) => { store.set("edy-worker", e.target.value); syncFallback(); });
+// В режиме «Авто» резерв тоже выбирает Оркестратор.
+function syncFallback() {
+  const auto = $("#worker").value === "auto";
+  $("#fallback").disabled = auto;
+  $("#fallback").title = auto ? "В режиме «Авто» резерв выбирает Оркестратор" : "";
+}
 $("#fallback").addEventListener("change", (e) => store.set("edy-fallback", e.target.value));
 $("#model").addEventListener("change", (e) => store.set("edy-model", e.target.value));
 
@@ -1932,25 +1964,215 @@ function showWelcome() {
       el("button", { class: "chip", onclick: () => { input.value = t; send(); } }, t)))));
 }
 
-// Простая разметка: ```блоки кода``` и `код`. Всё остальное — обычный текст.
-function renderText(target, text) {
-  target.replaceChildren();
-  const parts = text.split(/```/);
-  parts.forEach((part, i) => {
-    if (i % 2 === 1) {
-      const body = part.replace(/^[\w+-]*\n/, "");
-      target.append(el("pre", {}, el("code", {}, body)));
-      return;
+// ============ Разметка ответов ============
+// Markdown (заголовки, списки, таблицы, цитаты, код, ссылки, картинки),
+// вставки HTML и целые HTML-документы. Всё, что получилось, проходит
+// через белый список тегов и атрибутов: скрипты, стили и обработчики
+// из ответа модели в окно Edy не попадают.
+const mdEsc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const mdBlockStart = /^\s{0,3}(#{1,6}\s|>|```|~~~|([-*+]|\d{1,9}[.)])\s|([-*_])(\s*\3){2,}\s*$)/;
+const mdRowRe = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+
+function mdInline(src) {
+  const keep = [];
+  const put = (html) => "\u0000" + (keep.push(html) - 1) + "\u0000";
+  let s = src
+    .replace(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g, (_, __, code) => put("<code>" + mdEsc(code.trim() ? code.replace(/^ (.*) $/, "$1") : code) + "</code>"))
+    .replace(/<(https?:\/\/[^\s>]+)>/g, (_, u) => put(`<a href="${mdEsc(u)}">${mdEsc(u)}</a>`))
+    .replace(/<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?\/?>|<!-{2}[\s\S]*?-{2}>/g, (tag) => put(tag));
+  s = mdEsc(s)
+    .replace(/!\[([^\]\n]*)\]\(\s*(\S+?)(?:\s+&quot;([^\n]*?)&quot;)?\s*\)/g, (_, alt, url, title) =>
+      put(`<img src="${url}" alt="${alt}"${title ? ` title="${title}"` : ""}>`))
+    .replace(/\[([^\]\n]+)\]\(\s*(\S+?)(?:\s+&quot;([^\n]*?)&quot;)?\s*\)/g, (_, text, url, title) =>
+      put(`<a href="${url}"${title ? ` title="${title}"` : ""}>`) + text + put("</a>"))
+    .replace(/(^|[\s(])(https?:\/\/[^\s<]*[^\s<.,;:!?)\]'"])/g, (_, pre, url) => pre + put(`<a href="${url}">${url}</a>`))
+    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>")
+    .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/(^|[^\w])_(?=\S)([^_\n]*?\S)_(?!\w)/g, "$1<em>$2</em>")
+    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>")
+    .replace(/==(?=\S)([^=\n]*?\S)==/g, "<mark>$1</mark>")
+    .replace(/ {2,}\n|\\\n|\n/g, "<br>");
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]);
+}
+
+function mdCells(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
+function mdBlocks(lines) {
+  let out = "";
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    // Блок кода: ```язык … ``` (незакрытый при потоковом ответе — до конца).
+    if ((m = line.match(/^(\s*)(`{3,}|~{3,})\s*([^\s`]*)/))) {
+      const fence = m[2], body = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence)) body.push(lines[i++].replace(new RegExp("^ {0," + m[1].length + "}"), ""));
+      i++;
+      out += `<pre data-lang="${mdEsc(m[3].toLowerCase())}"><code>${mdEsc(body.join("\n"))}</code></pre>`;
+      continue;
     }
-    part.split(/(`[^`\n]+`|!\[[^\]\n]*\]\((?:data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+|https:\/\/[^\s)]+)\))/).forEach((chunk) => {
-      if (/^`[^`\n]+`$/.test(chunk)) target.append(el("code", {}, chunk.slice(1, -1)));
-      else if (chunk.startsWith("![")) {
-        // Картинка в ответе (например, сгенерированная веб-чатом).
-        const src = chunk.slice(chunk.indexOf("](") + 2, -1);
-        target.append(el("div", { class: "thumbs" }, el("img", { class: "gen", src, alt: chunk.slice(2, chunk.indexOf("](")), onclick: () => showImage(src) })));
-      } else if (chunk) target.append(chunk);
+    if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) {
+      out += `<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`; i++; continue;
+    }
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { out += "<hr>"; i++; continue; }
+    if (/^\s{0,3}>/.test(line)) {
+      const body = [];
+      while (i < lines.length && lines[i].trim() && (/^\s{0,3}>/.test(lines[i]) || !mdBlockStart.test(lines[i]))) body.push(lines[i++].replace(/^\s{0,3}> ?/, ""));
+      out += `<blockquote>${mdBlocks(body)}</blockquote>`;
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && mdRowRe.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const head = mdCells(line), align = mdCells(lines[i + 1]).map((c) => c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : c.startsWith(":") ? "left" : "");
+      const cell = (tag, c, k) => `<${tag}${align[k] ? ` align="${align[k]}"` : ""}>${mdInline(c)}</${tag}>`;
+      let t = "<table><thead><tr>" + head.map((c, k) => cell("th", c, k)).join("") + "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) t += "<tr>" + mdCells(lines[i++]).map((c, k) => cell("td", c, k)).join("") + "</tr>";
+      out += t + "</tbody></table>";
+      continue;
+    }
+    if ((m = line.match(/^(\s*)([-*+]|\d{1,9}[.)])\s+/))) {
+      const indent = m[1].length, ordered = /\d/.test(m[2]);
+      const items = [];
+      while (i < lines.length) {
+        const im = lines[i].match(/^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/);
+        if (im && im[1].length <= indent + 1 && /\d/.test(im[2]) === ordered) {
+          items.push({ start: im[2], lines: [im[3]] });
+          i++;
+          continue;
+        }
+        if (!items.length) break;
+        if (!lines[i].trim()) {
+          // Пустая строка: список продолжается, если дальше вложенное или следующий пункт.
+          const next = lines[i + 1] || "";
+          if (next.match(/^(\s*)/)[1].length > indent && next.trim()) { items.at(-1).lines.push(""); i++; continue; }
+          const nm = next.match(/^(\s*)([-*+]|\d{1,9}[.)])\s+/);
+          if (nm && nm[1].length <= indent + 1) { i++; continue; }
+          break;
+        }
+        if (lines[i].match(/^(\s*)/)[1].length > indent || !mdBlockStart.test(lines[i])) {
+          items.at(-1).lines.push(lines[i].replace(new RegExp("^ {0," + (indent + 4) + "}"), ""));
+          i++;
+          continue;
+        }
+        break;
+      }
+      const startNum = parseInt(items[0].start, 10);
+      out += ordered ? `<ol${startNum > 1 ? ` start="${startNum}"` : ""}>` : "<ul>";
+      for (const it of items) {
+        let check = "";
+        const tm = it.lines[0].match(/^\[([ xX])\]\s+/);
+        if (tm) { check = `<input type="checkbox" disabled${tm[1] !== " " ? " checked" : ""}> `; it.lines[0] = it.lines[0].slice(tm[0].length); }
+        out += "<li>" + check + mdBlocks(it.lines).replace(/^<p>([\s\S]*?)<\/p>/, "$1") + "</li>";
+      }
+      out += ordered ? "</ol>" : "</ul>";
+      continue;
+    }
+    // HTML-блок: строка начинается с тега — до пустой строки.
+    if (/^\s*<\/?[a-zA-Z][\w-]*[\s>/]|^\s*<!-{2}/.test(line) && !/^\s*<https?:/.test(line)) {
+      const body = [];
+      while (i < lines.length && lines[i].trim()) body.push(lines[i++]);
+      out += body.join("\n");
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && (!para.length || !mdBlockStart.test(lines[i]))) para.push(lines[i++]);
+    out += `<p>${mdInline(para.join("\n"))}</p>`;
+  }
+  return out;
+}
+
+// Белый список разметки: теги, которые можно показать, и их атрибуты.
+const mdTags = new Set("a abbr b blockquote br caption cite code dd del details dfn div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p pre q s samp small span strike strong sub summary sup table tbody td tfoot th thead time tr u ul var center font".split(" "));
+const mdDrop = new Set("script style iframe frame frameset object embed applet form textarea select button option link meta base title head noscript template svg math audio video source track canvas dialog portal".split(" "));
+const mdAttrs = { a: ["href", "title"], img: ["src", "alt", "title", "width", "height"], td: ["align", "colspan", "rowspan"], th: ["align", "colspan", "rowspan"],
+  ol: ["start", "type"], li: ["value"], input: ["type", "checked", "disabled"], details: ["open"], pre: ["data-lang"], time: ["datetime"], abbr: ["title"], code: ["class"] };
+const mdSafeURL = (u, img) => {
+  const v = (u || "").trim();
+  if (img) return /^(https?:|data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,)/i.test(v);
+  return /^(https?:|mailto:|#)/i.test(v);
+};
+
+function mdSanitize(root) {
+  for (const node of [...root.childNodes]) {
+    if (node.nodeType === Node.COMMENT_NODE) { node.remove(); continue; }
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const tag = node.tagName.toLowerCase();
+    if (mdDrop.has(tag)) { node.remove(); continue; }
+    mdSanitize(node);
+    if (!mdTags.has(tag)) { node.replaceWith(...node.childNodes); continue; }
+    const allowed = mdAttrs[tag] || [];
+    for (const a of [...node.attributes]) if (!allowed.includes(a.name.toLowerCase())) node.removeAttribute(a.name);
+    if (tag === "a") {
+      if (!mdSafeURL(node.getAttribute("href"))) node.removeAttribute("href");
+      else if (!node.getAttribute("href").startsWith("#")) { node.target = "_blank"; node.rel = "noopener noreferrer"; }
+    }
+    if (tag === "img" && !mdSafeURL(node.getAttribute("src"), true)) node.remove();
+    if (tag === "input" && node.getAttribute("type") !== "checkbox") node.remove();
+    else if (tag === "input") node.disabled = true;
+    if (tag === "code" && !/^language-[\w+-]+$/.test(node.getAttribute("class") || "")) node.removeAttribute("class");
+  }
+}
+
+// mdDecorate добавляет то, что в HTML-строке не выразить: копирование кода,
+// предпросмотр HTML/SVG в изолированной рамке, увеличение картинок.
+function mdDecorate(root) {
+  for (const pre of root.querySelectorAll("pre")) {
+    const code = pre.querySelector("code") || pre;
+    const lang = pre.dataset.lang || (code.className || "").replace("language-", "");
+    const bar = el("div", { class: "code-bar" }, el("span", {}, lang || "код"));
+    const copy = el("button", { type: "button", class: "code-btn" }, "Копировать");
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(code.textContent); copy.textContent = "Скопировано"; } catch { copy.textContent = "Не вышло"; }
+      setTimeout(() => (copy.textContent = "Копировать"), 1500);
     });
-  });
+    if (/^(html|htm|svg|xml|xhtml)$/.test(lang) && /<\w/.test(code.textContent)) {
+      const view = el("button", { type: "button", class: "code-btn" }, "Предпросмотр");
+      let frame = null;
+      view.addEventListener("click", () => {
+        if (frame) { frame.remove(); frame = null; view.textContent = "Предпросмотр"; return; }
+        // sandbox без allow-scripts: страница из ответа не выполнит скрипты и не дотянется до Edy.
+        frame = el("iframe", { class: "html-preview", sandbox: "" });
+        frame.srcdoc = code.textContent;
+        pre.after(frame);
+        view.textContent = "Скрыть";
+      });
+      bar.append(view);
+    }
+    bar.append(copy);
+    pre.before(bar);
+  }
+  for (const img of root.querySelectorAll("img")) {
+    img.classList.add("gen");
+    img.addEventListener("click", () => showImage(img.src));
+  }
+  for (const t of root.querySelectorAll("table")) t.replaceWith(el("div", { class: "table-wrap" }, t.cloneNode(true)));
+}
+
+// mdSource приводит «другую разметку» к Markdown: целый HTML-документ и
+// чистый JSON показываются блоком кода (у HTML есть предпросмотр).
+function mdSource(text) {
+  const t = text.trim();
+  if (/^(<!doctype html|<html[\s>])/i.test(t)) return "```html\n" + t + "\n```";
+  if (/^[\[{]/.test(t) && /[\]}]$/.test(t)) {
+    try { return "```json\n" + JSON.stringify(JSON.parse(t), null, 2) + "\n```"; } catch {}
+  }
+  return text;
+}
+
+function renderText(target, text) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = mdBlocks(mdSource(String(text)).replace(/\r\n?/g, "\n").split("\n"));
+  mdSanitize(tpl.content);
+  mdDecorate(tpl.content);
+  target.classList.add("md");
+  target.replaceChildren(tpl.content);
 }
 
 function addMessage(role, text, model) {
@@ -2266,6 +2488,7 @@ const agentLabel = (a) => `${a.emoji || "👤"} ${a.name}`;
 // pickExecutor разбирает выбор «Исполнитель/Резерв»: агент команды или модели.
 function pickExecutor() {
   const w = $("#worker").value, f = $("#fallback").value;
+  if (w === "auto") return { auto: true, agent: "", models: [] };
   if (w.startsWith("agent:")) {
     const a = agentOf(w.slice(6));
     if (a) return { agent: a.id, models: [a.model, a.fallback].filter((x, i, l) => x && l.indexOf(x) === i) };
@@ -2408,11 +2631,11 @@ async function sendOrch() {
   try {
     // Оркестратор видит возможности исполнителя и резерва и по ним решает, что выдать.
     const executors = pickExecutor().models;
-    const r = await api("POST", "/api/orchestrator", { project, model, executors, messages: orchHistory, conversation: orchConversation });
+    const r = await api("POST", "/api/orchestrator", { project, model, executors, auto: !!pickExecutor().auto, messages: orchHistory, conversation: orchConversation });
     renderText(body, r.text || (r.plan ? "Вот план:" : "(пустой ответ)"));
     orchHistory.push({ role: "assistant", content: (r.text || "") + (r.plan ? "\n<plan>\n" + r.plan + "\n</plan>" : "") });
     for (const pr of r.new_mcp || []) m.append(proposalCard(pr));
-    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || [], r.subtasks || [], r.agent || ""));
+    if (r.plan) m.append(planCard(r.plan, project, r.mcp || [], r.skills || [], r.subtasks || [], r.agent || "", { models: r.models || [], reviewer: r.reviewer || "" }));
   } catch (e) {
     orchHistory.pop();
     m.classList.add("error");
@@ -2467,13 +2690,16 @@ function subtasksBlock(subtasks) {
   }) };
 }
 
-function planCard(plan, project, mcp, skills, subtasks = [], agentName = "") {
+function planCard(plan, project, mcp, skills, subtasks = [], agentName = "", choice = { models: [], reviewer: "" }) {
   const start = el("button", { class: "btn", type: "button" }, "▶ Начать работу");
   const split = subtasksBlock(subtasks);
   const given = (icon, title, list, cls) => el("div", { class: "plan-mcp" }, icon + " " + title + ": ",
     ...(list.length ? list.map((n) => el("span", { class: "badge" + cls }, n)) : [el("span", { class: "small muted" }, "не нужны")]));
   const lead = agentName && !subtasks.length ? team.find((a) => a.name === agentName) : null;
   const tools = el("div", {}, lead ? el("div", { class: "plan-mcp" }, "👥 Ведёт агент команды: ", el("span", { class: "badge" }, agentLabel(lead) + " · " + lead.model), el("span", { class: "small muted" }, " (с его ролью и памятью)")) : "",
+    choice.models.length || choice.reviewer ? el("div", { class: "plan-mcp" }, "🤖 Оркестратор выбрал: ",
+      ...choice.models.map((x, i) => el("span", { class: "badge" + (i ? " cli" : "") }, (i ? "резерв " : "") + x)),
+      el("span", { class: "badge" + (choice.reviewer === "off" ? " off" : "") }, choice.reviewer === "off" ? "без ревью" : choice.reviewer ? "ревьюер " + choice.reviewer : "ревьюер как в проекте")) : "",
     given("🧩", "MCP для исполнителя", mcp, ""), given("📘", "Скиллы", skills, " cli"));
   const box = el("div", { class: "plan" }, plan, tools, split.el, el("div", { class: "plan-actions" }, start, el("span", { class: "small muted" }, "или напишите, что поправить в плане")));
   start.addEventListener("click", async () => {
@@ -2485,7 +2711,13 @@ function planCard(plan, project, mcp, skills, subtasks = [], agentName = "") {
     try {
       const comment = box.closest(".msg")?.querySelector(".body")?.innerText || "";
       const ex = pickExecutor();
-      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: ex.models, agent: ex.agent, subtasks: split.read() });
+      let reviewer = "";
+      if (ex.auto) {
+        // Оркестратор не назвал исполнителя — берём первую модель, чтобы задача не встала.
+        ex.models = choice.models.length ? choice.models : chatModels().slice(0, 1);
+        reviewer = choice.reviewer;
+      }
+      const v = await api("POST", "/api/tasks", { id: orchTaskID, project, request, plan, comment, conversation: orchConversation, models: ex.models, agent: ex.agent, reviewer, subtasks: split.read() });
       orchTaskID = "";
       start.textContent = v.state === "queued" ? "Поставлено в очередь" : "Работа начата";
       watchTask(v);
@@ -2780,7 +3012,11 @@ let boardTimer = null;
 let boardTasks = [];
 let dragID = "";
 
-function executors() { return pickExecutor().models; }
+// Задача с доски идёт без плана Оркестратора: в режиме «Авто» её делает модель Оркестратора.
+function executors() {
+  const ex = pickExecutor();
+  return ex.auto ? [$("#model").value].filter(Boolean) : ex.models;
+}
 
 async function loadBoard() {
   clearTimeout(boardTimer);
