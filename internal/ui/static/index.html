@@ -508,6 +508,94 @@ h3.sub:first-child { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+/* ---- Дашборд ---- */
+.dash-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dash-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px 6px; }
+.dash-title { display: flex; align-items: baseline; gap: 10px; }
+.dash-title h2 { margin: 0; font-size: 20px; letter-spacing: -.01em; }
+.dash-filters { flex-wrap: nowrap; }
+.dash-filters select { max-width: 200px; }
+.dash-filters input { width: min(340px, 40vw); }
+.dash-main { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 16px 20px; }
+.dash-kpis { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.dash-kpi { position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; text-align: left;
+  padding: 12px 14px; border-radius: 16px; border: 1px solid var(--glass-border); background: var(--glass-strong); color: var(--text); font: inherit; cursor: pointer;
+  transition: transform .2s, border-color .2s, box-shadow .2s; animation: rise .4s both; overflow: hidden; }
+.dash-kpi::after { content: ""; position: absolute; inset: auto -20% -60% auto; width: 90px; height: 90px; border-radius: 50%; background: var(--grad); opacity: .08; }
+.dash-kpi:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--a1) 50%, transparent); }
+.dash-kpi.on { border-color: var(--a1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a1) 18%, transparent); }
+.dash-kpi-ico { grid-row: span 2; font-size: 22px; }
+.dash-kpi-val { font-size: 24px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.dash-kpi-label { font-size: 12px; color: var(--muted); }
+.dash-kpi.k-run .dash-kpi-val { color: var(--a1); } .dash-kpi.k-ok .dash-kpi-val { color: var(--ok); }
+.dash-kpi.k-warn .dash-kpi-val { color: var(--warn); } .dash-kpi.k-bad .dash-kpi-val { color: var(--danger); }
+.dash-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.dash-chips .chip { padding: 5px 12px; font-size: 12.5px; }
+.dash-chips .chip.on { background: var(--grad); color: var(--on-grad); border-color: transparent; }
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.dash-tasks { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dash-task { background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 16px; padding: 13px 15px; cursor: pointer;
+  transition: border-color .2s, transform .2s, box-shadow .2s; animation: rise .35s both; border-left: 4px solid var(--line); }
+.dash-task:hover { border-color: color-mix(in srgb, var(--a1) 45%, transparent); transform: translateY(-1px); }
+.dash-task.open { cursor: default; box-shadow: 0 10px 30px -18px color-mix(in srgb, var(--a1) 60%, transparent); }
+.dash-task.s-running { border-left-color: var(--a1); } .dash-task.s-done { border-left-color: var(--warn); }
+.dash-task.s-needs_human, .dash-task.s-failed, .dash-task.s-rejected { border-left-color: var(--danger); }
+.dash-task.s-approved, .dash-task.s-merged { border-left-color: var(--ok); } .dash-task.s-queued { border-left-color: var(--a2); }
+.dash-task-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.dash-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dash-pipe { display: flex; gap: 3px; margin: 10px 0 8px; }
+.dash-pipe span { flex: 1; text-align: center; font-size: 10.5px; padding: 3px 0; border-radius: 6px; background: var(--code); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-pipe span.past { background: color-mix(in srgb, var(--a1) 22%, transparent); color: var(--text); }
+.dash-pipe span.now { background: var(--grad); color: var(--on-grad); font-weight: 650; }
+.dash-pipe span.now.live { animation: dashPulse 1.6s ease-in-out infinite; }
+.dash-pipe.bad span.now { background: var(--danger); color: #fff; }
+@keyframes dashPulse { 50% { opacity: .65; } }
+.dash-goal { font-size: 13px; line-height: 1.45; margin-bottom: 8px; }
+.dash-goal.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dash-who { display: flex; flex-wrap: wrap; gap: 6px; }
+.dash-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--code); border: 1px solid transparent; max-width: 100%; }
+.dash-chip b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-chip.live { border-color: var(--a1); background: color-mix(in srgb, var(--a1) 12%, transparent); }
+.dash-chip.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--a1); animation: blink 1.2s infinite; }
+.dash-chip.v-ok { border-color: color-mix(in srgb, var(--ok) 50%, transparent); } .dash-chip.v-issues { border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+.dash-subs { margin-top: 10px; padding: 10px; border-radius: 12px; background: color-mix(in srgb, var(--code) 70%, transparent); }
+.dash-bar { height: 6px; border-radius: 99px; background: var(--code); overflow: hidden; margin: 6px 0; }
+.dash-bar > span { display: block; height: 100%; border-radius: inherit; transition: width .5s; }
+.dash-bar > span > span { display: block; height: 100%; border-radius: inherit; }
+.dash-sub { display: flex; align-items: center; gap: 9px; padding: 6px 4px; border-radius: 9px; cursor: pointer; }
+.dash-sub:hover { background: var(--code); }
+.dash-avas { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+.dash-ava { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; background: var(--code); border: 2px solid var(--glass-border); }
+.dash-ava.r-orchestrator { background: color-mix(in srgb, var(--a2) 22%, transparent); } .dash-ava.r-executor { background: color-mix(in srgb, var(--a1) 22%, transparent); }
+.dash-ava.r-reviewer { background: color-mix(in srgb, var(--ok) 22%, transparent); } .dash-ava.r-micro { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+.dash-ava.live { border-color: var(--a1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a1) 25%, transparent); animation: dashPulse 1.6s ease-in-out infinite; }
+.dash-details { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 10px; cursor: default; }
+.dash-details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.dash-pre { white-space: pre-wrap; font-size: 12.5px; line-height: 1.5; margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: var(--code); max-height: 320px; overflow: auto; }
+.dash-note { font-size: 12.5px; padding: 8px 11px; border-radius: 10px; background: var(--code); }
+.dash-note.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); } .dash-note.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.dash-note.bad { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.dash-events { display: flex; flex-direction: column; gap: 3px; }
+.dash-ev { display: grid; grid-template-columns: 44px 20px minmax(0, 1fr); gap: 6px; font-size: 12px; }
+.dash-agents { display: flex; flex-direction: column; gap: 4px; }
+.dash-side { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 0; }
+.dash-side-block { background: var(--glass-strong); border: 1px solid var(--glass-border); border-radius: 16px; padding: 12px 13px; display: flex; flex-direction: column; gap: 8px; animation: rise .4s both; }
+.dash-h { display: flex; align-items: center; justify-content: space-between; font-weight: 650; font-size: 13.5px; }
+.dash-live, .dash-feed { display: flex; flex-direction: column; gap: 5px; text-align: left; width: 100%; font: inherit; color: var(--text); background: var(--code); border: 1px solid transparent; border-radius: 12px; padding: 9px 10px; cursor: pointer; transition: border-color .2s; }
+.dash-feed { flex-direction: row; align-items: center; gap: 9px; background: none; padding: 6px 6px; }
+.dash-live:hover, .dash-feed:hover { border-color: color-mix(in srgb, var(--a1) 45%, transparent); }
+.dash-live .row { flex-wrap: nowrap; }
+.dash-sub .grow, .dash-feed .grow, .dash-live .grow { flex: 1; min-width: 0; }
+.dash-feed .status, .dash-sub .status, .dash-task-head .status { flex: none; white-space: nowrap; }
+.dash-model { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.dash-model code { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; }
+@media (max-width: 1100px) { .dash-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .dash-side { position: static; }
+  .dash-filters { flex-wrap: wrap; } .dash-filters input { width: 100%; }
+}
+@media (max-width: 560px) { .dash-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dash-pipe span { font-size: 9.5px; } }
 </style>
 <!-- Свой CSS пользователя (правит ИИ-помощник); идёт последним, чтобы перекрывать тему. -->
 <style id="user-css"></style>
@@ -977,6 +1065,7 @@ h3.sub:first-child { margin-top: 0; }
         <button type="button" data-chat-mode="chat" class="on">Чат</button>
         <button type="button" data-chat-mode="orch">Оркестратор</button>
         <button type="button" data-chat-mode="board">Доска</button>
+        <button type="button" data-chat-mode="dash">Дашборд</button>
       </div>
       <select id="model" title="Модель"></select>
       <span class="grow"></span>
@@ -990,6 +1079,7 @@ h3.sub:first-child { margin-top: 0; }
     </div>
     <div class="messages" id="messages"></div>
     <div class="messages" id="orch-messages" hidden></div>
+    <div class="dash-wrap" id="dash" hidden></div>
     <div class="board-wrap" id="board" hidden>
       <div class="board-bar">
         <form class="row" id="board-new" style="flex-wrap:nowrap">
@@ -1193,8 +1283,16 @@ const kindNames = { cli: "CLI", anthropic: "Anthropic", openai: "OpenAI-совм
 let presets = { cli: [], api: [], web: [] };
 let providers = [];
 
+// refusedModels — модели, которые отказывались работать исполнителем и ни
+// разу не справились (например, CLI без прав на свои инструменты).
+let refusedModels = new Set();
+
 async function refreshProviders() {
   providers = await api("GET", "/api/providers");
+  try {
+    const stats = await api("GET", "/api/stats/models?days=30");
+    refusedModels = new Set(stats.filter((st) => st.refused && !st.successes).map((st) => st.model));
+  } catch { /* без статистики — без пометок */ }
   fillModels();
   $("#foot-providers").textContent = providers.length
     ? `${providers.length} провайдер(а), ${providers.reduce((n, p) => n + p.models.length, 0)} моделей`
@@ -1938,7 +2036,8 @@ function fillModels() {
   const fill = (sel, key, empty, markMCP) => {
     const current = sel.value || store.get(key);
     // Исполнитель с MCP правит проект инструментами Edy напрямую.
-    const opts = all.map((m) => el("option", { value: m }, markMCP && mcp.has(m) ? m + " · MCP" : m));
+    const opts = all.map((m) => el("option", { value: m, title: markMCP && refusedModels.has(m) ? "Отказывалась работать исполнителем: в фоне не может запускать свои инструменты" : "" },
+      (markMCP && mcp.has(m) ? m + " · MCP" : m) + (markMCP && refusedModels.has(m) ? " · ⛔ отказывается работать" : "")));
     if (empty) opts.unshift(el("option", { value: "" }, empty));
     const agents = markMCP && !empty ? teamOptions() : [];
     // «Авто»: исполнителя, резерв и ревьюера Оркестратор выбирает сам по сложности задачи.
@@ -2601,18 +2700,242 @@ $("#team-form").addEventListener("submit", async (e) => {
 });
 $("#team-new").addEventListener("click", () => fillAgentForm(null));
 
+// ============ Дашборд ============
+// Кто что делает: задачи с целью, исполнителями, ревьюером и подзадачами,
+// агенты, которые работают прямо сейчас, и как справляются модели.
+const dash = { project: "", state: "", q: "", open: new Set(), details: {}, timer: null, loaded: 0, data: null };
+const dashStates = [
+  ["", "Все"], ["active", "В работе"], ["queued", "В очереди"], ["done", "Ждут решения"],
+  ["needs_human", "Нужна помощь"], ["finished", "Готово"], ["bad", "Ошибки"],
+];
+const dashStep = { backlog: 0, queued: 1, running: 2, done: 4, needs_human: 3, failed: 3, approved: 5, merged: 5, rejected: 5, cancelled: 2 };
+const dashPipe = ["Пул", "Очередь", "Работа", "Проверки", "Решение", "Готово"];
+const dashMatch = {
+  active: (t) => t.state === "running", queued: (t) => t.state === "queued", done: (t) => t.state === "done",
+  needs_human: (t) => t.state === "needs_human", finished: (t) => t.state === "approved" || t.state === "merged",
+  bad: (t) => ["failed", "rejected", "cancelled"].includes(t.state),
+};
+const dashAgo = (t) => {
+  const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000));
+  if (s < 60) return s + " с назад";
+  if (s < 3600) return Math.floor(s / 60) + " мин назад";
+  if (s < 86400) return Math.floor(s / 3600) + " ч назад";
+  return Math.floor(s / 86400) + " дн назад";
+};
+const dashProj = (p) => (p || "").split("/").filter(Boolean).pop() || "—";
+const dashLine = (s) => (s || "").split("\n").find((l) => l.trim()) || "";
+
+async function loadDash() {
+  clearTimeout(dash.timer);
+  const qs = dash.project ? "?project=" + encodeURIComponent(dash.project) : "";
+  try {
+    const [tasks, agents, stats, projects] = await Promise.all([
+      api("GET", "/api/tasks" + qs), api("GET", "/api/agents"),
+      api("GET", "/api/stats/models?days=30").catch(() => []), api("GET", "/api/projects").catch(() => []),
+    ]);
+    dash.data = { tasks, agents: dash.project ? agents.filter((a) => a.project === dash.project) : agents, stats, projects };
+    dash.loaded = Date.now();
+    renderDash();
+  } catch (e) { toast(e.message, true); }
+  const busy = dash.data?.tasks.some((t) => t.state === "running" || t.state === "queued") || dash.data?.agents.some((a) => a.state === "running");
+  if (chatMode === "dash") dash.timer = setTimeout(loadDash, busy ? 3000 : 10000);
+}
+
+function renderDash() {
+  const { tasks, agents, stats, projects } = dash.data;
+  const box = $("#dash");
+  const keepScroll = box.querySelector(".dash-main")?.scrollTop || 0;
+  const running = agents.filter((a) => a.state === "running");
+  const week = Date.now() - 7 * 86400e3;
+  const count = (f) => tasks.filter(f).length;
+  const kpi = (key, icon, label, value, hint, cls = "") => el("button", {
+    type: "button", class: "dash-kpi " + cls + (key && dash.state === key ? " on" : ""), title: hint,
+    // Плитка без фильтра (агенты) прокручивает к блоку «Сейчас работают».
+    onclick: () => key ? (dash.state = dash.state === key ? "" : key, renderDash()) : $("#dash .dash-side")?.scrollIntoView({ behavior: "smooth" }),
+  }, el("span", { class: "dash-kpi-ico" }, icon), el("span", { class: "dash-kpi-val" }, String(value)), el("span", { class: "dash-kpi-label" }, label));
+
+  // Верхняя панель: проект, статусы, поиск.
+  const projSel = el("select", { title: "Проект" }, el("option", { value: "" }, "Все проекты"),
+    ...projects.map((p) => el("option", { value: p.path }, dashProj(p.path))));
+  projSel.value = dash.project;
+  projSel.addEventListener("change", () => { dash.project = projSel.value; loadDash(); });
+  const search = el("input", { type: "search", placeholder: "Поиск по задачам, целям, моделям…", value: dash.q });
+  search.addEventListener("input", () => { dash.q = search.value; renderTasks(); });
+  const chips = el("div", { class: "dash-chips" }, ...dashStates.map(([k, label]) => el("button", {
+    type: "button", class: "chip" + (dash.state === k ? " on" : ""), onclick: () => { dash.state = k; renderDash(); },
+  }, label + (k ? ` · ${count(dashMatch[k])}` : ` · ${tasks.filter((t) => !t.parent).length}`))));
+
+  const taskList = el("div", { class: "dash-tasks" });
+  function renderTasks() {
+    const q = dash.q.trim().toLowerCase();
+    const children = (id) => tasks.filter((t) => t.parent === id).sort((a, b) => (a.step || 0) - (b.step || 0) || a.position - b.position);
+    const hay = (t) => [t.title, t.goal, t.request, t.model, ...(t.models || []), t.reviewer, ...children(t.id).map((c) => c.title + " " + (c.models || []).join(" "))].join(" ").toLowerCase();
+    const list = tasks.filter((t) => !t.parent || !tasks.some((p) => p.id === t.parent))
+      .filter((t) => !dash.state || dashMatch[dash.state](t) || children(t.id).some(dashMatch[dash.state]))
+      .filter((t) => !q || hay(t).includes(q))
+      .sort((a, b) => dashRank(a) - dashRank(b) || new Date(b.updated) - new Date(a.updated));
+    taskList.replaceChildren(...(list.length ? list.map((t) => taskCard(t, children(t.id), agents)) :
+      [el("div", { class: "card empty" }, tasks.length ? "Под фильтр ничего не попало." : "Задач пока нет. Опишите задачу Оркестратору или положите её в пул на доске.")]));
+  }
+  renderTasks();
+
+  // Справа: кто работает сейчас, как справляются модели, последние события.
+  const live = el("div", { class: "dash-side-block" },
+    el("div", { class: "dash-h" }, el("span", {}, "⚡ Сейчас работают"), el("span", { class: "badge" }, String(running.length))),
+    ...(running.length ? running.map((a) => agentLive(a, tasks)) : [el("div", { class: "small muted" }, "Никто не работает. Агенты появятся, когда задача уйдёт в работу.")]));
+  const maxAtt = Math.max(1, ...stats.map((s) => s.attempts));
+  const board = el("div", { class: "dash-side-block" },
+    el("div", { class: "dash-h" }, el("span", {}, "🏆 Модели за 30 дней")),
+    ...(stats.filter((s) => s.attempts).length ? stats.filter((s) => s.attempts).slice(0, 8).map((s) => {
+      const rate = Math.round(s.successes / s.attempts * 100);
+      const color = rate >= 70 ? "var(--ok)" : rate >= 40 ? "var(--warn)" : "var(--danger)";
+      return el("div", { class: "dash-model", title: `Задач: ${s.attempts}, прошли проверки: ${s.successes}` + (s.refused ? `, отказы: ${s.refused}` : "") + `, расход ${money(s.cost_usd)}` },
+        el("div", { class: "row spread" }, el("code", {}, s.model), el("span", { style: `color:${color};font-weight:600` }, rate + "%")),
+        el("div", { class: "dash-bar" }, el("span", { style: `width:${s.attempts / maxAtt * 100}%;background:color-mix(in srgb, ${color} 30%, transparent)` },
+          el("span", { style: `width:${rate}%;background:${color}` }))),
+        el("div", { class: "small muted" }, `${s.successes}/${s.attempts} задач` + (s.refused ? ` · ⛔ отказов ${s.refused}` : "") + ` · ${s.cost_usd ? money(s.cost_usd) : "подписка"}`));
+    }) : [el("div", { class: "small muted" }, "Статистика появится после первых задач.")]));
+  const feed = el("div", { class: "dash-side-block" },
+    el("div", { class: "dash-h" }, el("span", {}, "🕘 Последние агенты")),
+    ...agents.slice(0, 10).map((a) => el("button", { type: "button", class: "dash-feed", onclick: () => { openPanel("p-agents"); showAgent(a.id); } },
+      el("span", { class: "dash-ava r-" + a.role }, roleIcon[a.role] || "🤖"),
+      el("span", { class: "grow" }, el("b", {}, roleName[a.role] || a.role), " · ", el("span", { class: "muted" }, a.model),
+        el("div", { class: "small muted dash-clip" }, dashLine(a.summary || a.error || a.goal))),
+      el("span", { class: "status " + a.state, title: agentState[a.state] || a.state }, dashAgo(a.created)))));
+
+  box.replaceChildren(
+    el("div", { class: "dash-top" },
+      el("div", { class: "dash-title" }, el("h2", {}, "Дашборд"), el("span", { class: "small muted" }, "обновлено " + dashAgo(dash.loaded) + (running.length ? " · обновляется каждые 3 с" : ""))),
+      el("div", { class: "row dash-filters" }, projSel, search)),
+    el("div", { class: "dash-main" },
+      el("div", { class: "dash-kpis" },
+        kpi("active", "🛠", "в работе", count(dashMatch.active), "Задачи, которые сейчас делает исполнитель", "k-run"),
+        kpi("queued", "⏳", "в очереди", count(dashMatch.queued), "Ждут, пока освободится проект"),
+        kpi("done", "👀", "ждут решения", count(dashMatch.done), "Готовы: посмотрите изменения и нажмите Approve", "k-warn"),
+        kpi("needs_human", "🆘", "нужна помощь", count(dashMatch.needs_human), "Ни одна модель не справилась", "k-bad"),
+        kpi("finished", "✅", "готово за 7 дней", count((t) => dashMatch.finished(t) && new Date(t.updated) > week), "Приняты или слиты за неделю", "k-ok"),
+        kpi("", "🤖", "агентов работает", running.length, "Исполнители, ревьюеры и Оркестратор прямо сейчас")),
+      chips,
+      el("div", { class: "dash-grid" }, taskList, el("aside", { class: "dash-side" }, live, board, feed))));
+  box.querySelector(".dash-main").scrollTop = keepScroll;
+}
+
+// dashRank: сначала то, что требует внимания или идёт сейчас.
+function dashRank(t) {
+  return { needs_human: 0, done: 1, running: 2, queued: 3, failed: 4, backlog: 5 }[t.state] ?? 6;
+}
+
+// taskCard — задача: цель, этапы, кто исполняет, подзадачи и агенты.
+function taskCard(t, subs, agents) {
+  const open = dash.open.has(t.id);
+  const mine = agents.filter((a) => a.task_id === t.id || subs.some((s) => s.id === a.task_id));
+  const step = dashStep[t.state] ?? 0;
+  const bad = ["failed", "rejected", "needs_human"].includes(t.state);
+  const pipe = el("div", { class: "dash-pipe" + (bad ? " bad" : "") }, ...dashPipe.map((label, i) =>
+    el("span", { class: i < step ? "past" : i === step ? "now" + (t.state === "running" ? " live" : "") : "" }, label)));
+  const models = t.models || [];
+  const who = el("div", { class: "dash-who" },
+    t.agent ? whoChip("👥", "агент команды", agentOf(t.agent) ? agentLabel(agentOf(t.agent)) : t.agent) : "",
+    models.length ? whoChip("🛠", "исполнитель", models[0], t.model === models[0] && t.state === "running") : whoChip("🛠", "исполнитель", "не назначен"),
+    ...models.slice(1).map((m) => whoChip("⚡", "резерв", m, t.model === m && t.state === "running")),
+    whoChip("🔍", "ревьюер", t.review?.model || (t.reviewer === "off" ? "без ревью" : t.reviewer || "как в проекте"),
+      false, t.review ? (t.review.verdict === "ok" ? "ok" : "issues") : ""),
+    t.model && !models.includes(t.model) ? whoChip("🤖", "сейчас", t.model, t.state === "running") : "");
+  const done = subs.filter((s) => ["approved", "merged", "done"].includes(s.state)).length;
+  const subBlock = subs.length ? el("div", { class: "dash-subs" },
+    el("div", { class: "row spread small" }, el("b", {}, `👥 Подзадачи: ${done} из ${subs.length}`), el("span", { class: "muted" }, Math.round(done / subs.length * 100) + "%")),
+    el("div", { class: "dash-bar" }, el("span", { style: `width:${done / subs.length * 100}%;background:var(--grad)` })),
+    ...subs.map((s, i) => el("div", { class: "dash-sub", onclick: (e) => { e.stopPropagation(); openTask(s.id); } },
+      el("span", { class: "subnum" }, String(s.step || i + 1)),
+      el("div", { class: "grow" }, el("div", { class: "dash-clip" }, s.title),
+        el("div", { class: "small muted" }, (s.models?.[0] || "—") + (s.after?.length ? " · после " + s.after.join(", ") : "") + (s.agent && agentOf(s.agent) ? " · " + agentLabel(agentOf(s.agent)) : ""))),
+      el("span", { class: "status " + dashStatus(s.state) }, stateShort[s.state] || s.state)))) : "";
+  const team = mine.length ? el("div", { class: "dash-avas", title: "Агенты, которые работали над задачей" },
+    ...mine.slice(0, 8).map((a) => el("span", { class: "dash-ava r-" + a.role + (a.state === "running" ? " live" : ""), title: `${roleName[a.role] || a.role} · ${a.model} · ${agentState[a.state] || a.state}` }, roleIcon[a.role] || "🤖")),
+    mine.length > 8 ? el("span", { class: "small muted" }, "+" + (mine.length - 8)) : "") : "";
+
+  const card = el("div", { class: "dash-task" + (open ? " open" : "") + " s-" + t.state },
+    el("div", { class: "dash-task-head" },
+      el("span", { class: "status " + dashStatus(t.state) }, stateShort[t.state] || t.state),
+      el("b", { class: "grow dash-clip", title: t.title }, t.title || dashLine(t.goal)),
+      el("span", { class: "badge cli" }, dashProj(t.project)),
+      el("span", { class: "small muted", title: fmtTime(t.updated) }, dashAgo(t.updated))),
+    pipe,
+    el("div", { class: "dash-goal" + (open ? "" : " clamp") }, el("span", { class: "muted" }, "🎯 Цель: "), dashLine(t.request) || dashLine(t.goal)),
+    who, subBlock, team);
+  if (open) card.append(taskDetails(t, mine));
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("button, a, .dash-sub, .dash-details")) return;
+    dash.open.has(t.id) ? dash.open.delete(t.id) : dash.open.add(t.id);
+    renderDash();
+  });
+  return card;
+}
+
+function whoChip(icon, role, name, live = false, verdict = "") {
+  return el("span", { class: "dash-chip" + (live ? " live" : "") + (verdict ? " v-" + verdict : ""), title: role + ": " + name },
+    el("span", {}, icon), el("span", { class: "muted" }, role), el("b", {}, name), verdict ? el("span", {}, verdict === "ok" ? " ✓" : " ⚠") : "");
+}
+
+const dashStatus = (s) => ({ approved: "done", merged: "done", done: "checking", needs_human: "error", rejected: "failed", backlog: "" }[s] ?? s);
+
+// taskDetails — раскрытая карточка: план, итог, ревью, последние события.
+function taskDetails(t, mine) {
+  const box = el("div", { class: "dash-details" });
+  const fill = (d) => {
+    const ev = (d.events || []).slice(-10);
+    box.replaceChildren(
+      t.plan ? el("details", { open: "" }, el("summary", {}, "📋 План"), el("div", { class: "dash-pre" }, t.plan)) : "",
+      t.goal && t.goal !== t.request ? el("details", {}, el("summary", {}, "🎯 Задача исполнителю"), el("div", { class: "dash-pre" }, t.goal)) : "",
+      t.summary ? el("div", { class: "dash-note ok" }, "📝 Итог: " + t.summary) : "",
+      t.error ? el("div", { class: "dash-note bad" }, "⚠️ " + t.error) : "",
+      t.review?.text ? el("div", { class: "dash-note " + (t.review.verdict === "ok" ? "ok" : "warn") }, `🔍 Ревью (${t.review.model}): ` + dashLine(t.review.text)) : "",
+      mine.length ? el("div", { class: "dash-agents" }, ...mine.map((a) => el("button", { type: "button", class: "dash-feed", onclick: () => { openPanel("p-agents"); showAgent(a.id); } },
+        el("span", { class: "dash-ava r-" + a.role }, roleIcon[a.role] || "🤖"),
+        el("span", { class: "grow" }, el("b", {}, roleName[a.role] || a.role), " · ", el("span", { class: "muted" }, a.model),
+          el("div", { class: "small muted dash-clip" }, dashLine(a.last || a.summary || a.error))),
+        el("span", { class: "status " + a.state }, agentState[a.state] || a.state)))) : "",
+      ev.length ? el("div", { class: "dash-events" }, el("div", { class: "small muted" }, "Последние события"),
+        ...ev.map((e) => el("div", { class: "dash-ev" }, el("span", { class: "muted" }, new Date(e.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })),
+          el("span", {}, kindIcon[e.kind] || "•"), el("span", { class: "dash-clip" }, dashLine(e.text))))) : "",
+      el("div", { class: "row" },
+        el("button", { type: "button", class: "btn", onclick: () => openTask(t.id) }, "Открыть карточку"),
+        el("button", { type: "button", class: "btn ghost", onclick: () => setChatMode("board") }, "На доске")));
+  };
+  if (dash.details[t.id]?.updated === t.updated) fill(dash.details[t.id]);
+  else {
+    box.append(el("div", { class: "small muted" }, "Загружаю подробности…"));
+    api("GET", "/api/tasks/" + encodeURIComponent(t.id)).then((d) => { dash.details[t.id] = { ...d, updated: t.updated }; fill(d); }).catch(() => fill({}));
+  }
+  return box;
+}
+
+// agentLive — работающий агент: роль, модель, задача и последнее действие.
+function agentLive(a, tasks) {
+  const t = tasks.find((x) => x.id === a.task_id);
+  return el("button", { type: "button", class: "dash-live", onclick: () => { openPanel("p-agents"); showAgent(a.id); } },
+    el("div", { class: "row" }, el("span", { class: "dash-ava live r-" + a.role }, roleIcon[a.role] || "🤖"),
+      el("div", { class: "grow" }, el("b", {}, roleName[a.role] || a.role), el("div", { class: "small muted" }, a.model)),
+      el("span", { class: "small muted" }, duration(a))),
+    el("div", { class: "small dash-clip" }, "🎯 " + (t ? t.title : dashLine(a.goal))),
+    a.last ? el("div", { class: "small muted dash-clip" }, "↳ " + dashLine(a.last)) : "");
+}
+
 // ============ Режимы чата ============
 let chatMode = "chat";
 function setChatMode(mode) {
   chatMode = mode;
   store.set("edy-chat-mode", mode);
   for (const b of document.querySelectorAll("#mode-seg button")) b.classList.toggle("on", b.dataset.chatMode === mode);
-  $("#orch-bar").hidden = mode === "chat";
+  $("#orch-bar").hidden = mode === "chat" || mode === "dash";
   $("#messages").hidden = mode !== "chat";
   $("#orch-messages").hidden = mode !== "orch";
   $("#board").hidden = mode !== "board";
-  $("#composer-wrap").hidden = mode === "board";
-  $("#model").parentElement.hidden = mode === "board";
+  $("#dash").hidden = mode !== "dash";
+  $("#composer-wrap").hidden = mode === "board" || mode === "dash";
+  $("#model").parentElement.hidden = mode === "board" || mode === "dash";
+  if (mode !== "dash") clearTimeout(dash.timer);
+  if (mode === "dash") { clearTimeout(boardTimer); loadDash(); return; }
   if (mode === "board") { loadBoard(); return; }
   clearTimeout(boardTimer);
   msgsBox = mode === "orch" ? $("#orch-messages") : $("#messages");
@@ -4052,7 +4375,7 @@ try { const p = JSON.parse(store.get("edy-prefs") || "null"); if (p) applyPrefs(
   } catch (e) {
     toast(e.message, true);
   }
-  if (["orch", "board"].includes(store.get("edy-chat-mode"))) setChatMode(store.get("edy-chat-mode"));
+  if (["orch", "board", "dash"].includes(store.get("edy-chat-mode"))) setChatMode(store.get("edy-chat-mode"));
   const last = store.get("edy-panel");
   if (last && titles[last]) openPanel(last);
   input.focus();

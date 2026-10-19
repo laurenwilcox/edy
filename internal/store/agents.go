@@ -64,6 +64,8 @@ type Agent struct {
 	Created  time.Time `json:"created"`
 	Finished time.Time `json:"finished,omitzero"`
 	Events   int       `json:"events"`
+	// Last — последнее действие агента (для дашборда «кто что делает»).
+	Last string `json:"last,omitempty"`
 }
 
 // AgentEvent — одно действие агента.
@@ -121,12 +123,13 @@ func (s *Store) InterruptRunningAgents() (int64, error) {
 }
 
 const agentCols = `a.id, a.role, a.model, a.project, a.task_id, a.goal, a.state, a.summary, a.error, a.created, a.finished,
-	(SELECT COUNT(*) FROM agent_events e WHERE e.agent_id = a.id)`
+	(SELECT COUNT(*) FROM agent_events e WHERE e.agent_id = a.id),
+	COALESCE((SELECT substr(e.text, 1, 300) FROM agent_events e WHERE e.agent_id = a.id ORDER BY e.id DESC LIMIT 1), '')`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var created, finished int64
-	if err := row.Scan(&a.ID, &a.Role, &a.Model, &a.Project, &a.TaskID, &a.Goal, &a.State, &a.Summary, &a.Error, &created, &finished, &a.Events); err != nil {
+	if err := row.Scan(&a.ID, &a.Role, &a.Model, &a.Project, &a.TaskID, &a.Goal, &a.State, &a.Summary, &a.Error, &created, &finished, &a.Events, &a.Last); err != nil {
 		return Agent{}, err
 	}
 	a.Created = time.UnixMilli(created)
