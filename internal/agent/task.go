@@ -66,8 +66,10 @@ type Task struct {
 	// Extra — внешние MCP-серверы из каталога Edy, которые Оркестратор выдал
 	// исполнителю вместе с MCP Edy (только исполнителям с поддержкой MCP).
 	Extra []string
-	// MaxWait — сколько всего одна модель может ждать сброса минутного лимита
-	// (429 с коротким Retry-After), прежде чем задача уйдёт дальше; по умолчанию 5 минут.
+	// MaxWait — сколько модель может ждать сброса минутного лимита (429 с
+	// коротким Retry-After) подряд, без единого ответа, прежде чем задача уйдёт
+	// дальше; по умолчанию 5 минут. Каждый ответ модели сбрасывает счёт: медленная,
+	// но работающая модель (бесплатный тариф Groq) доводит задачу до конца.
 	MaxWait time.Duration
 
 	// refused — почему последняя модель отказалась работать (для журнала).
@@ -280,6 +282,7 @@ func (t *Task) attempt(ctx context.Context, model string, ws Workspace, shadow S
 			}
 			continue
 		}
+		waited = 0 // модель ответила — ожидание засчитано как прогресс
 		msgs = append(msgs, reply)
 		if strings.TrimSpace(reply.Content) != "" {
 			t.emit("model", "%s: %s", model, lastRunes(strings.TrimSpace(reply.Content), 600))

@@ -436,3 +436,30 @@ func TestShortRateLimitWaitsInsteadOfGivingUp(t *testing.T) {
 		t.Fatalf("res = %+v\n%s", res, log.String())
 	}
 }
+
+// slowLimited: перед каждым ответом — 429 «подождите 1 с», как бесплатный Groq.
+type slowLimited struct {
+	scripted
+	limited bool
+}
+
+func (l *slowLimited) Chat(ctx context.Context, model string, msgs []Msg, tools []ToolDef) (Msg, error) {
+	l.limited = !l.limited
+	if l.limited {
+		return Msg{}, &StatusError{Status: 429, Message: "лимит в минуту", RetryAfter: time.Second}
+	}
+	return l.scripted.Chat(ctx, model, msgs, tools)
+}
+
+func TestWaitBudgetResetsOnProgress(t *testing.T) {
+	dir := newProject(t)
+	llm := &slowLimited{scripted: scripted{steps: map[string][]Msg{"groq/m": fixSteps()}}}
+	// Бюджет — 1,5 с подряд, а всего ожиданий больше: проходит, потому что между ними есть ответы.
+	res, err := (&Task{Root: dir, Goal: "Почини сложение", Models: []string{"groq/m"}, LLM: llm, MaxWait: 1500 * time.Millisecond}).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusDone {
+		t.Fatalf("res = %+v", res)
+	}
+}
