@@ -43,8 +43,10 @@ type Server struct {
 	log      *slog.Logger
 	now      func() time.Time
 
+	limits *LimitTracker
+
 	mu        sync.Mutex
-	cooldowns map[int64]time.Time // ключ → время, до которого он «отдыхает» после 429
+	cooldowns map[string]time.Time // провайдер/ключ → время, до которого он «отдыхает» после 429
 }
 
 // NewServer создаёт OmniRoute. token — Bearer-токен, без которого запросы
@@ -63,7 +65,8 @@ func NewServer(st *store.Store, token string, log *slog.Logger) *Server {
 		token:     token,
 		log:       log,
 		now:       time.Now,
-		cooldowns: map[int64]time.Time{},
+		limits:    NewLimitTracker(),
+		cooldowns: map[string]time.Time{},
 	}
 }
 
@@ -180,6 +183,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "budget_exceeded", msg)
 		return
 	}
+	if msg, err := s.checkProviderLimit(provider.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	} else if msg != "" {
+		writeError(w, http.StatusTooManyRequests, "limit_exceeded", msg)
+		return
+	}
 
 	call := Call{Provider: provider, Model: modelName, Request: req, Workdir: r.Header.Get(WorkdirHeader)}
 	if mcpURL := r.Header.Get(MCPHeader); mcpURL != "" {
@@ -221,6 +231,28 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.finish(usage)
+}
+
+// checkProviderLimit возвращает текст ошибки, если исчерпан дневной лимит
+// запросов или токенов, заданный пользователем для провайдера.
+func (s *Server) checkProviderLimit(provider string) (string, error) {
+	l, err := s.store.ProviderLimit(provider)
+	if err != nil || (l.ReqDay <= 0 && l.TokDay <= 0) {
+		return "", err
+	}
+	now := s.now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	reqs, toks, err := s.store.ProviderUsageSince(provider, midnight)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case l.ReqDay > 0 && reqs >= l.ReqDay:
+		return fmt.Sprintf("дневной лимит %s исчерпан: %d из %d запросов", provider, reqs, l.ReqDay), nil
+	case l.TokDay > 0 && toks >= l.TokDay:
+		return fmt.Sprintf("дневной лимит %s исчерпан: %d из %d токенов", provider, toks, l.TokDay), nil
+	}
+	return "", nil
 }
 
 // checkBudget возвращает текст ошибки, если дневной бюджет исчерпан.
@@ -267,9 +299,13 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 		return emit(ev)
 	}
 
+	call.OnHeaders = func(status int, h http.Header) { s.limits.Observe(p.Name, h, status, s.now()) }
+
 	var lastErr error
 	for _, k := range keys {
-		if s.coolingDown(k.ID) {
+		// У бесключевых провайдеров общий ID −1, поэтому перерыв считается по имени провайдера.
+		ck := fmt.Sprintf("%s/%d", p.Name, k.ID)
+		if s.coolingDown(ck) {
 			continue
 		}
 		call.Key = k.Secret
@@ -281,7 +317,8 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 		lastErr = err
 		switch {
 		case ue.Status == http.StatusTooManyRequests:
-			s.coolDown(k.ID, ue.RetryAfter)
+			until := s.coolDown(ck, ue.RetryAfter)
+			s.limits.Fail(p.Name, ue.Status, ue.Message, until, s.now())
 			s.log.Info("ключ упёрся в лимит, переключаюсь на следующий", "provider", p.Name, "key", k.Label)
 		case (ue.Status == http.StatusUnauthorized || ue.Status == http.StatusForbidden) && k.ID > 0:
 			if err := s.store.DisableKey(k.ID); err != nil {
@@ -298,21 +335,26 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 	return Usage{}, lastErr
 }
 
-func (s *Server) coolingDown(id int64) bool {
+func (s *Server) coolingDown(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	until, ok := s.cooldowns[id]
 	return ok && s.now().Before(until)
 }
 
-func (s *Server) coolDown(id int64, d time.Duration) {
+func (s *Server) coolDown(id string, d time.Duration) time.Time {
 	if d <= 0 {
 		d = defaultCooldown
 	}
+	until := s.now().Add(d)
 	s.mu.Lock()
-	s.cooldowns[id] = s.now().Add(d)
+	s.cooldowns[id] = until
 	s.mu.Unlock()
+	return until
 }
+
+// Limits — последние известные лимиты провайдеров.
+func (s *Server) Limits() map[string]RateLimit { return s.limits.Snapshot() }
 
 // responder пишет ответ клиенту: SSE-потоком или одним JSON в конце.
 type responder struct {

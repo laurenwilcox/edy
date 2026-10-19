@@ -32,6 +32,13 @@ func (a *AnthropicAdapter) Stream(ctx context.Context, call Call, emit func(Even
 	opts := []option.RequestOption{
 		option.WithAPIKey(call.Key),
 		option.WithMaxRetries(0), // повторами и ротацией ключей управляет OmniRoute
+		option.WithMiddleware(func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+			resp, err := next(r)
+			if resp != nil {
+				call.observe(resp.StatusCode, resp.Header)
+			}
+			return resp, err
+		}),
 	}
 	if call.Provider.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(call.Provider.BaseURL))

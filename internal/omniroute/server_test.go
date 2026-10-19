@@ -425,3 +425,16 @@ func TestEmbeddingsEndpoint(t *testing.T) {
 		t.Fatalf("CLI не умеет эмбеддинги: %d", rec.Code)
 	}
 }
+
+func TestProviderDailyLimit(t *testing.T) {
+	srv, st, _ := setupOpenAI(t, "sk-ok")
+	st.SetProviderLimit("oa", store.ProviderLimit{ReqDay: 1})
+	body := `{"model":"oa/gpt-x","messages":[{"role":"user","content":"hi"}]}`
+	if rec := do(t, srv, http.MethodPost, "/v1/chat/completions", body); rec.Code != http.StatusOK {
+		t.Fatalf("первый запрос: %d", rec.Code)
+	}
+	rec := do(t, srv, http.MethodPost, "/v1/chat/completions", body)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "limit_exceeded") {
+		t.Fatalf("code = %d body = %s", rec.Code, rec.Body)
+	}
+}

@@ -79,6 +79,8 @@ type Handler struct {
 	Notify notify.Notifier
 	// Semantic — поиск по смыслу (эмбеддинги); nil — только поиск по словам.
 	Semantic *semantic.Engine
+	// Limits — лимиты провайдеров, замеченные OmniRoute; nil — только заданные вручную.
+	Limits LimitSource
 
 	mux  *routeMux
 	mcpM sync.Mutex
@@ -93,6 +95,9 @@ func New(st *store.Store, token, addr string) *Handler {
 	h.semanticRoutes(m)
 	m.HandleFunc("GET /api/presets", h.presets)
 	m.HandleFunc("GET /api/providers", h.listProviders)
+	m.HandleFunc("GET /api/providers/limits", h.limits)
+	m.HandleFunc("PUT /api/providers/{name}/limits", h.setLimits)
+	m.HandleFunc("POST /api/providers/{name}/check", h.checkLimits)
 	m.HandleFunc("POST /api/providers", h.addProvider)
 	m.HandleFunc("DELETE /api/providers/{name}", h.deleteProvider)
 	m.HandleFunc("POST /api/providers/{name}/keys", h.addKey)

@@ -242,3 +242,24 @@ func TestShowWindow(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestProviderLimitAndUsageSince(t *testing.T) {
+	s := openTest(t)
+	if l, err := s.ProviderLimit("p"); err != nil || l != (ProviderLimit{}) {
+		t.Fatalf("пустой лимит = %+v, %v", l, err)
+	}
+	if err := s.SetProviderLimit("p", ProviderLimit{ReqDay: -1}); err == nil {
+		t.Fatal("отрицательный лимит принят")
+	}
+	s.SetProviderLimit("p", ProviderLimit{ReqDay: 5, TokDay: 100})
+	if l, _ := s.ProviderLimit("p"); l.ReqDay != 5 || l.TokDay != 100 {
+		t.Fatalf("лимит = %+v", l)
+	}
+	s.RecordUsage(Usage{Provider: "p", Model: "m", InputTokens: 10, OutputTokens: 5})
+	s.RecordUsage(Usage{Provider: "p", Model: "m", InputTokens: 1})
+	s.RecordUsage(Usage{Provider: "q", Model: "m", InputTokens: 99})
+	req, tok, err := s.ProviderUsageSince("p", time.Now().Add(-time.Hour))
+	if err != nil || req != 2 || tok != 16 {
+		t.Fatalf("req = %d tok = %d err = %v", req, tok, err)
+	}
+}

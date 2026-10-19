@@ -194,6 +194,9 @@ label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
 .web-box { margin-top: 12px; padding: 12px; border-radius: 14px; background: var(--code); }
 .web-box .row { align-items: center; }
 .web-box label { margin-top: 8px; }
+.limits .err { color: var(--danger); }
+.limits > div { margin-top: 3px; }
+.limits input { padding: 4px 8px; }
 .web-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .web-tools .chip.on { border-color: var(--a1); color: var(--a1); box-shadow: 0 0 8px color-mix(in srgb, var(--a1) 40%, transparent); }
 .seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--code); gap: 2px; }
@@ -1180,6 +1183,7 @@ async function loadProviders() {
   try {
     await refreshProviders();
     if (!capCatalog.length) capCatalog = await api("GET", "/api/caps");
+    provLimits = await api("GET", "/api/providers/limits").catch(() => ({}));
   } catch (e) { return toast(e.message, true); }
   const list = $("#provider-list");
   list.replaceChildren();
@@ -1264,6 +1268,7 @@ function providerCard(p) {
         : [el("span", { class: "muted" }, "модели не указаны")])),
   );
   card.append(capsBlock(p));
+  card.append(limitsBlock(p));
   if (p.kind === "openai" || p.kind === "anthropic") card.append(keysBlock(p));
   if (p.kind === "web") {
     const box = el("input", { type: "checkbox" });
@@ -1279,6 +1284,75 @@ function providerCard(p) {
     if (p.site === "gemini") card.append(webBox(p));
   }
   return card;
+}
+
+// ============ Лимиты провайдеров ============
+// Лимиты провайдера (из заголовков ответов и ошибок 429) и дневные лимиты пользователя.
+let provLimits = {};
+const fmtNum = (n) => Number(n || 0).toLocaleString("ru-RU");
+// Нулевое время Go приходит как 0001-01-01 — считаем его пустым.
+const realTime = (t) => t && new Date(t).getFullYear() > 2000 ? new Date(t) : null;
+function untilText(t) {
+  const d = realTime(t);
+  if (!d) return "";
+  const s = Math.round((d - Date.now()) / 1000);
+  if (s <= 0) return "";
+  return s < 90 ? `${s} с` : s < 5400 ? `${Math.round(s / 60)} мин` : `${Math.round(s / 3600)} ч`;
+}
+
+function limitsBlock(p) {
+  const box = el("div", { class: "limits small", style: "margin-top:10px" });
+  const render = (l) => {
+    l = l || { user: {}, req_today: 0, tok_today: 0 };
+    const u = l.upstream, user = l.user || {};
+    const lines = [];
+    if (u && (u.req_limit || u.tok_limit)) {
+      const part = (rem, lim, reset, word) => {
+        if (!lim) return null;
+        const r = untilText(reset);
+        return `${word}: ${fmtNum(rem)} из ${fmtNum(lim)}` + (r ? ` · сброс через ${r}` : "");
+      };
+      lines.push(el("div", {}, el("span", { class: "muted" }, "У провайдера: "),
+        [part(u.req_remaining, u.req_limit, u.req_reset, "запросы"), part(u.tok_remaining, u.tok_limit, u.tok_reset, "токены")].filter(Boolean).join(" · ")));
+    } else if (p.kind !== "web") {
+      lines.push(el("div", { class: "muted" }, p.kind === "cli"
+        ? "У провайдера: CLI не сообщает остаток, лимит виден только при ошибке"
+        : "У провайдера: данных пока нет — сделайте запрос или нажмите «Проверить лимиты»"));
+    }
+    const cd = u && untilText(u.cooldown_until);
+    if (cd) lines.push(el("div", { class: "err" }, `⏸ пауза после лимита ещё ${cd}`));
+    if (u && u.last_error) lines.push(el("div", { class: "muted", title: u.last_error },
+      `Последняя ошибка${u.last_status ? " " + u.last_status : ""}: ${u.last_error.slice(0, 160)}`));
+    const of = (n, lim) => fmtNum(n) + (lim ? ` из ${fmtNum(lim)}` : "");
+    const over = (user.req_day && l.req_today >= user.req_day) || (user.tok_day && l.tok_today >= user.tok_day);
+    lines.push(el("div", over ? { class: "err" } : {}, el("span", { class: "muted" }, "Сегодня в Edy: "),
+      `запросов ${of(l.req_today, user.req_day)} · токенов ${of(l.tok_today, user.tok_day)}` + (over ? " — лимит исчерпан" : "")));
+    if (l.checked_ms) lines.push(el("div", { class: "muted" }, `Проверка: ответ за ${(l.checked_ms / 1000).toFixed(1)} с`));
+    if (l.check_error) lines.push(el("div", { class: "err" }, "Проверка не прошла: " + l.check_error));
+
+    const req = el("input", { type: "number", min: "0", placeholder: "∞", value: user.req_day || "", style: "width:90px" });
+    const tok = el("input", { type: "number", min: "0", placeholder: "∞", value: user.tok_day || "", style: "width:110px" });
+    const save = el("button", { class: "btn ghost icon", type: "button", onclick: async () => {
+      try {
+        await api("PUT", `/api/providers/${encodeURIComponent(p.name)}/limits`, { req_day: +req.value || 0, tok_day: +tok.value || 0 });
+        l.user = { req_day: +req.value || 0, tok_day: +tok.value || 0 };
+        provLimits[p.name] = l; render(l); toast("Лимиты сохранены");
+      } catch (e) { toast(e.message, true); }
+    } }, "Сохранить");
+    const controls = el("div", { class: "row", style: "margin-top:6px" },
+      el("span", { class: "muted" }, "Мой лимит в день:"), req, el("span", { class: "muted" }, "запросов"), tok, el("span", { class: "muted" }, "токенов"), save);
+    if (p.kind !== "web") {
+      const check = el("button", { class: "btn ghost icon", type: "button", title: "Отправить короткий запрос и прочитать лимиты из ответа", onclick: async () => {
+        check.disabled = true; check.textContent = "Проверяю…";
+        try { const r = await api("POST", `/api/providers/${encodeURIComponent(p.name)}/check`); provLimits[p.name] = r; render(r); }
+        catch (e) { toast(e.message, true); check.disabled = false; check.textContent = "Проверить лимиты"; }
+      } }, "Проверить лимиты");
+      controls.append(check);
+    }
+    box.replaceChildren(el("span", { class: "muted" }, "Лимиты:"), ...lines, controls);
+  };
+  render(provLimits[p.name]);
+  return box;
 }
 
 // webToolLabel добавляет значок к надписи инструмента из меню сайта.

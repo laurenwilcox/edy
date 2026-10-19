@@ -56,6 +56,7 @@ func (a *OpenAIAdapter) Stream(ctx context.Context, call Call, emit func(Event) 
 		return Usage{}, err
 	}
 	defer resp.Body.Close()
+	call.observe(resp.StatusCode, resp.Header)
 
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

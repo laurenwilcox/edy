@@ -156,6 +156,10 @@ func (a *CLIAdapter) Stream(ctx context.Context, call Call, emit func(Event) err
 		return usage, fmt.Errorf("%s остановлена (%w), последний вывод: %q", args[0], ctx.Err(), tail)
 	}
 	if waitErr != nil {
+		// Сообщение о лимите подписки превращаем в 429: ротация уведёт провайдера на перерыв.
+		if hit, wait := DetectCLILimit(tail); hit {
+			return usage, &UpstreamError{Status: http.StatusTooManyRequests, RetryAfter: wait, Message: fmt.Sprintf("%s упёрлась в лимит: %s", args[0], tail)}
+		}
 		return usage, &UpstreamError{Status: http.StatusBadGateway, Message: fmt.Sprintf("%s завершилась с ошибкой (%v): %s", args[0], waitErr, tail)}
 	}
 	return usage, emit(Event{FinishReason: "stop"})

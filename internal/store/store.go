@@ -394,3 +394,42 @@ func (s *Store) SpentSince(since time.Time) (float64, error) {
 	err := s.db.QueryRow(`SELECT COALESCE(SUM(cost_usd), 0) FROM usage WHERE ts >= ?`, since.Unix()).Scan(&total)
 	return total, err
 }
+
+// ProviderLimit — дневные лимиты провайдера, заданные пользователем (0 — без лимита).
+type ProviderLimit struct {
+	ReqDay int64 `json:"req_day"` // запросов за календарные сутки
+	TokDay int64 `json:"tok_day"` // токенов (вход + выход) за календарные сутки
+}
+
+func providerLimitKey(provider string) string { return "limit:" + provider }
+
+// ProviderLimit возвращает лимиты провайдера; без настройки — нулевые.
+func (s *Store) ProviderLimit(provider string) (ProviderLimit, error) {
+	var l ProviderLimit
+	raw, err := s.Setting(providerLimitKey(provider))
+	if errors.Is(err, ErrNotFound) {
+		return l, nil
+	} else if err != nil {
+		return l, err
+	}
+	if err := json.Unmarshal([]byte(raw), &l); err != nil {
+		return ProviderLimit{}, fmt.Errorf("лимиты %s повреждены: %w", provider, err)
+	}
+	return l, nil
+}
+
+// SetProviderLimit сохраняет лимиты провайдера.
+func (s *Store) SetProviderLimit(provider string, l ProviderLimit) error {
+	if l.ReqDay < 0 || l.TokDay < 0 {
+		return errors.New("лимиты не могут быть отрицательными")
+	}
+	data, _ := json.Marshal(l)
+	return s.SetSetting(providerLimitKey(provider), string(data))
+}
+
+// ProviderUsageSince — число запросов и токенов провайдера с момента since.
+func (s *Store) ProviderUsageSince(provider string, since time.Time) (requests, tokens int64, err error) {
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage WHERE provider = ? AND ts >= ?`,
+		provider, since.Unix()).Scan(&requests, &tokens)
+	return requests, tokens, err
+}

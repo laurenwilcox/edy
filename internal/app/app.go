@@ -116,6 +116,7 @@ func Start(st *store.Store, home, addr string, log *slog.Logger) (*Server, error
 	h := api.New(st, tok, ln.Addr().String())
 	h.Web = web
 	h.Logs = Logs
+	h.Limits = router
 	h.LLM = &agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "orchestrator", HTTP: agent.InProcess(router)}
 	h.Tasks = tasks.NewManager(&agent.OmniRoute{BaseURL: "http://edy.local/v1", Token: tok, Client: "agent", HTTP: agent.InProcess(router)}, st)
 	h.Tasks.Journal = st

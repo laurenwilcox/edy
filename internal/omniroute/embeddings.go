@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/laurenwilcox/name/internal/store"
 )
@@ -70,7 +71,8 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	var lastStatus int
 	var lastBody []byte
 	for _, k := range keys {
-		if s.coolingDown(k.ID) {
+		ck := fmt.Sprintf("%s/%d", provider.Name, k.ID)
+		if s.coolingDown(ck) {
 			continue
 		}
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(base, "/")+"/embeddings", bytes.NewReader(payload))
@@ -90,9 +92,11 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		resp.Body.Close()
 		lastStatus, lastBody = resp.StatusCode, data
+		s.limits.Observe(provider.Name, resp.Header, resp.StatusCode, time.Now())
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
-			s.coolDown(k.ID, retryAfter(resp.Header))
+			until := s.coolDown(ck, retryAfter(resp.Header))
+			s.limits.Fail(provider.Name, resp.StatusCode, "429 на /embeddings", until, time.Now())
 			continue
 		case (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && k.ID > 0:
 			s.store.DisableKey(k.ID)

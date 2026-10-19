@@ -26,6 +26,14 @@ type Call struct {
 	Workdir  string // рабочая папка для CLI-провайдеров
 	// MCP — MCP-сервер Edy, который нужно подключить к CLI-утилите (nil — не нужно).
 	MCP *MCPAttach
+	// OnHeaders получает заголовки ответа провайдера — из них читаются лимиты (nil — не нужно).
+	OnHeaders func(status int, h http.Header)
+}
+
+func (c Call) observe(status int, h http.Header) {
+	if c.OnHeaders != nil && h != nil {
+		c.OnHeaders(status, h)
+	}
 }
 
 // Adapter превращает OpenAI-запрос в обращение к конкретному типу источника ИИ.
