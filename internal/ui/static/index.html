@@ -574,7 +574,7 @@ h3.sub:first-child { margin-top: 0; }
                 <input name="name" required>
               </label>
               <label class="wide" data-for="cli api">Модели через запятую
-                <input name="models" placeholder="для API можно оставить пустым и загрузить список после добавления">
+                <input name="models" placeholder="можно оставить пустым — Edy загрузит список у API или у CLI-утилиты">
               </label>
               <label data-for="api">$ за 1M входных токенов
                 <input name="price_in" type="number" min="0" step="any" value="0">
@@ -1477,7 +1477,7 @@ function keysBlock(p) {
   return box;
 }
 
-// Редактор моделей: ручной список и (для API) загрузка списка у провайдера.
+// Редактор моделей: ручной список и загрузка списка у провайдера (API или сама CLI-утилита).
 async function openModelEditor(name, autoLoad) {
   const card = document.querySelector(`[data-provider="${CSS.escape(name)}"]`);
   const p = providers.find((x) => x.name === name);
@@ -1505,7 +1505,8 @@ async function openModelEditor(name, autoLoad) {
     chosen.clear();
     manual.value.split(",").map((m) => m.trim()).filter(Boolean).forEach((m) => chosen.add(m));
   });
-  const load = el("button", { class: "btn ghost", type: "button" }, "Загрузить с сервера");
+  const loadLabel = p.kind === "cli" ? "Загрузить из CLI" : "Загрузить с сервера";
+  const load = el("button", { class: "btn ghost", type: "button" }, loadLabel);
   load.addEventListener("click", async () => {
     load.disabled = true; load.textContent = "Загружаю…";
     try {
@@ -1515,7 +1516,7 @@ async function openModelEditor(name, autoLoad) {
       load.textContent = `Найдено: ${remote.length}`;
     } catch (e) {
       toast(e.message, true);
-      load.disabled = false; load.textContent = "Загрузить с сервера";
+      load.disabled = false; load.textContent = loadLabel;
     }
   });
   const save = el("button", { class: "btn", type: "button" }, "Сохранить");
@@ -1529,11 +1530,11 @@ async function openModelEditor(name, autoLoad) {
   const box = el("div", { class: "picker" },
     el("div", { class: "small muted" }, "Модели, доступные в чате и для агентов:"),
     manual, filter, list,
-    el("div", { class: "row" }, p.kind !== "cli" ? load : "", save,
+    el("div", { class: "row" }, p.kind !== "web" ? load : "", save,
       el("button", { class: "btn ghost", type: "button", onclick: () => box.remove() }, "Отмена")));
   card.append(box);
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  if (autoLoad && p.kind !== "cli") load.click();
+  if (autoLoad && p.kind !== "web") load.click();
 }
 
 async function webLogin(provider, browser, btn) {
@@ -1684,8 +1685,9 @@ form.addEventListener("submit", async (e) => {
     toast(`Провайдер «${body.name}» добавлен`);
     form.secret.value = ""; form.models.value = "";
     await openPanel("p-list");
-    // Для API без моделей сразу предлагаем загрузить список.
+    // Для API без моделей сразу предлагаем загрузить список; CLI-утилиту Edy опросил сам.
     if (addMode === "api" && !body.models.some((m) => m.trim())) openModelEditor(body.name, true);
+    else if (addMode === "cli" && !providers.find((x) => x.name === body.name)?.models.length) openModelEditor(body.name, false);
   } catch (err) {
     if (err.status === 409 && err.data?.install) return offerInstall(err.data);
     toast(err.message, true);

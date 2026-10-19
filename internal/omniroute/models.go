@@ -17,7 +17,7 @@ import (
 )
 
 // ListModels спрашивает у провайдера список доступных моделей.
-// Поддерживаются API-провайдеры; у CLI-утилит общего способа нет.
+// У CLI-утилит список берётся из их собственной команды (codex debug models и т.п.).
 func ListModels(ctx context.Context, p store.Provider, key string) ([]string, error) {
 	var ids []string
 	var err error
@@ -26,8 +26,11 @@ func ListModels(ctx context.Context, p store.Provider, key string) ([]string, er
 		ids, err = listOpenAIModels(ctx, p, key)
 	case store.KindAnthropic:
 		ids, err = listAnthropicModels(ctx, p, key)
+	case store.KindCLI:
+		// Порядок оставляем как у утилиты: обычно первыми идут новые модели.
+		return listCLIModels(ctx, p)
 	default:
-		return nil, errors.New("список моделей можно загрузить только у API-провайдеров")
+		return nil, errors.New("список моделей можно загрузить только у API- и CLI-провайдеров")
 	}
 	if err != nil {
 		return nil, err

@@ -486,6 +486,14 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "для CLI-провайдера нужен профиль или команда")
 			return
 		}
+		// Модели не указаны — спрашиваем их у самой утилиты; не вышло — их впишут вручную.
+		if len(p.Models) == 0 && strings.Contains(strings.Join(p.Command, " "), "{model}") {
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			if models, err := h.ListModels(ctx, p, ""); err == nil {
+				p.Models = models
+			}
+			cancel()
+		}
 	case store.KindWeb:
 		if h.Web == nil {
 			fail(w, http.StatusBadRequest, "веб-чаты выключены")
