@@ -103,6 +103,7 @@ func New(st *store.Store, token, addr string) *Handler {
 	m.HandleFunc("POST /api/providers/{name}/keys", h.addKey)
 	m.HandleFunc("GET /api/providers/{name}/remote-models", h.remoteModels)
 	m.HandleFunc("PUT /api/providers/{name}/models", h.setModels)
+	m.HandleFunc("POST /api/providers/{name}/check-models", h.probeModels)
 	m.HandleFunc("PUT /api/providers/{name}/caps", h.setCaps)
 	m.HandleFunc("PUT /api/providers/{name}/window", h.setShowWindow)
 	m.HandleFunc("GET /api/caps", h.capsCatalog)

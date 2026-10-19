@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -328,14 +329,22 @@ func (h *Handler) assistantLoop(w http.ResponseWriter, r *http.Request, ss *asst
 		}
 		msgs := append([]agent.Msg{{Role: "system", Content: h.assistantPrompt(screen)}}, ss.msgs...)
 		res, err := h.LLM.Chat(ctx, model, msgs, []agent.ToolDef{apiCallTool})
-		if err != nil && agent.Hopeless(err) && len(models) > 1 {
-			// Модель отказалась работать — переходим к следующей, шаг не тратим.
+		if err != nil && len(models) > 1 && ctx.Err() == nil {
+			// Модель не ответила (отказ, лимит, нет доступа) — переходим к
+			// следующей, шаг не тратим.
 			if ss.bad == nil {
 				ss.bad = map[string]bool{}
 			}
 			ss.bad[model] = true
 			models = models[1:]
-			notice = fmt.Sprintf("ℹ️ %s не подходит помощнику: вместо ответа CLI отказалась работать без подтверждений. Отвечает %s.\n\n", ss.badList(), models[0])
+			reason := "ошибка провайдера"
+			switch {
+			case agent.Hopeless(err):
+				reason = "CLI отказалась работать без подтверждений"
+			case strings.Contains(err.Error(), "429"):
+				reason = "упёрлась в лимит"
+			}
+			notice = fmt.Sprintf("ℹ️ %s не ответила (%s), отвечает %s.\n\n", model, reason, models[0])
 			model = models[0]
 			step--
 			continue
@@ -382,7 +391,7 @@ func (h *Handler) assistantModels(explicit string, bad map[string]bool) []string
 	})
 	first := func(p store.Provider) string {
 		for _, m := range p.Models {
-			if !strings.Contains(strings.ToLower(m), "embed") {
+			if !nonChatModelRe.MatchString(m) {
 				return p.Name + "/" + m
 			}
 		}
@@ -407,14 +416,8 @@ func (h *Handler) assistantModels(explicit string, bad map[string]bool) []string
 	return out
 }
 
-func (ss *asstSession) badList() string {
-	var list []string
-	for m := range ss.bad {
-		list = append(list, m)
-	}
-	sort.Strings(list)
-	return strings.Join(list, ", ")
-}
+// nonChatModelRe — модели не для разговора: картинки, видео, речь, эмбеддинги.
+var nonChatModelRe = regexp.MustCompile(`(?i)embed|image|imagen|veo|tts|audio|speech|live|transcri|whisper|dall-e|moderation`)
 
 // parseCall разбирает аргументы api_call и проверяет путь.
 func parseCall(c agent.ToolCall) (apiCallArgs, error) {
@@ -526,6 +529,7 @@ var bodyHints = map[string]string{
 	"createTask":     `{project, parent, title, request}`,
 	"startTask":      `{id, project, parent, title, request, plan, comment, models[], conversation, subtasks, agent}`,
 	"microSettings":  `{model}`,
+	"probeModels":    `{prune} — проверяет каждую модель провайдера коротким запросом; prune:true убирает из списка все модели с ошибкой. Это и есть «проверь модели и оставь рабочие» — вызывай его, а не проверяй модели по одной`,
 	"gitSettings":    `{path, settings}`,
 	"addGitAccount":  `{kind, host, label, username, token}`,
 	"saveTeamAgent":  `store.TeamAgent, обязателен project`,

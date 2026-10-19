@@ -306,7 +306,8 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 	for _, k := range keys {
 		// У бесключевых провайдеров общий ID −1, поэтому перерыв считается по имени провайдера.
 		ck := fmt.Sprintf("%s/%d", p.Name, k.ID)
-		if s.coolingDown(ck) {
+		mk := ck + "/" + call.Model // перерыв только для этой модели
+		if s.coolingDown(ck) || s.coolingDown(mk) {
 			continue
 		}
 		call.Key = k.Secret
@@ -317,6 +318,11 @@ func (s *Server) callWithRotation(ctx context.Context, a Adapter, call Call, emi
 		}
 		lastErr = err
 		switch {
+		case ue.Status == http.StatusTooManyRequests && ModelScopedLimit(ue.Message):
+			// Лимит одной модели (у Google квоты считаются по моделям): ключ
+			// остаётся рабочим для остальных моделей провайдера.
+			s.coolDown(mk, ue.RetryAfter)
+			s.log.Info("модель упёрлась в свой лимит, ключ работает для остальных", "provider", p.Name, "model", call.Model, "key", k.Label)
 		case ue.Status == http.StatusTooManyRequests:
 			until := s.coolDown(ck, ue.RetryAfter)
 			s.limits.Fail(p.Name, ue.Status, ue.Message, until, s.now())

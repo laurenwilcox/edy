@@ -1541,6 +1541,27 @@ async function openModelEditor(name, autoLoad) {
       load.disabled = false; load.textContent = loadLabel;
     }
   });
+  // Проверка: каждой модели — короткий запрос; модели с ошибкой убираются из списка.
+  const check = el("button", { class: "btn ghost", type: "button", title: "Каждой модели уйдёт короткий запрос «ok»" }, "Проверить и убрать нерабочие");
+  const report = el("div", { class: "small", hidden: "" });
+  check.addEventListener("click", async () => {
+    check.disabled = true; check.textContent = `Проверяю ${p.models.length} моделей…`;
+    try {
+      const r = await api("POST", `/api/providers/${encodeURIComponent(name)}/check-models`, { prune: true });
+      report.hidden = false;
+      report.replaceChildren(
+        el("div", {}, `✅ Работают: ${r.kept.length}` + (r.removed.length ? ` · ❌ убраны: ${r.removed.length}` : "")),
+        ...r.results.filter((x) => x.status === "error").map((x) => el("div", { class: "muted" }, "❌ " + x.model + " — " + x.error)),
+        ...r.results.filter((x) => x.status === "skipped").map((x) => el("div", { class: "muted" }, "➖ " + x.model + " — не проверялась (не чат-модель), оставлена")));
+      chosen.clear(); r.kept.forEach((m) => chosen.add(m));
+      manual.value = r.kept.join(", ");
+      toast(r.removed.length ? `Убрано нерабочих моделей: ${r.removed.length}` : "Все модели отвечают");
+      // Карточку не перерисовываем, чтобы отчёт остался на экране; списки моделей обновляем.
+      p.models = r.kept;
+      fillModels();
+    } catch (e) { toast(e.message, true); }
+    check.disabled = false; check.textContent = "Проверить и убрать нерабочие";
+  });
   const save = el("button", { class: "btn", type: "button" }, "Сохранить");
   save.addEventListener("click", async () => {
     try {
@@ -1551,8 +1572,8 @@ async function openModelEditor(name, autoLoad) {
   });
   const box = el("div", { class: "picker" },
     el("div", { class: "small muted" }, "Модели, доступные в чате и для агентов:"),
-    manual, filter, list,
-    el("div", { class: "row" }, p.kind !== "web" ? load : "", save,
+    manual, filter, list, report,
+    el("div", { class: "row" }, p.kind !== "web" ? load : "", p.kind !== "web" && p.models.length ? check : "", save,
       el("button", { class: "btn ghost", type: "button", onclick: () => box.remove() }, "Отмена")));
   card.append(box);
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });

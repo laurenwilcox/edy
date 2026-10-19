@@ -46,6 +46,11 @@ func (f *fakeOpenAI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.lastBody = body
 	f.mu.Unlock()
 
+	if body["model"] == "dead-image" {
+		// Как у Google: квота своя у каждой модели, у этой на бесплатном тарифе — ноль.
+		http.Error(w, `{"error":{"message":"Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: dead-image"}}`, http.StatusTooManyRequests)
+		return
+	}
 	switch key {
 	case "sk-limited":
 		w.Header().Set("Retry-After", "30")
@@ -436,5 +441,20 @@ func TestProviderDailyLimit(t *testing.T) {
 	rec := do(t, srv, http.MethodPost, "/v1/chat/completions", body)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "limit_exceeded") {
 		t.Fatalf("code = %d body = %s", rec.Code, rec.Body)
+	}
+}
+
+func TestModelLimitDoesNotCoolWholeKey(t *testing.T) {
+	srv, _, _ := setupOpenAI(t, "sk-good")
+	rec := do(t, srv, http.MethodPost, "/v1/chat/completions", `{"model":"oa/dead-image","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("dead-image: %d %s", rec.Code, rec.Body)
+	}
+	rec = do(t, srv, http.MethodPost, "/v1/chat/completions", `{"model":"oa/gpt-x","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("лимит одной модели не должен выключать ключ для других: %d %s", rec.Code, rec.Body)
+	}
+	if !ModelScopedLimit("limit: 0, model: gemini-3-pro-image") || ModelScopedLimit("rate limited") || !DeadQuota("limit: 0, model: x") {
+		t.Fatal("распознавание лимитов модели")
 	}
 }

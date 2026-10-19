@@ -173,6 +173,19 @@ func DetectCLIToolDenied(out string) bool {
 	return cliToolDeniedRe.MatchString(out)
 }
 
+// modelScopedRe — в сообщении о лимите названа модель: квота своя у каждой
+// модели (Google: «Quota exceeded for metric: …, limit: 0, model: gemini-…»).
+var modelScopedRe = regexp.MustCompile(`(?i)\bmodel["']?\s*[:=]\s*["']?[\w.-]+`)
+
+// ModelScopedLimit сообщает, что 429 относится к одной модели, а не ко всему ключу.
+func ModelScopedLimit(msg string) bool { return modelScopedRe.MatchString(msg) }
+
+// DeadQuota сообщает, что квота модели нулевая («limit: 0»): модель на этом
+// тарифе не работает вообще, ждать сброса бесполезно.
+func DeadQuota(msg string) bool { return deadQuotaRe.MatchString(msg) }
+
+var deadQuotaRe = regexp.MustCompile(`(?i)\blimit:\s*0\b`)
+
 // DetectCLILimit ищет в выводе CLI сообщение о лимите и, если есть, время ожидания.
 func DetectCLILimit(out string) (bool, time.Duration) {
 	if !cliLimitRe.MatchString(out) {

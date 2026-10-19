@@ -182,7 +182,7 @@ func TestAssistantSkipsRefusingModel(t *testing.T) {
 	h.LLM = llm
 	rec := call(h, "POST", "/api/assistant", `{"message":"проверь модели"}`)
 	r := decodeReply(t, rec.Code, rec.Body.Bytes())
-	if !strings.HasSuffix(r.Reply, "Ответ от google/gemini-2.5-flash") || !strings.Contains(r.Reply, "agy/gemini-flash не подходит помощнику") {
+	if !strings.HasSuffix(r.Reply, "Ответ от google/gemini-2.5-flash") || !strings.Contains(r.Reply, "agy/gemini-flash не ответила") {
 		t.Fatalf("ответ: %q, модели: %v", r.Reply, llm.used)
 	}
 	// Во второй реплике сессии agy уже не спрашиваем.
@@ -190,5 +190,40 @@ func TestAssistantSkipsRefusingModel(t *testing.T) {
 	call(h, "POST", "/api/assistant", `{"message":"ещё","session":"`+r.Session+`"}`)
 	if len(llm.used) != 1 || llm.used[0] != "google/gemini-2.5-flash" {
 		t.Fatalf("вторая реплика: %v", llm.used)
+	}
+}
+
+// probeLLM: модели с «bad» в имени отвечают ошибкой, остальные — «ok».
+type probeLLM struct{}
+
+func (probeLLM) Chat(_ context.Context, model string, _ []agent.Msg, _ []agent.ToolDef) (agent.Msg, error) {
+	if strings.Contains(model, "bad") {
+		return agent.Msg{}, &agent.StatusError{Status: http.StatusTooManyRequests, Message: "модель " + model + ": провайдер ответил 429: [{\n \"error\": {}}]"}
+	}
+	return agent.Msg{Role: "assistant", Content: "ok"}, nil
+}
+
+func TestProbeModelsPrunesBroken(t *testing.T) {
+	h, st := setup(t)
+	h.LLM = probeLLM{}
+	st.AddProvider(store.Provider{Name: "google", Kind: store.KindOpenAI, Models: []string{"gemini-flash", "bad-image", "text-embedding-004", "bad-pro"}})
+	rec := call(h, "POST", "/api/providers/google/check-models", `{"prune":true}`)
+	var out struct {
+		Results []modelCheck `json:"results"`
+		Kept    []string     `json:"kept"`
+		Removed []string     `json:"removed"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if strings.Join(out.Kept, ",") != "gemini-flash,text-embedding-004" || strings.Join(out.Removed, ",") != "bad-image,bad-pro" {
+		t.Fatalf("out = %+v", out)
+	}
+	if e := out.Results[1].Error; strings.Contains(e, "{") || !strings.Contains(e, "429") {
+		t.Fatalf("ошибка должна быть короткой: %q", e)
+	}
+	p, _ := st.Provider("google")
+	if strings.Join(p.Models, ",") != "gemini-flash,text-embedding-004" {
+		t.Fatalf("модели провайдера: %v", p.Models)
 	}
 }
